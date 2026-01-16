@@ -195,6 +195,14 @@ export function initPoolTestScanner(root) {
         btnCapture: root.querySelector('[data-pt="btnCapture"]'),
         btnWB: root.querySelector('[data-pt="btnWB"]'),
         fileInput: root.querySelector('[data-pt="fileInput"]'),
+        // photo buttons + second input
+        btnTakePhoto: root.querySelector('[data-pt="btnTakePhoto"]'),
+        btnChoosePhoto: root.querySelector('[data-pt="btnChoosePhoto"]'),
+        takeInput: root.querySelector('[data-pt="takeInput"]'),
+
+        // wrappers we show/hide based on screen size
+        liveControls: root.querySelector('[data-pt="liveControls"]'),
+        cameraRow: root.querySelector('[data-pt="cameraRow"]'),
 
         // camera selection
         cameraSelect: root.querySelector('[data-pt="cameraSelect"]'),
@@ -254,12 +262,22 @@ export function initPoolTestScanner(root) {
         btnAutoCrop: root.querySelector('[data-pt="btnAutoCrop"]'),
         btnUseCrop: root.querySelector('[data-pt="btnUseCrop"]'),
         btnCancelCrop: root.querySelector('[data-pt="btnCancelCrop"]')
+
     };
 
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
     let stream = null;
     let whiteBalance = { r: 1, g: 1, b: 1 };
+    // --- UI mode (phones vs tablet/desktop) ----------------------------
+    function applyScannerMode() {
+    const isSmall = window.matchMedia("(max-width: 900px)").matches;
+
+    // Phones: hide live camera controls + camera picker (use Take/Choose Photo)
+    if (els.liveControls) els.liveControls.style.display = isSmall ? "none" : "";
+    if (els.cameraRow) els.cameraRow.style.display = isSmall ? "none" : "";
+    }
+    window.addEventListener("resize", applyScannerMode);
 
     let poolGallons = null;
     let poolCollapsed = false;
@@ -1162,6 +1180,9 @@ export function initPoolTestScanner(root) {
 
     els.btnStart?.addEventListener("click", startCamera);
     els.btnCapture?.addEventListener("click", () => analyze(drawFromVideo()));
+    // Phone-first buttons
+    els.btnTakePhoto?.addEventListener("click", () => els.takeInput?.click());
+    els.btnChoosePhoto?.addEventListener("click", () => els.fileInput?.click());
 
     els.cameraSelect?.addEventListener("change", () => {
         const id = getSelectedCameraId();
@@ -1171,21 +1192,25 @@ export function initPoolTestScanner(root) {
         if (stream) startCamera();
     });
 
-    // Upload/Take Photo -> Preview -> Use Crop
-    els.fileInput?.addEventListener("change", async (e) => {
-        const f = e.target.files?.[0];
-        if (!f) return;
+// Take Photo / Choose Photo -> Preview -> Use Crop
+async function handlePickedFile(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
 
-        try {
-            setStatus("Loading photo…");
-            const img = await loadFileToImageIOSReliable(f);
-            showPreview(img);
-        } catch {
-            setStatus("Couldn’t load that photo. On iPhone: Settings → Camera → Formats → Most Compatible (JPEG). Then try again.");
-        } finally {
-            e.target.value = ""; // allow same file twice
-        }
-    });
+    try {
+        setStatus("Loading photo…");
+        const img = await loadFileToImageIOSReliable(f);
+        showPreview(img);
+    } catch {
+        setStatus("Couldn’t load that photo. On iPhone: Settings → Camera → Formats → Most Compatible (JPEG). Then try again.");
+    } finally {
+        e.target.value = ""; // allow same file twice
+    }
+}
+
+els.fileInput?.addEventListener("change", handlePickedFile);
+els.takeInput?.addEventListener("change", handlePickedFile);
+
 
     els.btnUseCrop?.addEventListener("click", analyzeFromPreviewCrop);
 
@@ -1238,6 +1263,8 @@ export function initPoolTestScanner(root) {
     loadPoolSetup();
     renderHistoryCharts();
     listCameras();
+    applyScannerMode();
+
 
     if (isIOS) {
         els.btnStart && (els.btnStart.textContent = "Live Camera (beta)");
