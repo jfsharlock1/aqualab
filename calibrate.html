@@ -1,0 +1,43 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PoolTest — Calibration Lab</title>
+    <link rel="stylesheet" href="./css/pooltest.css" />
+</head>
+<body>
+    <header class="pt-header">
+        <div class="logo"></div>
+        <div class="titling">
+            <h1>Calibration Lab</h1>
+            <div class="muted">Explain to judges how the camera & color math work.</div>
+        </div>
+        <nav class="pt-nav">
+            <a href="./index.html">Back to Scanner</a>
+        </nav>
+    </header>
+
+    <main class="container">
+        <section class="card">
+            <h2>How the Scanner Works</h2>
+            <p class="muted">
+                This page is for explaining the science: light, color sensors, and how our app
+                turns RGB values into pool-chemistry numbers.
+            </p>
+            <ul>
+                <li>Camera first measures raw RGB colors from each pad.</li>
+                <li>We divide by a white-balance value so different lighting looks consistent.</li>
+                <li>
+                    For each pad, we compare the measured color to the brand’s color chart.
+                    The closest match gives us the ppm value.
+                </li>
+                <li>
+                    Those ppm values plus the pool gallon estimate feed into standard
+                    pool-service formulas to calculate how much chemical to add.
+                </li>
+            </ul>
+        </section>
+    </main>
+</body>
+</html>

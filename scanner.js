@@ -1,0 +1,1250 @@
+﻿// scanner.js (EasyTest-only)
+// Features:
+// - EasyTest 7-in-1 swatches
+// - Upload/Take Photo -> Preview crop -> Use Crop -> Analyze (iOS reliable orientation handling)
+// - Live camera capture (optional) + ROI crop attempt
+// - White balance supported
+// - Multiple camera selection + remembers device
+
+// --- EasyTest configuration ---------------------------------------
+
+const EASYTEST_SWATCHES = {
+    hardness: [
+        { value: 0, rgb: [111, 146, 36] },
+        { value: 25, rgb: [130, 113, 34] },
+        { value: 50, rgb: [145, 96, 30] },
+        { value: 120, rgb: [154, 69, 5] },
+        { value: 250, rgb: [191, 53, 2] },
+        { value: 425, rgb: [212, 58, 1] }
+    ],
+    totalCl: [
+        { value: 0, rgb: [253, 247, 74] },
+        { value: 0.5, rgb: [235, 245, 73] },
+        { value: 1, rgb: [206, 239, 78] },
+        { value: 3, rgb: [166, 230, 80] },
+        { value: 5, rgb: [92, 223, 88] },
+        { value: 10, rgb: [101, 216, 155] },
+        { value: 20, rgb: [59, 217, 132] }
+    ],
+    freeCl: [
+        { value: 0, rgb: [250, 250, 250] },
+        { value: 0.5, rgb: [239, 222, 237] },
+        { value: 1, rgb: [233, 223, 231] },
+        { value: 3, rgb: [236, 175, 227] },
+        { value: 5, rgb: [226, 128, 213] },
+        { value: 10, rgb: [200, 58, 188] },
+        { value: 20, rgb: [177, 61, 167] }
+    ],
+    bromine: [
+        { value: 0, rgb: [248, 232, 236] },
+        { value: 1, rgb: [237, 228, 229] },
+        { value: 2, rgb: [249, 212, 218] },
+        { value: 6, rgb: [250, 183, 204] },
+        { value: 10, rgb: [254, 115, 171] },
+        { value: 20, rgb: [252, 96, 170] },
+        { value: 40, rgb: [247, 90, 157] }
+    ],
+    alk: [
+        { value: 0, rgb: [254, 242, 94] },
+        { value: 40, rgb: [217, 240, 75] },
+        { value: 80, rgb: [159, 222, 114] },
+        { value: 120, rgb: [57, 204, 155] },
+        { value: 180, rgb: [25, 196, 193] },
+        { value: 240, rgb: [0, 179, 203] },
+        { value: 360, rgb: [1, 154, 221] }
+    ],
+    cya: [
+        { value: 0, rgb: [204, 189, 152] },
+        { value: 40, rgb: [244, 212, 137] }, // chart says 30-50 -> use 40
+        { value: 100, rgb: [231, 158, 95] },
+        { value: 150, rgb: [231, 128, 109] },
+        { value: 240, rgb: [214, 144, 180] }
+    ],
+    ph: [
+        { value: 6.0, rgb: [253, 216, 3] },
+        { value: 6.4, rgb: [254, 204, 1] },
+        { value: 6.8, rgb: [254, 176, 1] },
+        { value: 7.2, rgb: [254, 167, 0] },
+        { value: 7.6, rgb: [254, 146, 1] },
+        { value: 8.2, rgb: [255, 69, 12] },
+        { value: 9.0, rgb: [253, 3, 98] }
+    ]
+};
+
+const EASYTEST_CFG = {
+    name: "EasyTest 7-in-1",
+    layout: {
+        orientation: "vertical",
+        colFrac: 0.5,
+        padHeightFrac: 0.055,
+        firstPadFrac: 0.14,
+        padSpacingFrac: 0.095
+    },
+    pads: [
+        { key: "hardness", label: "Total Hardness", index: 0, swatches: EASYTEST_SWATCHES.hardness },
+        { key: "freeCl", label: "Free Chlorine", index: 1, swatches: EASYTEST_SWATCHES.freeCl },
+        { key: "bromine", label: "Bromine", index: 2, swatches: EASYTEST_SWATCHES.bromine },
+        { key: "totalCl", label: "Total Chlorine", index: 3, swatches: EASYTEST_SWATCHES.totalCl },
+        { key: "cya", label: "Cyanuric Acid", index: 4, swatches: EASYTEST_SWATCHES.cya },
+        { key: "alk", label: "Total Alkalinity", index: 5, swatches: EASYTEST_SWATCHES.alk },
+        { key: "ph", label: "pH", index: 6, swatches: EASYTEST_SWATCHES.ph }
+    ]
+};
+
+// --- helpers -----------------------------------------------------
+
+function formatWeightOz(oz) {
+    if (!isFinite(oz) || oz <= 0) return null;
+    if (oz < 16) return `${oz.toFixed(1)} oz`;
+    const lbs = oz / 16;
+    if (lbs < 10) return `${lbs.toFixed(1)} lb`;
+    return `${Math.round(lbs)} lb`;
+}
+
+function rgbDistance2(a, rgb) {
+    const dr = a.r - rgb[0];
+    const dg = a.g - rgb[1];
+    const db = a.b - rgb[2];
+    return dr * dr + dg * dg + db * db;
+}
+
+function chooseNearestSwatch(rgb, swatches) {
+    if (!rgb || !swatches || !swatches.length) return null;
+    let best = swatches[0];
+    let bestD = rgbDistance2(rgb, best.rgb);
+    for (let i = 1; i < swatches.length; i++) {
+        const d = rgbDistance2(rgb, swatches[i].rgb);
+        if (d < bestD) { bestD = d; best = swatches[i]; }
+    }
+    return best;
+}
+
+// fallback if pad sampling fails
+function rgbToChemistryFallback(avgRgb) {
+    const { r, g, b } = avgRgb;
+    const ph = Math.min(9.0, Math.max(6.0, 6.0 + (r - b) / 40));
+    const freeCl = Math.min(10, Math.max(0, (g - 80) / 25));
+    const totalCl = Math.min(20, Math.max(freeCl, freeCl + 0.5));
+    const bromine = Math.min(40, Math.max(0, totalCl * 2.25));
+    const brightness = (r + g + b) / 3;
+    const hardness = Math.min(425, Math.max(0, (brightness - 60) * 3));
+    const alk = Math.min(360, Math.max(0, (r + g + b) / 4));
+    const cya = Math.min(240, Math.max(0, (b - 60) * 2));
+    return {
+        ph: Number(ph.toFixed(2)),
+        freeCl: Number(freeCl.toFixed(2)),
+        totalCl: Number(totalCl.toFixed(2)),
+        bromine: Number(bromine.toFixed(1)),
+        hardness: Math.round(hardness),
+        alk: Math.round(alk),
+        cya: Math.round(cya)
+    };
+}
+
+function rgbToChemistryEasyTest(padColors) {
+    if (!padColors || !Object.keys(padColors).length) {
+        return rgbToChemistryFallback({ r: 150, g: 150, b: 150 });
+    }
+
+    const padByKey = {};
+    EASYTEST_CFG.pads.forEach(p => (padByKey[p.key] = p));
+
+    const result = {};
+
+    function valueFromPad(key, fallback) {
+        const rgb = padColors[key];
+        const pad = padByKey[key];
+        if (rgb && pad && pad.swatches && pad.swatches.length) {
+            const sw = chooseNearestSwatch(rgb, pad.swatches);
+            return sw ? sw.value : fallback();
+        }
+        return fallback();
+    }
+
+    result.ph = valueFromPad("ph", () => 7.4);
+    result.freeCl = valueFromPad("freeCl", () => 2.0);
+    result.totalCl = valueFromPad("totalCl", () => Math.max(result.freeCl, result.freeCl + 0.5));
+
+    const bromFromPad = valueFromPad("bromine", () => null);
+    result.bromine = bromFromPad != null ? bromFromPad : (result.totalCl * 2.25);
+
+    result.hardness = valueFromPad("hardness", () => 250);
+    result.alk = valueFromPad("alk", () => 100);
+    result.cya = valueFromPad("cya", () => 40);
+
+    result.ph = Number(result.ph.toFixed(2));
+    result.freeCl = Number(result.freeCl.toFixed(2));
+    result.totalCl = Number(result.totalCl.toFixed(2));
+    result.bromine = Number(result.bromine.toFixed(1));
+    result.hardness = Math.round(result.hardness);
+    result.alk = Math.round(result.alk);
+    result.cya = Math.round(result.cya);
+
+    return result;
+}
+
+// --- main --------------------------------------------------------
+
+export function initPoolTestScanner(root) {
+    const els = {
+        video: root.querySelector('[data-pt="video"]'),
+        canvas: root.querySelector('[data-pt="canvas"]'),
+        status: root.querySelector('[data-pt="status"]'),
+
+        btnStart: root.querySelector('[data-pt="btnStart"]'),
+        btnCapture: root.querySelector('[data-pt="btnCapture"]'),
+        btnWB: root.querySelector('[data-pt="btnWB"]'),
+        fileInput: root.querySelector('[data-pt="fileInput"]'),
+
+        // camera selection
+        cameraSelect: root.querySelector('[data-pt="cameraSelect"]'),
+
+        // pool setup
+        poolToggle: root.querySelector('[data-pt="poolToggle"]'),
+        poolToggleGlobal: document.querySelector('[data-pt="poolToggleGlobal"]'),
+
+        shape: root.querySelector('[data-pt="shape"]'),
+        rectFields: root.querySelector('[data-pt="rectFields"]'),
+        roundFields: root.querySelector('[data-pt="roundFields"]'),
+        ovalFields: root.querySelector('[data-pt="ovalFields"]'),
+        rectLen: root.querySelector('[data-pt="rectLen"]'),
+        rectWid: root.querySelector('[data-pt="rectWid"]'),
+        roundDia: root.querySelector('[data-pt="roundDia"]'),
+        ovalLen: root.querySelector('[data-pt="ovalLen"]'),
+        ovalWid: root.querySelector('[data-pt="ovalWid"]'),
+        depthShallow: root.querySelector('[data-pt="depthShallow"]'),
+        depthDeep: root.querySelector('[data-pt="depthDeep"]'),
+        gallonsManual: root.querySelector('[data-pt="gallonsManual"]'),
+        btnCalcGallons: root.querySelector('[data-pt="btnCalcGallons"]'),
+        gallonsDisplay: root.querySelector('[data-pt="gallonsDisplay"]'),
+
+        // results bars/tags
+        barPh: root.querySelector('[data-pt="barPh"]'),
+        barFCl: root.querySelector('[data-pt="barFCl"]'),
+        barTCl: root.querySelector('[data-pt="barTCl"]'),
+        barBr: root.querySelector('[data-pt="barBr"]'),
+        barHard: root.querySelector('[data-pt="barHard"]'),
+        barAlk: root.querySelector('[data-pt="barAlk"]'),
+        barCya: root.querySelector('[data-pt="barCya"]'),
+
+        tagPh: root.querySelector('[data-pt="tagPh"]'),
+        tagFCl: root.querySelector('[data-pt="tagFCl"]'),
+        tagTCl: root.querySelector('[data-pt="tagTCl"]'),
+        tagBr: root.querySelector('[data-pt="tagBr"]'),
+        tagHard: root.querySelector('[data-pt="tagHard"]'),
+        tagAlk: root.querySelector('[data-pt="tagAlk"]'),
+        tagCya: root.querySelector('[data-pt="tagCya"]'),
+
+        recs: root.querySelector('[data-pt="recs"]'),
+
+        // history
+        chartPh: root.querySelector('[data-pt="chartPh"]'),
+        chartFCl: root.querySelector('[data-pt="chartFCl"]'), // now used for Chlorine (Free + Total)
+        chartAlk: root.querySelector('[data-pt="chartAlk"]'),
+        chartCya: root.querySelector('[data-pt="chartCya"]'),
+        btnRecalc: root.querySelector('[data-pt="btnRecalc"]'),
+        btnClearData: root.querySelector('[data-pt="btnClearData"]'),
+
+        // preview + crop UI
+        previewWrap: root.querySelector('[data-pt="previewWrap"]'),
+        previewStage: root.querySelector('[data-pt="previewStage"]'),
+        previewCanvas: root.querySelector('[data-pt="previewCanvas"]'),
+        cropBox: root.querySelector('[data-pt="cropBox"]'),
+        cropHandle: root.querySelector('[data-pt="cropHandle"]'),
+        btnAutoCrop: root.querySelector('[data-pt="btnAutoCrop"]'),
+        btnUseCrop: root.querySelector('[data-pt="btnUseCrop"]'),
+        btnCancelCrop: root.querySelector('[data-pt="btnCancelCrop"]')
+    };
+
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+    let stream = null;
+    let whiteBalance = { r: 1, g: 1, b: 1 };
+
+    let poolGallons = null;
+    let poolCollapsed = false;
+    let lastVals = null;
+
+    const HISTORY_KEY = "pt_history_v2";
+    const POOL_SETUP_KEY = "pt_pool_setup_v1";
+    const CAM_KEY = "pt_selected_camera_v1";
+    const MAX_HISTORY = 365;
+
+    // NOTE: "chlorine" is the combined chart (free + total) on chartFCl canvas
+    const historyCharts = { ph: null, chlorine: null, alk: null, cya: null };
+
+    const setStatus = msg => { if (els.status) els.status.textContent = msg || ""; };
+
+    // --- camera selection -------------------------------------------
+
+    async function listCameras() {
+        if (!navigator.mediaDevices?.enumerateDevices || !els.cameraSelect) return;
+
+        let devices = [];
+        try {
+            devices = await navigator.mediaDevices.enumerateDevices();
+        } catch {
+            return;
+        }
+
+        const cams = devices.filter(d => d.kind === "videoinput");
+        const saved = (() => { try { return localStorage.getItem(CAM_KEY) || ""; } catch { return ""; } })();
+
+        // Preserve first option (Default)
+        els.cameraSelect.innerHTML = `<option value="">Default camera</option>`;
+
+        cams.forEach((cam, idx) => {
+            const opt = document.createElement("option");
+            opt.value = cam.deviceId;
+
+            // On iOS labels are often empty until permission is granted at least once
+            const label = (cam.label && cam.label.trim())
+                ? cam.label
+                : `Camera ${idx + 1}`;
+
+            opt.textContent = label;
+            if (saved && saved === cam.deviceId) opt.selected = true;
+
+            els.cameraSelect.appendChild(opt);
+        });
+    }
+
+    function getSelectedCameraId() {
+        if (!els.cameraSelect) return "";
+        return els.cameraSelect.value || "";
+    }
+
+    function saveSelectedCameraId(deviceId) {
+        try { localStorage.setItem(CAM_KEY, deviceId || ""); } catch { }
+    }
+
+    // --- history ----------------------------------------------------
+
+    function loadHistory() {
+        try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); }
+        catch { return []; }
+    }
+
+    function saveHistory(arr) {
+        try { localStorage.setItem(HISTORY_KEY, JSON.stringify(arr)); } catch { }
+    }
+
+    function recordReading(vals) {
+        const history = loadHistory();
+        history.push({
+            t: Date.now(),
+            gallons: poolGallons,
+            ph: vals.ph,
+            freeCl: vals.freeCl,
+            totalCl: vals.totalCl,
+            bromine: vals.bromine,
+            hardness: vals.hardness,
+            alk: vals.alk,
+            cya: vals.cya
+        });
+        if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+        saveHistory(history);
+        renderHistoryCharts(history);
+    }
+
+    function renderHistoryCharts(historyOpt) {
+        if (typeof Chart === "undefined") return;
+        const history = historyOpt || loadHistory();
+
+        if (!history.length) {
+            Object.keys(historyCharts).forEach(k => {
+                if (historyCharts[k]) { historyCharts[k].destroy(); historyCharts[k] = null; }
+            });
+            return;
+        }
+
+        const labels = history.map(h => new Date(h.t).toLocaleString(undefined, {
+            month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit"
+        }));
+
+        const series = {
+            ph: history.map(h => h.ph),
+            freeCl: history.map(h => h.freeCl),
+            totalCl: history.map(h => h.totalCl),
+            alk: history.map(h => h.alk),
+            cya: history.map(h => h.cya)
+        };
+
+        // Supports multi-dataset charts + optional options overrides
+        function upsertChart(key, yLabel, canvas, datasets, optionsOverride) {
+            if (!canvas || !canvas.getContext) return;
+
+            const baseOptions = {
+                responsive: true,
+                scales: {
+                    y: { title: { display: true, text: yLabel } },
+                    x: { ticks: { maxRotation: 0, minRotation: 0 } }
+                },
+                plugins: { legend: { display: datasets.length > 1 } }
+            };
+
+            const mergedOptions = Object.assign({}, baseOptions, optionsOverride || {});
+            // Merge nested plugins if provided
+            if (optionsOverride?.plugins) {
+                mergedOptions.plugins = Object.assign({}, baseOptions.plugins || {}, optionsOverride.plugins);
+            }
+            if (optionsOverride?.scales) {
+                mergedOptions.scales = Object.assign({}, baseOptions.scales || {}, optionsOverride.scales);
+            }
+
+            if (!historyCharts[key]) {
+                historyCharts[key] = new Chart(canvas.getContext("2d"), {
+                    type: "line",
+                    data: { labels, datasets },
+                    options: mergedOptions
+                });
+            } else {
+                const c = historyCharts[key];
+                c.data.labels = labels;
+                c.data.datasets = datasets;
+                c.options = mergedOptions;
+                c.update();
+            }
+        }
+
+        upsertChart("ph", "pH", els.chartPh, [
+            { label: "pH", data: series.ph, tension: 0.3, pointRadius: 2 }
+        ], {
+            plugins: { legend: { display: false } }
+        });
+
+        // Chlorine chart: Free + Total + tooltip Combined Chlorine (Total - Free)
+        upsertChart("chlorine", "ppm", els.chartFCl, [
+            { label: "Free Chlorine", data: series.freeCl, tension: 0.3, pointRadius: 2 },
+            { label: "Total Chlorine", data: series.totalCl, tension: 0.3, pointRadius: 2, borderDash: [6, 4] }
+        ], {
+            plugins: {
+                legend: { display: true },
+                tooltip: {
+                    callbacks: {
+                        // Add a footer line under the normal tooltip lines
+                        footer: (tooltipItems) => {
+                            // tooltipItems is an array; use the shared x-index
+                            const i = tooltipItems?.[0]?.dataIndex;
+                            if (i == null) return "";
+
+                            const fc = Number(series.freeCl[i]);
+                            const tc = Number(series.totalCl[i]);
+
+                            if (!isFinite(fc) || !isFinite(tc)) return "";
+                            const cc = Math.max(0, tc - fc);
+
+                            return `Combined Chlorine: ${cc.toFixed(2)} ppm`;
+                        }
+                    }
+                }
+            }
+        });
+
+        upsertChart("alk", "ppm", els.chartAlk, [
+            { label: "Total Alkalinity (ppm)", data: series.alk, tension: 0.3, pointRadius: 2 }
+        ], {
+            plugins: { legend: { display: false } }
+        });
+
+        upsertChart("cya", "ppm", els.chartCya, [
+            { label: "Cyanuric Acid (ppm)", data: series.cya, tension: 0.3, pointRadius: 2 }
+        ], {
+            plugins: { legend: { display: false } }
+        });
+    }
+
+    // --- camera -----------------------------------------------------
+
+    async function startCamera() {
+        if (!navigator.mediaDevices?.getUserMedia) {
+            setStatus("Live camera not supported. Use Upload/Take Photo.");
+            return;
+        }
+
+        // iOS: live camera can be pickier; file-input camera is most reliable
+        if (isIOS && location.protocol !== "https:" && location.hostname !== "localhost") {
+            setStatus("On iPhone/iPad, live camera usually requires HTTPS. Use Upload/Take Photo for best reliability.");
+            return;
+        }
+
+        stopCamera();
+
+        const deviceId = getSelectedCameraId();
+        const constraints = {
+            audio: false,
+            video: deviceId
+                ? { deviceId: { exact: deviceId } }
+                : { facingMode: { ideal: "environment" } }
+        };
+
+        try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            els.video.srcObject = stream;
+            await els.video.play();
+
+            els.btnCapture && (els.btnCapture.disabled = false);
+            els.btnWB && (els.btnWB.disabled = false);
+
+            // After permission, camera labels appear on many browsers (esp iOS)
+            await listCameras();
+
+            setStatus("Live camera ready. Line the strip up inside the dashed box.");
+        } catch (err) {
+            setStatus("Couldn’t start live camera. Use Upload/Take Photo instead.");
+        }
+    }
+
+    function stopCamera() {
+        try { stream?.getTracks?.().forEach(t => t.stop()); } catch { }
+        stream = null;
+    }
+
+    // Simple ROI crop attempt (camera mode only)
+    function cropToStripROI() {
+        if (!els.canvas) return;
+        const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
+        const W = els.canvas.width, H = els.canvas.height;
+
+        const targetW = 220;
+        const s = Math.min(1, targetW / W);
+        const w = Math.max(60, Math.round(W * s));
+        const h = Math.max(60, Math.round(H * s));
+
+        const off = document.createElement("canvas");
+        off.width = w; off.height = h;
+        const octx = off.getContext("2d", { willReadFrequently: true });
+        octx.drawImage(els.canvas, 0, 0, W, H, 0, 0, w, h);
+
+        const img = octx.getImageData(0, 0, w, h);
+        const d = img.data;
+
+        let minX = w, minY = h, maxX = 0, maxY = 0;
+        let hits = 0;
+
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const r = d[i], g = d[i + 1], b = d[i + 2];
+                const mx = Math.max(r, g, b);
+                const mn = Math.min(r, g, b);
+                const v = mx;
+                const sat = mx === 0 ? 0 : (mx - mn) / mx;
+
+                // "white-ish" strip body
+                if (v >= 190 && sat <= 0.25) {
+                    hits++;
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x > maxX) maxX = x;
+                    if (y > maxY) maxY = y;
+                }
+            }
+        }
+
+        const hitFrac = hits / (w * h);
+        if (hits < 300 || hitFrac < 0.004) return;
+
+        const padX = Math.round((maxX - minX) * 0.35) + 10;
+        const padY = Math.round((maxY - minY) * 0.10) + 10;
+
+        minX = Math.max(0, minX - padX);
+        maxX = Math.min(w - 1, maxX + padX);
+        minY = Math.max(0, minY - padY);
+        maxY = Math.min(h - 1, maxY + padY);
+
+        const scaleUp = 1 / s;
+        const rx = Math.round(minX * scaleUp);
+        const ry = Math.round(minY * scaleUp);
+        const rw = Math.round((maxX - minX + 1) * scaleUp);
+        const rh = Math.round((maxY - minY + 1) * scaleUp);
+
+        const cx = Math.max(0, Math.min(W - 1, rx));
+        const cy = Math.max(0, Math.min(H - 1, ry));
+        const cw = Math.max(20, Math.min(rw, W - cx));
+        const ch = Math.max(20, Math.min(rh, H - cy));
+
+        try {
+            const src = ctx.getImageData(cx, cy, cw, ch);
+            els.canvas.width = cw;
+            els.canvas.height = ch;
+            els.canvas.getContext("2d", { willReadFrequently: true }).putImageData(src, 0, 0);
+        } catch { }
+    }
+
+    function drawFromVideo() {
+        const w = els.video.videoWidth || 1280;
+        const h = els.video.videoHeight || 720;
+        els.canvas.width = w;
+        els.canvas.height = h;
+        const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(els.video, 0, 0, w, h);
+        cropToStripROI();
+        return els.canvas.getContext("2d", { willReadFrequently: true });
+    }
+
+    // --- preview + manual crop (uploads) ----------------------------
+
+    let previewImg = null;   // Image()
+    let previewFit = null;   // {scale, dx, dy, iw, ih, cw, ch}
+
+    function showPreview(img) {
+        previewImg = img;
+        if (!els.previewWrap || !els.previewCanvas || !els.previewStage || !els.cropBox) return;
+
+        els.previewWrap.style.display = "";
+        els.canvas && (els.canvas.hidden = true);
+
+        drawPreviewCanvas();
+
+        // default tall/skinny crop
+        els.cropBox.style.left = "30%";
+        els.cropBox.style.top = "8%";
+        els.cropBox.style.width = "40%";
+        els.cropBox.style.height = "84%";
+
+        setStatus("Adjust the crop box around the strip, then click Use Crop.");
+    }
+
+    function hidePreview() {
+        if (els.previewWrap) els.previewWrap.style.display = "none";
+        previewImg = null;
+        previewFit = null;
+    }
+
+    function drawPreviewCanvas() {
+        const c = els.previewCanvas;
+        const stage = els.previewStage;
+        if (!c || !stage || !previewImg) return;
+
+        const rect = stage.getBoundingClientRect();
+        const cw = Math.max(10, Math.round(rect.width));
+        const ch = Math.max(10, Math.round(rect.height));
+        c.width = cw;
+        c.height = ch;
+
+        const ctx = c.getContext("2d", { willReadFrequently: true });
+        ctx.clearRect(0, 0, cw, ch);
+
+        const iw = previewImg.naturalWidth || previewImg.width;
+        const ih = previewImg.naturalHeight || previewImg.height;
+
+        const scale = Math.min(cw / iw, ch / ih);
+        const dw = Math.round(iw * scale);
+        const dh = Math.round(ih * scale);
+        const dx = Math.round((cw - dw) / 2);
+        const dy = Math.round((ch - dh) / 2);
+
+        ctx.drawImage(previewImg, 0, 0, iw, ih, dx, dy, dw, dh);
+        previewFit = { scale, dx, dy, iw, ih, cw, ch };
+    }
+
+    function getCropRectInImagePixels() {
+        if (!previewFit || !els.cropBox || !els.previewStage) return null;
+
+        const stageRect = els.previewStage.getBoundingClientRect();
+        const boxRect = els.cropBox.getBoundingClientRect();
+
+        const bx = boxRect.left - stageRect.left;
+        const by = boxRect.top - stageRect.top;
+        const bw = boxRect.width;
+        const bh = boxRect.height;
+
+        const { scale, dx, dy, iw, ih } = previewFit;
+
+        // clamp crop to drawn image area
+        const imgX1 = dx, imgY1 = dy;
+        const imgX2 = dx + iw * scale;
+        const imgY2 = dy + ih * scale;
+
+        const x1 = Math.max(imgX1, bx);
+        const y1 = Math.max(imgY1, by);
+        const x2 = Math.min(imgX2, bx + bw);
+        const y2 = Math.min(imgY2, by + bh);
+
+        const sw = (x2 - x1) / scale;
+        const sh = (y2 - y1) / scale;
+        if (sw < 10 || sh < 10) return null;
+
+        const sx = (x1 - dx) / scale;
+        const sy = (y1 - dy) / scale;
+
+        return {
+            sx: Math.max(0, Math.round(sx)),
+            sy: Math.max(0, Math.round(sy)),
+            sw: Math.min(iw, Math.round(sw)),
+            sh: Math.min(ih, Math.round(sh))
+        };
+    }
+
+    function analyzeFromPreviewCrop() {
+        const r = getCropRectInImagePixels();
+        if (!r || !previewImg) {
+            setStatus("Crop box is not over the image (or too small).");
+            return;
+        }
+
+        const maxW = 1600;
+        const s = Math.min(1, maxW / r.sw);
+
+        els.canvas.width = Math.round(r.sw * s);
+        els.canvas.height = Math.round(r.sh * s);
+
+        const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(previewImg, r.sx, r.sy, r.sw, r.sh, 0, 0, els.canvas.width, els.canvas.height);
+
+        hidePreview();
+        analyze(ctx);
+    }
+
+    // Crop box drag + resize
+    (function wireCropBox() {
+        if (!els.cropBox || !els.cropHandle || !els.previewStage) return;
+
+        const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+        let mode = null; // "drag" | "resize"
+        let start = null;
+
+        function pctFromPx(x, y, w, h) {
+            const stage = els.previewStage.getBoundingClientRect();
+            return {
+                left: (x / stage.width) * 100,
+                top: (y / stage.height) * 100,
+                width: (w / stage.width) * 100,
+                height: (h / stage.height) * 100
+            };
+        }
+
+        function boxPx() {
+            const stage = els.previewStage.getBoundingClientRect();
+            const box = els.cropBox.getBoundingClientRect();
+            return { x: box.left - stage.left, y: box.top - stage.top, w: box.width, h: box.height, sw: stage.width, sh: stage.height };
+        }
+
+        function down(ev, which) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            mode = which;
+            els.cropBox.setPointerCapture(ev.pointerId);
+
+            const b = boxPx();
+            start = { px: ev.clientX, py: ev.clientY, x: b.x, y: b.y, w: b.w, h: b.h, sw: b.sw, sh: b.sh };
+        }
+
+        function move(ev) {
+            if (!mode || !start) return;
+            ev.preventDefault();
+
+            const dx = ev.clientX - start.px;
+            const dy = ev.clientY - start.py;
+
+            let x = start.x, y = start.y, w = start.w, h = start.h;
+
+            if (mode === "drag") {
+                x = clamp(start.x + dx, 0, start.sw - start.w);
+                y = clamp(start.y + dy, 0, start.sh - start.h);
+            } else {
+                const minW = 40, minH = 80;
+                w = clamp(start.w + dx, minW, start.sw - start.x);
+                h = clamp(start.h + dy, minH, start.sh - start.y);
+            }
+
+            const p = pctFromPx(x, y, w, h);
+            els.cropBox.style.left = p.left + "%";
+            els.cropBox.style.top = p.top + "%";
+            els.cropBox.style.width = p.width + "%";
+            els.cropBox.style.height = p.height + "%";
+        }
+
+        function up(ev) {
+            if (!mode) return;
+            mode = null;
+            start = null;
+            try { els.cropBox.releasePointerCapture(ev.pointerId); } catch { }
+        }
+
+        els.cropBox.addEventListener("pointerdown", (ev) => {
+            if (ev.target === els.cropHandle) return;
+            down(ev, "drag");
+        });
+        els.cropHandle.addEventListener("pointerdown", (ev) => down(ev, "resize"));
+
+        window.addEventListener("pointermove", move, { passive: false });
+        window.addEventListener("pointerup", up);
+    })();
+
+    window.addEventListener("resize", () => { if (previewImg) drawPreviewCanvas(); });
+
+    // --- sampling ---------------------------------------------------
+
+    function sampleStripe(ctx) {
+        const w = els.canvas.width;
+        const h = els.canvas.height;
+        const roi = {
+            x: Math.round(w * 0.2),
+            y: Math.round(h * 0.45),
+            w: Math.round(w * 0.6),
+            h: Math.round(h * 0.1)
+        };
+        const data = ctx.getImageData(roi.x, roi.y, roi.w, roi.h).data;
+        let r = 0, g = 0, b = 0, c = 0;
+        for (let i = 0; i < data.length; i += 4) {
+            r += data[i] / whiteBalance.r;
+            g += data[i + 1] / whiteBalance.g;
+            b += data[i + 2] / whiteBalance.b;
+            c++;
+        }
+        return { r: r / c, g: g / c, b: b / c };
+    }
+
+    function samplePadsEasyTest(ctx) {
+        const w = els.canvas.width;
+        const h = els.canvas.height;
+
+        // 1) Scan down the center line and find "colored" segments
+        const x = Math.floor(w * 0.5);
+        const img = ctx.getImageData(0, 0, w, h).data;
+
+        function getPixel(y) {
+            const i = (y * w + x) * 4;
+            const r = img[i], g = img[i + 1], b = img[i + 2];
+            const v = Math.max(r, g, b);
+            const sat = v === 0 ? 0 : (v - Math.min(r, g, b)) / v; // 0..1
+            return { r, g, b, v, sat };
+        }
+
+        // "colored-ish": not super bright white, and has some saturation
+        const colored = [];
+        for (let y = 0; y < h; y++) {
+            const p = getPixel(y);
+            colored[y] = (p.v < 245 && p.sat > 0.08);
+        }
+
+        // collect segments
+        const segments = [];
+        let inSeg = false, start = 0;
+        for (let y = 0; y < h; y++) {
+            if (colored[y] && !inSeg) { inSeg = true; start = y; }
+            if (!colored[y] && inSeg) {
+                const end = y - 1;
+                inSeg = false;
+                if (end - start > 25) segments.push([start, end]);
+            }
+        }
+        if (inSeg) segments.push([start, h - 1]);
+
+        // If we found too many tiny segments, keep the 7 biggest
+        segments.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
+        const top7 = segments.slice(0, 7).sort((a, b) => a[0] - b[0]);
+
+        // fallback to old method if detection failed
+        if (top7.length !== 7) {
+            return {};
+        }
+
+        // 2) Sample each detected pad region (box around center column)
+        const padColors = {};
+        const padW = Math.max(20, Math.floor(w * 0.34));
+        const x1 = Math.max(0, x - Math.floor(padW / 2));
+        const x2 = Math.min(w, x1 + padW);
+
+        for (let i = 0; i < 7; i++) {
+            const [s, e] = top7[i];
+            const y1 = Math.max(0, s + 6);
+            const y2 = Math.min(h, e - 6);
+            if (y2 <= y1) continue;
+
+            const data = ctx.getImageData(x1, y1, x2 - x1, y2 - y1).data;
+
+            let r = 0, g = 0, b = 0, c = 0;
+            for (let k = 0; k < data.length; k += 4) {
+                r += data[k] / whiteBalance.r;
+                g += data[k + 1] / whiteBalance.g;
+                b += data[k + 2] / whiteBalance.b;
+                c++;
+            }
+
+            const key = EASYTEST_CFG.pads[i].key; // top→bottom mapping
+            padColors[key] = { r: r / c, g: g / c, b: b / c };
+        }
+
+        return padColors;
+    }
+
+    function setWBAt(x, y) {
+        const d = els.canvas
+            .getContext("2d", { willReadFrequently: true })
+            .getImageData(x, y, 1, 1).data;
+
+        const avg = (d[0] + d[1] + d[2]) / 3 || 1;
+        whiteBalance = { r: d[0] / avg, g: d[1] / avg, b: d[2] / avg };
+        setStatus("White balance set. Capture or upload an EasyTest strip.");
+    }
+
+    // --- bars + tips ------------------------------------------------
+
+    const pct = (v, min, max) => Math.max(0, Math.min(100, ((v - min) / (max - min)) * 100));
+
+    function tag(el, state, text) {
+        if (!el) return;
+        let cls = "tag ";
+        if (state === "ok") cls += "ok";
+        else if (state === "bad") cls += "bad";
+        else cls += "warn";
+        el.className = cls;
+        el.textContent = text;
+    }
+
+    function renderBars(vals) {
+        els.barPh && (els.barPh.style.width = pct(vals.ph, 6.0, 9.0) + "%");
+        els.barFCl && (els.barFCl.style.width = pct(vals.freeCl, 0, 10) + "%");
+        els.barTCl && (els.barTCl.style.width = pct(vals.totalCl, 0, 20) + "%");
+        els.barBr && (els.barBr.style.width = pct(vals.bromine, 0, 40) + "%");
+        els.barHard && (els.barHard.style.width = pct(vals.hardness, 0, 425) + "%");
+        els.barAlk && (els.barAlk.style.width = pct(vals.alk, 0, 360) + "%");
+        els.barCya && (els.barCya.style.width = pct(vals.cya, 0, 240) + "%");
+
+        if (vals.ph < 7.2) tag(els.tagPh, "warn", `Low (${vals.ph})`);
+        else if (vals.ph > 7.8) tag(els.tagPh, "warn", `High (${vals.ph})`);
+        else tag(els.tagPh, "ok", `Good (${vals.ph})`);
+
+        if (vals.freeCl < 1) tag(els.tagFCl, "warn", `Low (${vals.freeCl} ppm)`);
+        else if (vals.freeCl > 3) tag(els.tagFCl, "warn", `High (${vals.freeCl} ppm)`);
+        else tag(els.tagFCl, "ok", `Good (${vals.freeCl} ppm)`);
+
+        if (vals.totalCl < vals.freeCl) tag(els.tagTCl, "warn", "Check strip");
+        else tag(els.tagTCl, "ok", `${vals.totalCl} ppm`);
+
+        if (vals.bromine < 2) tag(els.tagBr, "warn", `Low (${vals.bromine} ppm)`);
+        else if (vals.bromine > 6) tag(els.tagBr, "warn", `High (${vals.bromine} ppm)`);
+        else tag(els.tagBr, "ok", `Good (${vals.bromine} ppm)`);
+
+        if (vals.hardness < 150) tag(els.tagHard, "warn", `Low (${vals.hardness} ppm)`);
+        else if (vals.hardness > 300) tag(els.tagHard, "warn", `High (${vals.hardness} ppm)`);
+        else tag(els.tagHard, "ok", `Good (${vals.hardness} ppm)`);
+
+        if (vals.alk < 80) tag(els.tagAlk, "warn", `Low (${vals.alk} ppm)`);
+        else if (vals.alk > 120) tag(els.tagAlk, "warn", `High (${vals.alk} ppm)`);
+        else tag(els.tagAlk, "ok", `Good (${vals.alk} ppm)`);
+
+        if (vals.cya < 30) tag(els.tagCya, "warn", `Low (${vals.cya} ppm)`);
+        else if (vals.cya > 100) tag(els.tagCya, "warn", `High (${vals.cya} ppm)`);
+        else tag(els.tagCya, "ok", `Good (${vals.cya} ppm)`);
+    }
+
+    function renderRecs(vals) {
+        if (!els.recs) return;
+        const recs = [];
+
+        if (!poolGallons) {
+            recs.push("Enter your pool size above (or manual gallons) so the app can calculate real chemical amounts.");
+            els.recs.innerHTML = recs.map(x => `<li>${x}</li>`).join("");
+            return;
+        }
+
+        const factor10k = poolGallons / 10000;
+        recs.push(`Estimated pool volume: about ${poolGallons.toLocaleString()} gallons (~${factor10k.toFixed(2)} × 10,000 gal).`);
+
+        const targets = { ph: 7.5, freeCl: 2.5, hardness: 250, alk: 100, cya: 40 };
+
+        if (vals.ph < 7.2) {
+            const deltaPh = Math.max(0, targets.ph - vals.ph);
+            const ozSodaAsh = (deltaPh / 0.2) * 6 * factor10k;
+            const dose = formatWeightOz(ozSodaAsh);
+            recs.push(`pH is low (${vals.ph}). Target is ~${targets.ph}. ${dose ? `Add about ${dose} of pH increaser (soda ash), split into smaller doses with circulation.` : `Use a pH increaser per the product label for your pool volume.`}`);
+        } else if (vals.ph > 7.8) {
+            const deltaPh = Math.max(0, vals.ph - targets.ph);
+            const ozAcid = (deltaPh / 0.2) * 12 * factor10k;
+            const dose = formatWeightOz(ozAcid);
+            recs.push(`pH is high (${vals.ph}). Target is ~${targets.ph}. ${dose ? `Add about ${dose} of pH reducer (muriatic acid ~31%) in divided doses.` : `Use a pH reducer according to the product label for your pool volume.`}`);
+        } else recs.push(`pH is in the recommended range (${vals.ph}).`);
+
+        if (vals.freeCl < 1) {
+            const deltaCl = Math.max(0, targets.freeCl - vals.freeCl);
+            const ozCl = deltaCl * 10.7 * factor10k;
+            const dose = formatWeightOz(ozCl);
+            recs.push(`Free chlorine is low (${vals.freeCl} ppm). Target is about ${targets.freeCl} ppm. ${dose ? `Add about ${dose} of 12% liquid chlorine, then circulate and retest after 30–60 minutes.` : `Add liquid chlorine per the dosing chart on your product label.`}`);
+        } else if (vals.freeCl > 3) {
+            recs.push(`Free chlorine is high (${vals.freeCl} ppm). Usually you just keep the pump running and avoid adding more chlorine so it can drift down.`);
+        } else recs.push(`Free chlorine is in a normal range (${vals.freeCl} ppm).`);
+
+        if (vals.alk < 80) {
+            const deltaAlk = Math.max(0, targets.alk - vals.alk);
+            const lbsBicarb = (deltaAlk / 10) * 1.5 * factor10k;
+            const ozBicarb = lbsBicarb * 16;
+            const dose = formatWeightOz(ozBicarb);
+            recs.push(`Total alkalinity is low (${vals.alk} ppm). Target is ~${targets.alk} ppm. ${dose ? `Add about ${dose} of alkalinity increaser (baking soda) in portions with the pump running.` : `Use an alkalinity increaser according to the package chart for your pool gallons.`}`);
+        } else if (vals.alk > 120) recs.push(`Total alkalinity is high (${vals.alk} ppm). Usually you lower alkalinity gradually using pH reducer and/or partial water replacement.`);
+        else recs.push(`Total alkalinity is in range (${vals.alk} ppm).`);
+
+        if (vals.cya < 30) {
+            const deltaCya = Math.max(0, targets.cya - vals.cya);
+            const ozCya = (deltaCya / 10) * 13 * factor10k;
+            const dose = formatWeightOz(ozCya);
+            recs.push(`Cyanuric acid is low (${vals.cya} ppm). Target ~${targets.cya} ppm. ${dose ? `Add about ${dose} of stabilizer (per-label directions), then retest in 1–2 days.` : `Use a stabilizer product and follow its dosing chart.`}`);
+        } else if (vals.cya > 100) recs.push(`Cyanuric acid is high (${vals.cya} ppm). Partial drain/refill is usually how you lower it safely.`);
+        else recs.push(`Cyanuric acid is in a normal range (${vals.cya} ppm).`);
+
+        if (vals.hardness < 150) recs.push(`Total hardness is low (${vals.hardness} ppm). Some pools may need calcium hardness increaser.`);
+        else if (vals.hardness > 300) recs.push(`Total hardness is high (${vals.hardness} ppm). High hardness increases scale risk.`);
+        else recs.push(`Total hardness is in a typical range (${vals.hardness} ppm).`);
+
+        recs.push("These amounts are rough rules of thumb per 10,000 gallons. Always follow product labels and retest between adjustments.");
+        els.recs.innerHTML = recs.map(x => `<li>${x}</li>`).join("");
+    }
+
+    function analyze(ctx) {
+        const padColors = samplePadsEasyTest(ctx);
+        const avgRgb = sampleStripe(ctx);
+        padColors.__avg = avgRgb;
+
+        const padCount = Object.keys(padColors).filter(k => k !== "__avg").length;
+        const vals = padCount >= 3 ? rgbToChemistryEasyTest(padColors) : rgbToChemistryFallback(avgRgb);
+
+        lastVals = vals;
+
+        renderBars(vals);
+        renderRecs(vals);
+        setStatus(`EasyTest scan | Avg RGB ≈ (${avgRgb.r | 0}, ${avgRgb.g | 0}, ${avgRgb.b | 0})`);
+
+        recordReading(vals);
+        els.canvas && (els.canvas.hidden = true);
+    }
+
+    // --- pool setup + persistence ----------------------------------
+
+    const getNum = el => el ? parseFloat(el.value || "0") : 0;
+
+    function updateShapeVisibility() {
+        if (!els.shape) return;
+        const shape = els.shape.value;
+        els.rectFields && (els.rectFields.style.display = shape === "rect" ? "" : "none");
+        els.roundFields && (els.roundFields.style.display = shape === "round" ? "" : "none");
+        els.ovalFields && (els.ovalFields.style.display = shape === "oval" ? "" : "none");
+    }
+
+    function applyPoolCollapsed() {
+        root && root.classList.toggle("pooltest--pool-hidden", poolCollapsed);
+        if (els.poolToggle) els.poolToggle.textContent = poolCollapsed ? "Show" : "Hide";
+    }
+
+    function savePoolSetup() {
+        const conf = {
+            shape: els.shape?.value || "rect",
+            rectLen: getNum(els.rectLen),
+            rectWid: getNum(els.rectWid),
+            roundDia: getNum(els.roundDia),
+            ovalLen: getNum(els.ovalLen),
+            ovalWid: getNum(els.ovalWid),
+            depthShallow: getNum(els.depthShallow),
+            depthDeep: getNum(els.depthDeep),
+            gallonsManual: getNum(els.gallonsManual),
+            gallons: poolGallons || 0,
+            collapsed: !!poolCollapsed
+        };
+        try { localStorage.setItem(POOL_SETUP_KEY, JSON.stringify(conf)); } catch { }
+    }
+
+    function loadPoolSetup() {
+        let raw = null;
+        try { raw = localStorage.getItem(POOL_SETUP_KEY); } catch { }
+        if (!raw) {
+            updateShapeVisibility();
+            applyPoolCollapsed();
+            els.gallonsDisplay && (els.gallonsDisplay.textContent = "Pool volume: – (enter shape/size or manual gallons)");
+            return;
+        }
+
+        try {
+            const conf = JSON.parse(raw);
+            if (conf.shape && els.shape) els.shape.value = conf.shape;
+            if (els.rectLen && conf.rectLen != null) els.rectLen.value = conf.rectLen;
+            if (els.rectWid && conf.rectWid != null) els.rectWid.value = conf.rectWid;
+            if (els.roundDia && conf.roundDia != null) els.roundDia.value = conf.roundDia;
+            if (els.ovalLen && conf.ovalLen != null) els.ovalLen.value = conf.ovalLen;
+            if (els.ovalWid && conf.ovalWid != null) els.ovalWid.value = conf.ovalWid;
+            if (els.depthShallow && conf.depthShallow != null) els.depthShallow.value = conf.depthShallow;
+            if (els.depthDeep && conf.depthDeep != null) els.depthDeep.value = conf.depthDeep;
+            if (els.gallonsManual && conf.gallonsManual != null) els.gallonsManual.value = conf.gallonsManual;
+            poolGallons = conf.gallons > 0 ? Math.round(conf.gallons) : null;
+            poolCollapsed = !!conf.collapsed;
+        } catch { }
+
+        updateShapeVisibility();
+        applyPoolCollapsed();
+
+        els.gallonsDisplay && (els.gallonsDisplay.textContent = poolGallons
+            ? `Pool volume: about ${poolGallons.toLocaleString()} gallons`
+            : "Pool volume: – (enter shape/size or manual gallons)");
+    }
+
+    function calcGallons() {
+        let gallons = 0;
+        const manual = parseFloat(els.gallonsManual?.value || "0");
+
+        if (manual > 0) {
+            gallons = manual;
+        } else {
+            const shape = els.shape?.value || "rect";
+            const shallow = parseFloat(els.depthShallow?.value || "0");
+            const deep = parseFloat(els.depthDeep?.value || els.depthShallow?.value || "0");
+            const avgDepth = (shallow && deep) ? (shallow + deep) / 2 : shallow || deep || 0;
+
+            if (shape === "rect") {
+                const L = parseFloat(els.rectLen?.value || "0");
+                const W = parseFloat(els.rectWid?.value || "0");
+                if (L > 0 && W > 0 && avgDepth > 0) gallons = L * W * avgDepth * 7.48;
+            } else if (shape === "round") {
+                const D = parseFloat(els.roundDia?.value || "0");
+                if (D > 0 && avgDepth > 0) gallons = D * D * avgDepth * 5.9;
+            } else if (shape === "oval") {
+                const L = parseFloat(els.ovalLen?.value || "0");
+                const W = parseFloat(els.ovalWid?.value || "0");
+                if (L > 0 && W > 0 && avgDepth > 0) gallons = L * W * avgDepth * 5.9;
+            }
+        }
+
+        poolGallons = gallons > 0 ? Math.round(gallons) : null;
+
+        els.gallonsDisplay && (els.gallonsDisplay.textContent = poolGallons
+            ? `Pool volume: about ${poolGallons.toLocaleString()} gallons`
+            : "Pool volume: – (enter shape/size or manual gallons)");
+
+        savePoolSetup();
+        lastVals && renderRecs(lastVals);
+    }
+
+    function clearLocalData() {
+        try { localStorage.removeItem(HISTORY_KEY); localStorage.removeItem(POOL_SETUP_KEY); } catch { }
+
+        poolGallons = null;
+        poolCollapsed = false;
+        lastVals = null;
+
+        els.gallonsDisplay && (els.gallonsDisplay.textContent = "Pool volume: – (enter shape/size or manual gallons)");
+        els.recs && (els.recs.innerHTML = "<li>Local data cleared. Enter pool setup and scan a new strip.</li>");
+        renderHistoryCharts([]);
+
+        try {
+            if (els.shape) els.shape.value = "rect";
+            [els.rectLen, els.rectWid, els.roundDia, els.ovalLen, els.ovalWid, els.depthShallow, els.depthDeep, els.gallonsManual]
+                .forEach(el => el && (el.value = ""));
+            updateShapeVisibility();
+            applyPoolCollapsed();
+        } catch { }
+    }
+
+    // --- iOS reliable "Take Photo" pipeline -------------------------
+
+    async function loadFileToImageIOSReliable(file) {
+        // Use createImageBitmap (often respects EXIF orientation with imageOrientation option)
+        let bmp = null;
+        try {
+            bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+        } catch {
+            bmp = await createImageBitmap(file);
+        }
+
+        const tmp = document.createElement("canvas");
+        tmp.width = bmp.width;
+        tmp.height = bmp.height;
+        tmp.getContext("2d").drawImage(bmp, 0, 0);
+
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = tmp.toDataURL("image/jpeg", 0.95);
+        });
+    }
+
+    // --- events -----------------------------------------------------
+
+    els.btnStart?.addEventListener("click", startCamera);
+    els.btnCapture?.addEventListener("click", () => analyze(drawFromVideo()));
+
+    els.cameraSelect?.addEventListener("change", () => {
+        const id = getSelectedCameraId();
+        saveSelectedCameraId(id);
+
+        // If camera is currently running, restart with the new selection
+        if (stream) startCamera();
+    });
+
+    // Upload/Take Photo -> Preview -> Use Crop
+    els.fileInput?.addEventListener("change", async (e) => {
+        const f = e.target.files?.[0];
+        if (!f) return;
+
+        try {
+            setStatus("Loading photo…");
+            const img = await loadFileToImageIOSReliable(f);
+            showPreview(img);
+        } catch {
+            setStatus("Couldn’t load that photo. On iPhone: Settings → Camera → Formats → Most Compatible (JPEG). Then try again.");
+        } finally {
+            e.target.value = ""; // allow same file twice
+        }
+    });
+
+    els.btnUseCrop?.addEventListener("click", analyzeFromPreviewCrop);
+
+    els.btnCancelCrop?.addEventListener("click", () => {
+        hidePreview();
+        setStatus("Canceled preview. Upload another image or use the camera.");
+    });
+
+    els.btnAutoCrop?.addEventListener("click", () => {
+        if (!els.cropBox) return;
+        els.cropBox.style.left = "32%";
+        els.cropBox.style.top = "6%";
+        els.cropBox.style.width = "36%";
+        els.cropBox.style.height = "88%";
+        setStatus("Auto-crop box set. Fine-tune if needed, then click Use Crop.");
+    });
+
+    els.btnWB?.addEventListener("click", () => {
+        setStatus("Tap on a white/gray area to set white balance.");
+        if (stream) drawFromVideo();
+        els.canvas.hidden = false;
+
+        const handler = ev => {
+            const rect = els.canvas.getBoundingClientRect();
+            const x = Math.round((ev.clientX - rect.left) * (els.canvas.width / rect.width));
+            const y = Math.round((ev.clientY - rect.top) * (els.canvas.height / rect.height));
+            setWBAt(x, y);
+            setStatus("White balance set. Capture or upload an EasyTest strip.");
+            els.canvas.removeEventListener("click", handler);
+            els.canvas.hidden = true;
+        };
+
+        els.canvas.addEventListener("click", handler);
+    });
+
+    els.shape?.addEventListener("change", () => { updateShapeVisibility(); savePoolSetup(); });
+    [els.rectLen, els.rectWid, els.roundDia, els.ovalLen, els.ovalWid, els.depthShallow, els.depthDeep, els.gallonsManual]
+        .forEach(el => el?.addEventListener("input", savePoolSetup));
+
+    els.btnCalcGallons?.addEventListener("click", calcGallons);
+
+    els.poolToggle?.addEventListener("click", () => { poolCollapsed = !poolCollapsed; applyPoolCollapsed(); savePoolSetup(); });
+    els.poolToggleGlobal?.addEventListener("click", () => { poolCollapsed = !poolCollapsed; applyPoolCollapsed(); savePoolSetup(); });
+
+    els.btnRecalc?.addEventListener("click", () => { if (lastVals) renderRecs(lastVals); });
+    els.btnClearData?.addEventListener("click", clearLocalData);
+
+    // --- init -------------------------------------------------------
+
+    loadPoolSetup();
+    renderHistoryCharts();
+    listCameras();
+
+    if (isIOS) {
+        els.btnStart && (els.btnStart.textContent = "Live Camera (beta)");
+        setStatus("Ready. iPhone/iPad: use Upload/Take Photo for the most reliable scan. Then crop and scan.");
+    } else {
+        setStatus("Ready. Upload a photo to crop, or enable camera.");
+    }
+
+    window.addEventListener("pagehide", stopCamera);
+}
