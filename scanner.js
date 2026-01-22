@@ -245,35 +245,45 @@ export function initPoolTestScanner(root) {
   if (!els.scanView || !els.previewWrap) return;
 
   els.scanView.style.position = "relative";
+  els.scanView.style.overflow = "hidden";
 
-  // Move previewWrap into scanView (so it overlays the scan box)
+  // Move previewWrap into scanView (overlay inside the scan box)
   if (els.previewWrap.parentElement !== els.scanView) {
     els.scanView.appendChild(els.previewWrap);
   }
 
-  // Turn previewWrap into an overlay
+  // Overlay container
   els.previewWrap.style.display = "none";
-  els.previewWrap.style.marginTop = "0";
   els.previewWrap.style.position = "absolute";
-  els.previewWrap.style.zIndex = "20";
   els.previewWrap.style.inset = "0";
-  els.previewWrap.style.padding = "10px";
+  els.previewWrap.style.padding = "0"; // important: don't shrink the image area on mobile
   els.previewWrap.style.boxSizing = "border-box";
   els.previewWrap.style.overflow = "hidden";
 
+  // Make the stage fill the scan box
+if (els.previewStage) {
+  els.previewStage.style.position = "relative"; // ✅ not absolute
+  els.previewStage.style.margin = "0";
+  els.previewStage.style.width = "100%";
+  els.previewStage.style.maxWidth = "100%";
+}
 
-  // Preview stage should fit inside the scan box
-  if (els.previewStage) {
-    els.previewStage.style.maxWidth = "100%";
-    els.previewStage.style.margin = "8px auto 0";
-  }
+if (els.previewCanvas) {
+  els.previewCanvas.style.display = "block";
+  els.previewCanvas.style.width = "100%";
+  els.previewCanvas.style.height = "100%";
+}
+
 })();
-// --- preview overlay back button ---
-(function addPreviewBackButton() {
-  if (!els.previewWrap) return;
 
-  // Prevent duplicate buttons if init runs more than once (hot reload / SPA remount)
-  if (els.previewWrap.querySelector('[data-pt="previewBack"]')) return;
+// --- preview overlay back button ---
+let backBtn = null;
+
+(function addPreviewBackButton() {
+  if (!els.scanView) return;
+
+  const existing = els.scanView.querySelector('[data-pt="previewBack"]');
+  if (existing) { backBtn = existing; return; }
 
   const btn = document.createElement("button");
   btn.type = "button";
@@ -283,17 +293,24 @@ export function initPoolTestScanner(root) {
   btn.dataset.pt = "previewBack";
 
   btn.style.position = "absolute";
-  btn.style.top = "10px";
-  btn.style.right = "10px";
-  btn.style.zIndex = "50";
+
+  // ✅ safe-area aware positioning (iPhone notch / status bar)
+  btn.style.top  = "calc(10px + env(safe-area-inset-top))";
+  btn.style.left = "calc(10px + env(safe-area-inset-left))";
+
+  btn.style.zIndex = "80";
+  btn.style.display = "none";
 
   btn.addEventListener("click", () => {
     hidePreview();
     setStatus("Back to camera. Upload another image or enable camera.");
   });
 
-  els.previewWrap.appendChild(btn);
+  els.scanView.appendChild(btn);
+  backBtn = btn;
 })();
+
+
 
 
 
@@ -726,18 +743,23 @@ function showPreview(img) {
   previewImg = img;
   if (!els.previewWrap || !els.previewCanvas || !els.previewStage || !els.cropBox) return;
 
-  // Hide live view *without collapsing layout*
   if (els.video) els.video.style.visibility = "hidden";
   if (els.scanFrame) els.scanFrame.style.visibility = "hidden";
+  if (els.canvas) els.canvas.hidden = true;
 
-  // Show preview overlay
-  els.previewWrap.style.display = "block";   // don't use ""
-  els.previewWrap.style.zIndex = "20";       // ensure it's above video/frame
+  els.previewWrap.style.display = "flex";
+  els.previewWrap.style.zIndex = "20";
 
-  layoutPreviewOverlay();
-  drawPreviewCanvas();
+  if (backBtn) backBtn.style.display = "block"; // ✅ show back
 
-  // default crop
+  const isMobile = window.matchMedia("(max-width: 600px)").matches;
+  els.previewWrap.classList.toggle("preview--mobile", isMobile);
+
+  requestAnimationFrame(() => {
+    layoutPreviewOverlay();
+    drawPreviewCanvas();
+  });
+
   els.cropBox.style.left = "30%";
   els.cropBox.style.top = "8%";
   els.cropBox.style.width = "40%";
@@ -748,6 +770,8 @@ function showPreview(img) {
 
 function hidePreview() {
   if (els.previewWrap) els.previewWrap.style.display = "none";
+  if (backBtn) backBtn.style.display = "none"; // ✅ hide back
+
   previewImg = null;
   previewFit = null;
 
@@ -755,6 +779,7 @@ function hidePreview() {
   if (els.video) els.video.style.visibility = "";
   if (els.scanFrame) els.scanFrame.style.visibility = "";
 }
+
 
 
 
@@ -785,20 +810,24 @@ function hidePreview() {
     previewFit = { scale, dx, dy, iw, ih, cw, ch };
   }
 
-  function layoutPreviewOverlay() {
-  if (!els.previewWrap || !els.previewStage) return;
+ function layoutPreviewOverlay() {
+  if (!els.previewStage || !els.scanView) return;
 
-  // These are just layout estimates so the stage fits without scrolling.
-  const headerApprox = 56; // buttons row
-  const tipApprox = 22;    // tip line
-  const pad = 20;          // overlay padding
+  const scanH = els.scanView.getBoundingClientRect().height;
 
-  const h = els.scanView?.getBoundingClientRect?.().height || 520;
-  const stageH = Math.max(160, Math.floor(h - headerApprox - tipApprox - pad));
+  const headerEl = els.previewWrap.querySelector('[data-pt="previewHeader"]');
+  const headerH = headerEl ? headerEl.getBoundingClientRect().height : 80;
+
+  const footerEl = els.previewWrap.querySelector('[data-pt="previewTip"]');
+  const footerH = footerEl ? footerEl.getBoundingClientRect().height : 24;
+
+  const pad = 16;
+  const stageH = Math.max(180, Math.floor(scanH - headerH - footerH - pad));
 
   els.previewStage.style.height = `${stageH}px`;
   els.previewStage.style.aspectRatio = "3 / 4";
 }
+
 
   function getCropRectInImagePixels() {
     if (!previewFit || !els.cropBox || !els.previewStage) return null;

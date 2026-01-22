@@ -6,6 +6,12 @@
   --accent: #0ea5e9;
   --danger: #ef4444;
   --radius-card: 18px;
+
+  --scan-radius: 12px;
+  --scan-max: 520px;
+
+  --preview-bg: rgba(2, 6, 23, 0.92);
+  --preview-border: rgba(148, 163, 184, 0.25);
 }
 
 *,
@@ -26,6 +32,7 @@ body.has-install-banner {
 
 a { color: inherit; text-decoration: none; }
 
+/* Header */
 .pt-header {
   display: flex;
   align-items: center;
@@ -194,6 +201,7 @@ a { color: inherit; text-decoration: none; }
   .live-controls { display: none; }
 }
 
+/* Buttons */
 button,
 .btn {
   border-radius: 999px;
@@ -235,39 +243,39 @@ button:hover:not(:disabled),
 
 .btn-ghost.danger:hover { background: rgba(239,68,68,0.15); }
 
-/* Scan view + alignment frame */
+/* ---------------------------
+   Scan view (camera + overlay)
+---------------------------- */
 .scan-view {
   position: relative;
   width: 100%;
-  max-width: 480px;
+  max-width: var(--scan-max);
   margin: 0 auto;
-  border-radius: 10px;
+  border-radius: var(--scan-radius);
   overflow: hidden;
   background: #020617;
+  border: 1px solid rgba(51,65,85,0.7);
 }
 
-/* Video defines camera box with a stable aspect */
+/* Camera video */
 .scan-view video {
   display: block;
   width: 100%;
-  max-height: 320px;
   aspect-ratio: 4 / 3;
   object-fit: cover;
-  border-radius: 10px;
 }
 
-/* Canvas overlays the video, same box */
-.scan-view canvas {
+/* ✅ ONLY the capture canvas overlays the video */
+.scan-view [data-pt="canvas"] {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  border-radius: 10px;
   display: block;
   background: transparent;
 }
 
-.scan-view canvas[hidden] { display: none; }
+.scan-view [data-pt="canvas"][hidden] { display: none; }
 
 /* Alignment frame */
 .scan-frame {
@@ -276,6 +284,7 @@ button:hover:not(:disabled),
   pointer-events: none;
   display: flex;
   justify-content: center;
+  z-index: 5;
 }
 
 .scan-frame::before {
@@ -297,7 +306,156 @@ button:hover:not(:disabled),
   color: #e5e7eb;
 }
 
-/* Bars & tags */
+/* ---------------------------
+   Preview overlay (inside scan-view)
+---------------------------- */
+.pt-preview {
+  /* JS toggles display; keep default hidden */
+  display: none;
+
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+
+  background: var(--preview-bg);
+  backdrop-filter: blur(8px);
+
+  /* Use flex so stage can fill remaining space */
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+
+  padding: 12px;
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-left: calc(12px + env(safe-area-inset-left));
+  padding-right: calc(12px + env(safe-area-inset-right));
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+.pt-preview__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--preview-border);
+  background: rgba(15,23,42,0.7);
+}
+
+.pt-preview__title {
+  flex: 1 1 220px;
+  min-width: 160px;
+  font-size: 0.85rem;
+  color: var(--fg);
+}
+
+.pt-preview__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* Stage fills the box nicely */
+.pt-preview__stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 220px;
+
+  border-radius: 14px;
+  border: 1px solid rgba(148,163,184,0.35);
+  overflow: hidden;
+
+  /* Allows crop drag to feel correct */
+  touch-action: none;
+}
+
+/* Preview canvas is NOT absolute; it fills stage normally */
+.pt-preview__stage canvas[data-pt="previewCanvas"] {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Crop box */
+.pt-cropbox {
+  position: absolute;
+  left: 30%;
+  top: 8%;
+  width: 40%;
+  height: 84%;
+
+  border: 2px dashed rgba(2,132,199,0.95);
+  box-sizing: border-box;
+  background: rgba(2,132,199,0.08);
+  border-radius: 12px;
+
+  touch-action: none;
+}
+
+.pt-crophandle {
+  position: absolute;
+  right: -10px;
+  bottom: -10px;
+  width: 22px;
+  height: 22px;
+  background: rgba(2,132,199,0.95);
+  border-radius: 7px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+/* Tip */
+.pt-preview__tip {
+  font-size: 12px;
+  color: #94a3b8;
+  padding: 0 2px;
+}
+
+/* Make preview controls more usable on phones */
+@media (max-width: 600px) {
+  .pt-preview {
+    gap: 8px;
+    padding: 10px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+    padding-left: calc(10px + env(safe-area-inset-left));
+    padding-right: calc(10px + env(safe-area-inset-right));
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .pt-preview__header {
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .pt-preview__title {
+    flex: 1 1 100%;
+    min-width: 0;
+    font-size: 0.9rem;
+  }
+
+  .pt-preview__actions {
+    justify-content: flex-start;
+  }
+
+  .pt-preview__stage {
+    min-height: 260px;
+  }
+
+  .btn-ghost,
+  button,
+  .btn {
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+}
+
+/* ---------------------------
+   Bars & tags
+---------------------------- */
 .bars h3 { margin: 10px 0 2px; font-size: 0.9rem; }
 
 .bar {
@@ -376,4 +534,37 @@ button:hover:not(:disabled),
   .install-banner { padding: 10px; }
   .install-actions .btn,
   .install-actions .btn-ghost { padding: 6px 10px; font-size: 0.8rem; }
+}
+/* -------------------------------------------------------
+   MOBILE: make the scan box (and thus upload preview) BIG
+-------------------------------------------------------- */
+@media (max-width: 700px) {
+  /* let scanner fill the card width */
+  .scan-view {
+    max-width: 100%;
+  }
+
+  /* make the camera/preview area tall like a photo */
+  .scan-view video {
+    aspect-ratio: 3 / 4;          /* was 4/3 (too short) */
+    height: min(68vh, 560px);     /* big */
+    max-height: none;             /* no hidden cap */
+    object-fit: cover;
+  }
+
+  /* keep the alignment label from sitting too low */
+  .scan-frame-label {
+    bottom: 6%;
+  }
+}
+@media (max-width: 700px) {
+  .pt-preview__header {
+    padding: 6px 8px;
+  }
+  .pt-preview__title {
+    font-size: 0.9rem;
+  }
+  .pt-preview__actions {
+    gap: 6px;
+  }
 }

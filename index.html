@@ -8,6 +8,7 @@
   <!-- PWA essentials -->
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#0ea5e9" />
+
   <!-- iOS helpers -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -116,9 +117,7 @@
         <select data-pt="cameraSelect">
           <option value="">Default camera</option>
         </select>
-        <small class="muted">
-          Tip: Plug in the webcam first, then refresh this page.
-        </small>
+        <small class="muted">Tip: Plug in the webcam first, then refresh this page.</small>
       </div>
 
       <!-- Controls -->
@@ -142,6 +141,7 @@
         </div>
       </div>
 
+      <!-- Scan box -->
       <div class="scan-view" data-pt="scanView">
         <video data-pt="video" playsinline muted></video>
         <canvas data-pt="canvas" hidden></canvas>
@@ -149,34 +149,32 @@
         <div class="scan-frame">
           <div class="scan-frame-label">Line strip up in this box</div>
         </div>
-      </div>
 
-      <!-- Preview + Crop UI -->
-      <div data-pt="previewWrap" style="display:none; margin-top:12px;">
-        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-          <strong>Preview (drag/resize the box around the strip)</strong>
-          <button type="button" class="btn-ghost" data-pt="btnAutoCrop">Auto-Crop Box</button>
-          <button type="button" data-pt="btnUseCrop">Use Crop</button>
-          <button type="button" class="btn-ghost" data-pt="btnCancelCrop">Cancel</button>
-        </div>
+        <!-- ✅ Preview + Crop UI (ONE copy, overlay inside scan box) -->
+        <div data-pt="previewWrap" class="pt-preview">
+          <div data-pt="previewHeader" class="pt-preview__header">
+            <button type="button" class="btn-ghost" data-pt="previewBack">Back</button>
 
-        <div data-pt="previewStage"
-             style="position:relative; width:100%; max-width:520px; aspect-ratio: 3/4; border:1px solid #cbd5e1; border-radius:12px; margin-top:8px; overflow:hidden; touch-action:none;">
-          <canvas data-pt="previewCanvas" style="width:100%; height:100%; display:block;"></canvas>
+            <div class="pt-preview__title">Preview (drag/resize the box around the strip)</div>
 
-          <div data-pt="cropBox"
-               style="position:absolute; left:30%; top:8%; width:40%; height:84%;
-                      border:2px dashed rgba(2,132,199,0.95);
-                      box-sizing:border-box; background:rgba(2,132,199,0.08);
-                      border-radius:10px; touch-action:none;">
-            <div data-pt="cropHandle"
-                 style="position:absolute; right:-10px; bottom:-10px; width:22px; height:22px;
-                        background:rgba(2,132,199,0.95); border-radius:7px; cursor:nwse-resize; touch-action:none;"></div>
+            <div class="pt-preview__actions">
+              <button type="button" class="btn-ghost" data-pt="btnAutoCrop">Auto-Crop Box</button>
+              <button type="button" data-pt="btnUseCrop">Use Crop</button>
+              <button type="button" class="btn-ghost" data-pt="btnCancelCrop">Cancel</button>
+            </div>
           </div>
-        </div>
 
-        <div style="font-size:12px; margin-top:6px; color:#64748b;">
-          Tip: Make the box tall and skinny. Include all pads.
+          <div data-pt="previewStage" class="pt-preview__stage">
+            <canvas data-pt="previewCanvas"></canvas>
+
+            <div data-pt="cropBox" class="pt-cropbox">
+              <div data-pt="cropHandle" class="pt-crophandle"></div>
+            </div>
+          </div>
+
+          <div data-pt="previewTip" class="pt-preview__tip">
+            Tip: Make the box tall and skinny. Include all pads.
+          </div>
         </div>
       </div>
 
@@ -263,7 +261,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev12";
+    import { initPoolTestScanner } from "./scanner.js?v=dev15";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>
@@ -333,7 +331,7 @@
 
   <script>
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("./service-worker.js").catch(() => { });
+      navigator.serviceWorker.register("./service-worker.js").catch(() => {});
     }
   </script>
 </body>
