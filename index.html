@@ -117,7 +117,7 @@
           <option value="">Default camera</option>
         </select>
         <small class="muted">
-          Tip: Plug in the Aluratek webcam first, then refresh this page.
+          Tip: Plug in the webcam first, then refresh this page.
         </small>
       </div>
 
@@ -226,6 +226,10 @@
         <button type="button" class="btn-ghost danger" data-pt="btnClearData">
           Clear Saved Data (this device)
         </button>
+
+        <button type="button" class="btn-ghost" data-pt="btnClearCache">
+          Clear Scan Cache (debug)
+        </button>
       </div>
 
       <div class="history-grid">
@@ -244,12 +248,87 @@
     </small>
   </footer>
 
+  <!-- Install prompt banner (PWA) -->
+  <div id="installBanner" class="install-banner" hidden>
+    <div class="install-text">
+      <strong>Add AquaLab to your Home Screen</strong>
+      <div class="muted small" id="installHint">Install for faster access and full-screen scanning.</div>
+    </div>
+    <div class="install-actions">
+      <button id="installBtn" class="btn">Add</button>
+      <button id="installClose" class="btn-ghost">Not now</button>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev2";
+    import { initPoolTestScanner } from "./scanner.js?v=dev12";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
+  </script>
+
+  <script>
+    // --- Add-to-Home Screen (A2HS) prompt + demo polish (banner spacing) ---
+    const banner = document.getElementById("installBanner");
+    const btnInstall = document.getElementById("installBtn");
+    const btnClose = document.getElementById("installClose");
+    const hint = document.getElementById("installHint");
+
+    const DISMISS_KEY = "pt_install_dismissed_v1";
+    const dismissed = (() => { try { return localStorage.getItem(DISMISS_KEY) === "1"; } catch { return false; } })();
+
+    function isStandalone() {
+      return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+    }
+    function isIOS() {
+      return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    }
+
+    let deferredPrompt = null;
+
+    function setBannerVisible(visible) {
+      if (!banner) return;
+      banner.hidden = !visible;
+      document.body.classList.toggle("has-install-banner", !!visible);
+    }
+
+    function showBanner(message, showAddButton) {
+      if (!banner || dismissed || isStandalone()) return;
+      if (hint && message) hint.textContent = message;
+      if (btnInstall) btnInstall.style.display = showAddButton ? "" : "none";
+      setBannerVisible(true);
+    }
+
+    function hideBanner() {
+      setBannerVisible(false);
+    }
+
+    btnClose?.addEventListener("click", () => {
+      hideBanner();
+      try { localStorage.setItem(DISMISS_KEY, "1"); } catch {}
+    });
+
+    btnInstall?.addEventListener("click", async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      try { await deferredPrompt.userChoice; } catch {}
+      deferredPrompt = null;
+      hideBanner();
+    });
+
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      showBanner("Install for faster access and full-screen scanning.", true);
+    });
+
+    window.addEventListener("load", () => {
+      if (dismissed || isStandalone()) return;
+      if (isIOS()) {
+        showBanner('On iPhone: tap Share → "Add to Home Screen".', false);
+      }
+    });
   </script>
 
   <script>
