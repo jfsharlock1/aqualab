@@ -111,7 +111,7 @@
     <section class="card">
       <h2>Scanner (EasyTest strip only)</h2>
 
-      <!-- Camera chooser (useful on Surface/desktop) -->
+      <!-- Camera chooser (desktop/tablet) -->
       <div class="field" data-pt="cameraRow">
         <label>Camera (if available)</label>
         <select data-pt="cameraSelect">
@@ -122,26 +122,24 @@
 
       <!-- Controls -->
       <div class="row row-wrap">
-        <!-- Live controls (Surface/desktop) -->
+        <!-- Live controls -->
         <div class="live-controls" data-pt="liveControls">
           <button data-pt="btnStart">Enable Camera</button>
           <button data-pt="btnCapture" disabled>Capture</button>
           <button data-pt="btnWB" class="btn" disabled>Set White Balance</button>
         </div>
 
-        <!-- Photo controls (best on phones) -->
+        <!-- Photo controls -->
         <div class="photo-controls" data-pt="photoControls">
           <button type="button" class="btn" data-pt="btnTakePhoto">Take Photo</button>
           <button type="button" class="btn" data-pt="btnChoosePhoto">Choose Photo</button>
 
-          <!-- Camera-only input -->
           <input data-pt="takeInput" type="file" accept="image/*" capture="environment" hidden />
-          <!-- Library + files input -->
           <input data-pt="fileInput" type="file" accept="image/*" hidden />
         </div>
       </div>
 
-      <!-- Scan box -->
+      <!-- Camera box -->
       <div class="scan-view" data-pt="scanView">
         <video data-pt="video" playsinline muted></video>
         <canvas data-pt="canvas" hidden></canvas>
@@ -149,32 +147,29 @@
         <div class="scan-frame">
           <div class="scan-frame-label">Line strip up in this box</div>
         </div>
+      </div>
 
-        <!-- ✅ Preview + Crop UI (ONE copy, overlay inside scan box) -->
-        <div data-pt="previewWrap" class="pt-preview">
-          <div data-pt="previewHeader" class="pt-preview__header">
-            <button type="button" class="btn-ghost" data-pt="previewBack">Back</button>
-
-            <div class="pt-preview__title">Preview (drag/resize the box around the strip)</div>
-
-            <div class="pt-preview__actions">
-              <button type="button" class="btn-ghost" data-pt="btnAutoCrop">Auto-Crop Box</button>
-              <button type="button" data-pt="btnUseCrop">Use Crop</button>
-              <button type="button" class="btn-ghost" data-pt="btnCancelCrop">Cancel</button>
-            </div>
+      <!-- ✅ Preview + Crop UI (BELOW camera box) -->
+      <div data-pt="previewWrap" class="preview-wrap" style="display:none; margin-top:12px;">
+        <div data-pt="previewHeader" class="preview-header">
+          <strong>Preview (drag/resize the box around the strip)</strong>
+          <div class="preview-actions">
+            <button type="button" class="btn-ghost" data-pt="btnAutoCrop">Auto-Crop Box</button>
+            <button type="button" data-pt="btnUseCrop">Use Crop</button>
+            <button type="button" class="btn-ghost" data-pt="btnCancelCrop">Cancel</button>
           </div>
+        </div>
 
-          <div data-pt="previewStage" class="pt-preview__stage">
-            <canvas data-pt="previewCanvas"></canvas>
+        <div data-pt="previewStage" class="preview-stage">
+          <canvas data-pt="previewCanvas" class="preview-canvas"></canvas>
 
-            <div data-pt="cropBox" class="pt-cropbox">
-              <div data-pt="cropHandle" class="pt-crophandle"></div>
-            </div>
+          <div data-pt="cropBox" class="cropbox">
+            <div data-pt="cropHandle" class="crophandle"></div>
           </div>
+        </div>
 
-          <div data-pt="previewTip" class="pt-preview__tip">
-            Tip: Make the box tall and skinny. Include all pads.
-          </div>
+        <div data-pt="previewTip" class="preview-tip">
+          Tip: Make the box tall and skinny. Include all pads.
         </div>
       </div>
 
@@ -261,13 +256,13 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev15";
+    import { initPoolTestScanner } from "./scanner.js?v=dev16";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>
 
   <script>
-    // --- Add-to-Home Screen (A2HS) prompt + demo polish (banner spacing) ---
+    // --- Add-to-Home Screen (A2HS) prompt ---
     const banner = document.getElementById("installBanner");
     const btnInstall = document.getElementById("installBtn");
     const btnClose = document.getElementById("installClose");
@@ -323,9 +318,7 @@
 
     window.addEventListener("load", () => {
       if (dismissed || isStandalone()) return;
-      if (isIOS()) {
-        showBanner('On iPhone: tap Share → "Add to Home Screen".', false);
-      }
+      if (isIOS()) showBanner('On iPhone: tap Share → "Add to Home Screen".', false);
     });
   </script>
 

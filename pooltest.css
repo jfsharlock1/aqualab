@@ -9,9 +9,6 @@
 
   --scan-radius: 12px;
   --scan-max: 520px;
-
-  --preview-bg: rgba(2, 6, 23, 0.92);
-  --preview-border: rgba(148, 163, 184, 0.25);
 }
 
 *,
@@ -25,10 +22,8 @@ body {
   color: var(--fg);
 }
 
-/* ✅ Demo polish: when install banner is visible, add spacing so it doesn't cover footer/buttons */
-body.has-install-banner {
-  padding-bottom: 92px;
-}
+/* when install banner visible */
+body.has-install-banner { padding-bottom: 92px; }
 
 a { color: inherit; text-decoration: none; }
 
@@ -54,29 +49,19 @@ a { color: inherit; text-decoration: none; }
   box-shadow: 0 0 18px rgba(56,189,248,0.5);
 }
 
-.pt-header .titling h1 {
-  margin: 0;
-  font-size: 1.4rem;
-}
-
+.pt-header .titling h1 { margin: 0; font-size: 1.4rem; }
 .pt-header .titling .muted { font-size: 0.8rem; }
 
-.pt-nav {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
+.pt-nav { display:flex; align-items:center; gap:8px; }
 .pt-nav a {
   font-size: 0.85rem;
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid rgba(148,163,184,0.5);
 }
-
 .pt-nav a:hover { background: rgba(148,163,184,0.12); }
 
-/* ✅ Mobile header fix */
+/* Mobile header fix */
 @media (max-width: 700px) {
   .pt-header {
     flex-wrap: wrap;
@@ -84,24 +69,11 @@ a { color: inherit; text-decoration: none; }
     justify-content: center;
     text-align: center;
   }
-
   .pt-header .logo { flex: 0 0 auto; }
-
   .pt-header .titling { flex: 1 1 100%; }
-
   .pt-header .titling h1 { white-space: nowrap; }
-
-  .pt-header .titling .muted {
-    max-width: 42ch;
-    margin: 0 auto;
-  }
-
-  .pt-nav {
-    flex: 1 1 100%;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
+  .pt-header .titling .muted { max-width: 42ch; margin: 0 auto; }
+  .pt-nav { flex: 1 1 100%; justify-content: center; flex-wrap: wrap; gap: 8px; }
 }
 
 .container {
@@ -111,12 +83,8 @@ a { color: inherit; text-decoration: none; }
 }
 
 .grid { display: grid; gap: 18px; }
-
 .grid-2 { grid-template-columns: minmax(0,1.1fr) minmax(0,0.9fr); }
-
-@media (max-width: 900px) {
-  .grid-2 { grid-template-columns: minmax(0,1fr); }
-}
+@media (max-width: 900px) { .grid-2 { grid-template-columns: minmax(0,1fr); } }
 
 .card {
   background: radial-gradient(circle at top left, rgba(15,23,42,0.95), rgba(15,23,42,0.99));
@@ -136,23 +104,14 @@ a { color: inherit; text-decoration: none; }
   margin-bottom: 8px;
 }
 
-.card h2 {
-  margin: 0 0 4px;
-  font-size: 1.1rem;
-}
-
+.card h2 { margin: 0 0 4px; font-size: 1.1rem; }
 .card-body { margin-top: 4px; }
 
 .muted { color: var(--fg-muted); }
 .hint { font-size: 0.85rem; }
 
 .field { margin-bottom: 10px; }
-
-.field label {
-  display: block;
-  font-size: 0.8rem;
-  margin-bottom: 4px;
-}
+.field label { display:block; font-size:0.8rem; margin-bottom:4px; }
 
 .field input,
 .field select {
@@ -173,21 +132,10 @@ a { color: inherit; text-decoration: none; }
 .field.dual { display: flex; gap: 8px; }
 .field.dual > div { flex: 1 1 0; }
 
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
+.row { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.row-wrap { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 
-.row-wrap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-/* ✅ Scanner controls styling */
+/* Scanner controls */
 .live-controls,
 .photo-controls {
   display: flex;
@@ -195,11 +143,7 @@ a { color: inherit; text-decoration: none; }
   gap: 8px;
   align-items: center;
 }
-
-/* ✅ Phones: hide live camera controls; show photo controls */
-@media (max-width: 900px) {
-  .live-controls { display: none; }
-}
+@media (max-width: 900px) { .live-controls { display: none; } }
 
 /* Buttons */
 button,
@@ -217,10 +161,8 @@ button,
   justify-content: center;
   gap: 4px;
 }
-
 button:disabled,
 .btn:disabled { opacity: 0.45; cursor: default; }
-
 button:hover:not(:disabled),
 .btn:hover:not(:disabled) { filter: brightness(1.08); }
 
@@ -233,18 +175,16 @@ button:hover:not(:disabled),
   font-size: 0.8rem;
   cursor: pointer;
 }
-
 .btn-ghost:hover { background: rgba(148,163,184,0.1); }
 
 .btn-ghost.danger {
   border-color: rgba(239,68,68,0.7);
   color: #fecaca;
 }
-
 .btn-ghost.danger:hover { background: rgba(239,68,68,0.15); }
 
 /* ---------------------------
-   Scan view (camera + overlay)
+   Scan view (camera box)
 ---------------------------- */
 .scan-view {
   position: relative;
@@ -265,7 +205,7 @@ button:hover:not(:disabled),
   object-fit: cover;
 }
 
-/* ✅ ONLY the capture canvas overlays the video */
+/* Capture canvas overlays video only */
 .scan-view [data-pt="canvas"] {
   position: absolute;
   inset: 0;
@@ -274,7 +214,6 @@ button:hover:not(:disabled),
   display: block;
   background: transparent;
 }
-
 .scan-view [data-pt="canvas"][hidden] { display: none; }
 
 /* Alignment frame */
@@ -286,7 +225,6 @@ button:hover:not(:disabled),
   justify-content: center;
   z-index: 5;
 }
-
 .scan-frame::before {
   content: "";
   display: block;
@@ -295,7 +233,6 @@ button:hover:not(:disabled),
   border: 2px dashed rgba(248,250,252,0.8);
   box-shadow: 0 0 0 1px rgba(15,23,42,0.9);
 }
-
 .scan-frame-label {
   position: absolute;
   bottom: 10%;
@@ -307,96 +244,65 @@ button:hover:not(:disabled),
 }
 
 /* ---------------------------
-   Preview overlay (inside scan-view)
+   Preview (BELOW camera box)
 ---------------------------- */
-.pt-preview {
-  /* JS toggles display; keep default hidden */
-  display: none;
+.preview-wrap {
+  max-width: var(--scan-max);
+  margin: 12px auto 0;
+}
 
-  position: absolute;
-  inset: 0;
-  z-index: 30;
-
-  background: var(--preview-bg);
-  backdrop-filter: blur(8px);
-
-  /* Use flex so stage can fill remaining space */
-  display: none;
-  flex-direction: column;
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
-
-  padding: 12px;
-  padding-top: calc(12px + env(safe-area-inset-top));
-  padding-left: calc(12px + env(safe-area-inset-left));
-  padding-right: calc(12px + env(safe-area-inset-right));
-  padding-bottom: calc(12px + env(safe-area-inset-bottom));
-}
-
-.pt-preview__header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   flex-wrap: wrap;
-
-  padding: 8px 10px;
-  border-radius: 12px;
-  border: 1px solid var(--preview-border);
-  background: rgba(15,23,42,0.7);
+  margin-bottom: 10px;
 }
 
-.pt-preview__title {
-  flex: 1 1 220px;
-  min-width: 160px;
-  font-size: 0.85rem;
-  color: var(--fg);
-}
-
-.pt-preview__actions {
+.preview-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
 }
 
-/* Stage fills the box nicely */
-.pt-preview__stage {
+.preview-stage {
   position: relative;
-  flex: 1 1 auto;
-  min-height: 220px;
-
+  width: 100%;
   border-radius: 14px;
   border: 1px solid rgba(148,163,184,0.35);
   overflow: hidden;
+  background: #020617;
 
-  /* Allows crop drag to feel correct */
+  /* desktop/tablet */
+  aspect-ratio: 4 / 3;
+  min-height: 320px;
+
   touch-action: none;
 }
 
-/* Preview canvas is NOT absolute; it fills stage normally */
-.pt-preview__stage canvas[data-pt="previewCanvas"] {
+.preview-canvas {
   display: block;
   width: 100%;
   height: 100%;
 }
 
 /* Crop box */
-.pt-cropbox {
+.cropbox {
   position: absolute;
   left: 30%;
   top: 8%;
   width: 40%;
   height: 84%;
-
   border: 2px dashed rgba(2,132,199,0.95);
-  box-sizing: border-box;
   background: rgba(2,132,199,0.08);
   border-radius: 12px;
-
+  box-sizing: border-box;
   touch-action: none;
 }
 
-.pt-crophandle {
+.crophandle {
   position: absolute;
   right: -10px;
   bottom: -10px;
@@ -408,43 +314,19 @@ button:hover:not(:disabled),
   touch-action: none;
 }
 
-/* Tip */
-.pt-preview__tip {
+.preview-tip {
+  margin-top: 8px;
   font-size: 12px;
   color: #94a3b8;
-  padding: 0 2px;
 }
 
-/* Make preview controls more usable on phones */
-@media (max-width: 600px) {
-  .pt-preview {
-    gap: 8px;
-    padding: 10px;
-    padding-top: calc(10px + env(safe-area-inset-top));
-    padding-left: calc(10px + env(safe-area-inset-left));
-    padding-right: calc(10px + env(safe-area-inset-right));
-    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+/* ✅ Phones: preview bigger + taller feels better for strips */
+@media (max-width: 700px) {
+  .preview-wrap { max-width: 100%; }
+  .preview-stage {
+    aspect-ratio: 3 / 4;
+    min-height: 460px;
   }
-
-  .pt-preview__header {
-    padding: 8px;
-    gap: 6px;
-  }
-
-  .pt-preview__title {
-    flex: 1 1 100%;
-    min-width: 0;
-    font-size: 0.9rem;
-  }
-
-  .pt-preview__actions {
-    justify-content: flex-start;
-  }
-
-  .pt-preview__stage {
-    min-height: 260px;
-  }
-
   .btn-ghost,
   button,
   .btn {
@@ -453,9 +335,7 @@ button:hover:not(:disabled),
   }
 }
 
-/* ---------------------------
-   Bars & tags
----------------------------- */
+/* Bars & tags */
 .bars h3 { margin: 10px 0 2px; font-size: 0.9rem; }
 
 .bar {
@@ -480,7 +360,6 @@ button:hover:not(:disabled),
   border: 1px solid rgba(148,163,184,0.5);
   background: rgba(15,23,42,0.9);
 }
-
 .tag.ok { border-color: rgba(34,197,94,0.7); color: #bbf7d0; }
 .tag.warn { border-color: rgba(249,115,22,0.7); color: #fed7aa; }
 .tag.bad { border-color: rgba(239,68,68,0.75); color: #fecaca; }
@@ -491,12 +370,8 @@ button:hover:not(:disabled),
   gap: 12px;
   grid-template-columns: repeat(2, minmax(0,1fr));
 }
-
 .history-grid canvas { width: 100%; max-height: 200px; }
-
-@media (max-width: 700px) {
-  .history-grid { grid-template-columns: minmax(0,1fr); }
-}
+@media (max-width: 700px) { .history-grid { grid-template-columns: minmax(0,1fr); } }
 
 .pooltest--pool-hidden { grid-template-columns: minmax(0,1fr); }
 .pooltest--pool-hidden [data-pt="poolCard"] { display: none; }
@@ -534,37 +409,4 @@ button:hover:not(:disabled),
   .install-banner { padding: 10px; }
   .install-actions .btn,
   .install-actions .btn-ghost { padding: 6px 10px; font-size: 0.8rem; }
-}
-/* -------------------------------------------------------
-   MOBILE: make the scan box (and thus upload preview) BIG
--------------------------------------------------------- */
-@media (max-width: 700px) {
-  /* let scanner fill the card width */
-  .scan-view {
-    max-width: 100%;
-  }
-
-  /* make the camera/preview area tall like a photo */
-  .scan-view video {
-    aspect-ratio: 3 / 4;          /* was 4/3 (too short) */
-    height: min(68vh, 560px);     /* big */
-    max-height: none;             /* no hidden cap */
-    object-fit: cover;
-  }
-
-  /* keep the alignment label from sitting too low */
-  .scan-frame-label {
-    bottom: 6%;
-  }
-}
-@media (max-width: 700px) {
-  .pt-preview__header {
-    padding: 6px 8px;
-  }
-  .pt-preview__title {
-    font-size: 0.9rem;
-  }
-  .pt-preview__actions {
-    gap: 6px;
-  }
 }

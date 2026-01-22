@@ -1,18 +1,21 @@
 ﻿// scanner.js (EasyTest-only)
+// Reverted UX: Preview + Crop shows BELOW the camera box (not overlaid)
 // Features:
 // - EasyTest 7-in-1 swatches
 // - Upload/Take Photo -> Preview crop -> Use Crop -> Analyze (iOS reliable orientation handling)
 // - Live camera capture (optional) + ROI crop attempt
 // - White balance supported
 // - Multiple camera selection + remembers device
-// - ✅ Stabilization: pH/Alk/CYA range + snap
-// - ✅ Hash-based caching: same image -> same result
-// - ✅ Pad RGB fingerprints logged (for calibration + judge explanations)
-// - ✅ “Clear Scan Cache (debug)” button support
-// - ✅ Chlorine “inferred CC” when TC/FC corrected
-// - ✅ Low-confidence scan gate (requires 7/7 pads)
+// - Stabilization: pH/Alk/CYA range + snap
+// - Hash-based caching: same image -> same result
+// - Pad RGB fingerprints logged (for calibration + judge explanations)
+// - “Clear Scan Cache (debug)” button support
+// - Chlorine “inferred CC” when TC/FC corrected
+// - Low-confidence scan gate (requires 7/7 pads)
 
-// --- EasyTest configuration ---------------------------------------
+// ================================================================
+// 1) EasyTest configuration
+// ================================================================
 
 const EASYTEST_SWATCHES = {
   hardness: [
@@ -79,13 +82,6 @@ const EASYTEST_SWATCHES = {
 
 const EASYTEST_CFG = {
   name: "EasyTest 7-in-1",
-  layout: {
-    orientation: "vertical",
-    colFrac: 0.5,
-    padHeightFrac: 0.055,
-    firstPadFrac: 0.14,
-    padSpacingFrac: 0.095
-  },
   pads: [
     { key: "hardness", label: "Total Hardness", index: 0, swatches: EASYTEST_SWATCHES.hardness },
     { key: "freeCl", label: "Free Chlorine", index: 1, swatches: EASYTEST_SWATCHES.freeCl },
@@ -97,14 +93,16 @@ const EASYTEST_CFG = {
   ]
 };
 
-// Pads that need extra stabilization (borderline handling)
+// Pads needing extra stabilization
 const PAD_STABILITY = {
   alk: { snap: 40, ambiguousRatio: 0.72, enableRange: true },
   cya: { snap: 20, ambiguousRatio: 0.75, enableRange: true },
   ph: { snap: 0.2, ambiguousRatio: 0.78, enableRange: true }
 };
 
-// --- helpers -----------------------------------------------------
+// ================================================================
+// 2) Helpers
+// ================================================================
 
 function formatWeightOz(oz) {
   if (!isFinite(oz) || oz <= 0) return null;
@@ -142,7 +140,6 @@ function chooseNearestTwoSwatches(rgb, swatches) {
   return { best, bestD, second, secondD };
 }
 
-// fallback if pad sampling fails
 function rgbToChemistryFallback(avgRgb) {
   const { r, g, b } = avgRgb;
   const ph = Math.min(9.0, Math.max(6.0, 6.0 + (r - b) / 40));
@@ -164,7 +161,16 @@ function rgbToChemistryFallback(avgRgb) {
   };
 }
 
-// --- main --------------------------------------------------------
+function loadJson(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key) || ""); } catch { return fallback; }
+}
+function saveJson(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+}
+
+// ================================================================
+// 3) Main entry
+// ================================================================
 
 export function initPoolTestScanner(root) {
   const els = {
@@ -177,6 +183,7 @@ export function initPoolTestScanner(root) {
     btnStart: root.querySelector('[data-pt="btnStart"]'),
     btnCapture: root.querySelector('[data-pt="btnCapture"]'),
     btnWB: root.querySelector('[data-pt="btnWB"]'),
+
     fileInput: root.querySelector('[data-pt="fileInput"]'),
     btnTakePhoto: root.querySelector('[data-pt="btnTakePhoto"]'),
     btnChoosePhoto: root.querySelector('[data-pt="btnChoosePhoto"]'),
@@ -226,10 +233,12 @@ export function initPoolTestScanner(root) {
     chartFCl: root.querySelector('[data-pt="chartFCl"]'),
     chartAlk: root.querySelector('[data-pt="chartAlk"]'),
     chartCya: root.querySelector('[data-pt="chartCya"]'),
+
     btnRecalc: root.querySelector('[data-pt="btnRecalc"]'),
     btnClearData: root.querySelector('[data-pt="btnClearData"]'),
     btnClearCache: root.querySelector('[data-pt="btnClearCache"]'),
 
+    // Preview (below camera box)
     previewWrap: root.querySelector('[data-pt="previewWrap"]'),
     previewStage: root.querySelector('[data-pt="previewStage"]'),
     previewCanvas: root.querySelector('[data-pt="previewCanvas"]'),
@@ -240,85 +249,14 @@ export function initPoolTestScanner(root) {
     btnCancelCrop: root.querySelector('[data-pt="btnCancelCrop"]')
   };
 
-  // --- mount preview UI inside the scan box (so upload replaces camera view) ---
-(function mountPreviewIntoScanView() {
-  if (!els.scanView || !els.previewWrap) return;
-
-  els.scanView.style.position = "relative";
-  els.scanView.style.overflow = "hidden";
-
-  // Move previewWrap into scanView (overlay inside the scan box)
-  if (els.previewWrap.parentElement !== els.scanView) {
-    els.scanView.appendChild(els.previewWrap);
-  }
-
-  // Overlay container
-  els.previewWrap.style.display = "none";
-  els.previewWrap.style.position = "absolute";
-  els.previewWrap.style.inset = "0";
-  els.previewWrap.style.padding = "0"; // important: don't shrink the image area on mobile
-  els.previewWrap.style.boxSizing = "border-box";
-  els.previewWrap.style.overflow = "hidden";
-
-  // Make the stage fill the scan box
-if (els.previewStage) {
-  els.previewStage.style.position = "relative"; // ✅ not absolute
-  els.previewStage.style.margin = "0";
-  els.previewStage.style.width = "100%";
-  els.previewStage.style.maxWidth = "100%";
-}
-
-if (els.previewCanvas) {
-  els.previewCanvas.style.display = "block";
-  els.previewCanvas.style.width = "100%";
-  els.previewCanvas.style.height = "100%";
-}
-
-})();
-
-// --- preview overlay back button ---
-let backBtn = null;
-
-(function addPreviewBackButton() {
-  if (!els.scanView) return;
-
-  const existing = els.scanView.querySelector('[data-pt="previewBack"]');
-  if (existing) { backBtn = existing; return; }
-
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn-ghost";
-  btn.textContent = "Back";
-  btn.setAttribute("aria-label", "Back to camera");
-  btn.dataset.pt = "previewBack";
-
-  btn.style.position = "absolute";
-
-  // ✅ safe-area aware positioning (iPhone notch / status bar)
-  btn.style.top  = "calc(10px + env(safe-area-inset-top))";
-  btn.style.left = "calc(10px + env(safe-area-inset-left))";
-
-  btn.style.zIndex = "80";
-  btn.style.display = "none";
-
-  btn.addEventListener("click", () => {
-    hidePreview();
-    setStatus("Back to camera. Upload another image or enable camera.");
-  });
-
-  els.scanView.appendChild(btn);
-  backBtn = btn;
-})();
-
-
-
-
+  const setStatus = msg => { if (els.status) els.status.textContent = msg || ""; };
 
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
-  let stream = null;
+  // ================================================================
+  // 4) Calibration + White balance
+  // ================================================================
 
-  // Calibration (shared with calibrate.html)
   const CAL_KEY = "pt_calibration_v1";
   function loadCalibration() {
     try { return JSON.parse(localStorage.getItem(CAL_KEY) || "null"); } catch { return null; }
@@ -340,7 +278,10 @@ let backBtn = null;
     }
   })();
 
-  // UI mode (phones vs tablet/desktop)
+  // ================================================================
+  // 5) UI mode (hide live controls on phones)
+  // ================================================================
+
   function applyScannerMode() {
     const isSmall = window.matchMedia("(max-width: 900px)").matches;
     if (els.liveControls) els.liveControls.style.display = isSmall ? "none" : "";
@@ -348,33 +289,15 @@ let backBtn = null;
   }
   window.addEventListener("resize", applyScannerMode);
 
-  let poolGallons = null;
-  let poolCollapsed = false;
-  let lastVals = null;
+  // ================================================================
+  // 6) Cache + fingerprints
+  // ================================================================
 
-  const HISTORY_KEY = "pt_history_v2";
-  const POOL_SETUP_KEY = "pt_pool_setup_v1";
-  const CAM_KEY = "pt_selected_camera_v1";
-  const MAX_HISTORY = 365;
-
-  // Charts
-  const historyCharts = { ph: null, chlorine: null, alk: null, cya: null };
-
-  const setStatus = msg => { if (els.status) els.status.textContent = msg || ""; };
-
-  // ---------- Hash cache + RGB fingerprints ----------
   const RESULT_CACHE_KEY = "pt_result_cache_v1";
   const RESULT_CACHE_MAX = 60;
 
   const FP_KEY = "pt_pad_fingerprints_v1";
   const FP_MAX = 120;
-
-  function loadJson(key, fallback) {
-    try { return JSON.parse(localStorage.getItem(key) || ""); } catch { return fallback; }
-  }
-  function saveJson(key, val) {
-    try { localStorage.setItem(key, JSON.stringify(val)); } catch { }
-  }
 
   function hashCanvas(ctx) {
     const w = ctx.canvas.width;
@@ -439,7 +362,21 @@ let backBtn = null;
     if (arr.length > FP_MAX) arr.splice(0, arr.length - FP_MAX);
     saveJson(FP_KEY, arr);
   }
-  // --- camera selection -------------------------------------------
+
+  function clearScanCache() {
+    try {
+      localStorage.removeItem(RESULT_CACHE_KEY);
+      localStorage.removeItem(FP_KEY);
+    } catch {}
+    setStatus("Scan cache cleared (results + fingerprints).");
+  }
+
+  // ================================================================
+  // 7) Camera selection + live camera
+  // ================================================================
+
+  let stream = null;
+  const CAM_KEY = "pt_selected_camera_v1";
 
   async function listCameras() {
     if (!navigator.mediaDevices?.enumerateDevices || !els.cameraSelect) return;
@@ -455,10 +392,8 @@ let backBtn = null;
     cams.forEach((cam, idx) => {
       const opt = document.createElement("option");
       opt.value = cam.deviceId;
-
       const label = (cam.label && cam.label.trim()) ? cam.label : `Camera ${idx + 1}`;
       opt.textContent = label;
-
       if (saved && saved === cam.deviceId) opt.selected = true;
       els.cameraSelect.appendChild(opt);
     });
@@ -470,145 +405,13 @@ let backBtn = null;
   }
 
   function saveSelectedCameraId(deviceId) {
-    try { localStorage.setItem(CAM_KEY, deviceId || ""); } catch { }
+    try { localStorage.setItem(CAM_KEY, deviceId || ""); } catch {}
   }
 
-  // --- history ----------------------------------------------------
-
-  function loadHistory() {
-    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); }
-    catch { return []; }
+  function stopCamera() {
+    try { stream?.getTracks?.().forEach(t => t.stop()); } catch {}
+    stream = null;
   }
-
-  function saveHistory(arr) {
-    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(arr)); } catch { }
-  }
-
-  function recordReading(vals) {
-    const history = loadHistory();
-    history.push({
-      t: Date.now(),
-      gallons: poolGallons,
-      ph: vals.ph,
-      freeCl: vals.freeCl,
-      totalCl: vals.totalCl,
-      bromine: vals.bromine,
-      hardness: vals.hardness,
-      alk: vals.alk,
-      cya: vals.cya,
-      chlorineCorrected: !!vals.__chlorineCorrected
-    });
-    if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
-    saveHistory(history);
-    renderHistoryCharts(history);
-  }
-
-  function renderHistoryCharts(historyOpt) {
-    if (typeof Chart === "undefined") return;
-    const history = historyOpt || loadHistory();
-
-    if (!history.length) {
-      Object.keys(historyCharts).forEach(k => {
-        if (historyCharts[k]) { historyCharts[k].destroy(); historyCharts[k] = null; }
-      });
-      return;
-    }
-
-    const labels = history.map(h => new Date(h.t).toLocaleString(undefined, {
-      month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit"
-    }));
-
-    const series = {
-      ph: history.map(h => h.ph),
-      freeCl: history.map(h => h.freeCl),
-      // Defensive clamp so old bad points never show impossible TC<FC
-      totalCl: history.map(h => Math.max(h.totalCl, h.freeCl)),
-      alk: history.map(h => h.alk),
-      cya: history.map(h => h.cya)
-    };
-
-    function upsertChart(key, yLabel, canvas, datasets, optionsOverride) {
-      if (!canvas || !canvas.getContext) return;
-
-      const baseOptions = {
-        responsive: true,
-        scales: {
-          y: { title: { display: true, text: yLabel } },
-          x: { ticks: { maxRotation: 0, minRotation: 0 } }
-        },
-        plugins: { legend: { display: datasets.length > 1 } }
-      };
-
-      const mergedOptions = Object.assign({}, baseOptions, optionsOverride || {});
-      if (optionsOverride?.plugins) mergedOptions.plugins = Object.assign({}, baseOptions.plugins || {}, optionsOverride.plugins);
-      if (optionsOverride?.scales) mergedOptions.scales = Object.assign({}, baseOptions.scales || {}, optionsOverride.scales);
-
-      if (!historyCharts[key]) {
-        historyCharts[key] = new Chart(canvas.getContext("2d"), {
-          type: "line",
-          data: { labels, datasets },
-          options: mergedOptions
-        });
-      } else {
-        const c = historyCharts[key];
-        c.data.labels = labels;
-        c.data.datasets = datasets;
-        c.options = mergedOptions;
-        c.update();
-      }
-    }
-
-    upsertChart("ph", "pH", els.chartPh, [
-      { label: "pH", data: series.ph, tension: 0.3, pointRadius: 2 }
-    ], {
-      plugins: { legend: { display: false } },
-      scales: { y: { suggestedMin: 6, suggestedMax: 9 } }
-    });
-
-    upsertChart("chlorine", "ppm", els.chartFCl, [
-      { label: "Free Chlorine", data: series.freeCl, tension: 0.3, pointRadius: 2 },
-      { label: "Total Chlorine", data: series.totalCl, tension: 0.3, pointRadius: 2, borderDash: [6, 4] }
-    ], {
-      plugins: {
-        legend: { display: true },
-        tooltip: {
-          callbacks: {
-            footer: (tooltipItems) => {
-              const i = tooltipItems?.[0]?.dataIndex;
-              if (i == null) return "";
-
-              const fc = Number(series.freeCl[i]);
-              const tc = Number(series.totalCl[i]);
-              if (!isFinite(fc) || !isFinite(tc)) return "";
-
-              const corrected = !!history?.[i]?.chlorineCorrected;
-              if (corrected) return "Combined Chlorine: inferred (TC/FC corrected)";
-
-              const cc = Math.max(0, tc - fc);
-              return `Combined Chlorine: ${cc.toFixed(2)} ppm`;
-            }
-          }
-        }
-      },
-      scales: { y: { suggestedMin: 0, suggestedMax: 20 } }
-    });
-
-    upsertChart("alk", "ppm", els.chartAlk, [
-      { label: "Total Alkalinity (ppm)", data: series.alk, tension: 0.3, pointRadius: 2 }
-    ], {
-      plugins: { legend: { display: false } },
-      scales: { y: { suggestedMin: 0, suggestedMax: 360 } }
-    });
-
-    upsertChart("cya", "ppm", els.chartCya, [
-      { label: "Cyanuric Acid (ppm)", data: series.cya, tension: 0.3, pointRadius: 2 }
-    ], {
-      plugins: { legend: { display: false } },
-      scales: { y: { suggestedMin: 0, suggestedMax: 240 } }
-    });
-  }
-
-  // --- camera -----------------------------------------------------
 
   async function startCamera() {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -646,11 +449,6 @@ let backBtn = null;
     }
   }
 
-  function stopCamera() {
-    try { stream?.getTracks?.().forEach(t => t.stop()); } catch { }
-    stream = null;
-  }
-
   // Simple ROI crop attempt (camera mode only)
   function cropToStripROI() {
     if (!els.canvas) return;
@@ -682,7 +480,6 @@ let backBtn = null;
         const v = mx;
         const sat = mx === 0 ? 0 : (mx - mn) / mx;
 
-        // "white-ish" strip body
         if (v >= 190 && sat <= 0.25) {
           hits++;
           if (x < minX) minX = x;
@@ -720,7 +517,7 @@ let backBtn = null;
       els.canvas.width = cw;
       els.canvas.height = ch;
       els.canvas.getContext("2d", { willReadFrequently: true }).putImageData(src, 0, 0);
-    } catch { }
+    } catch {}
   }
 
   function drawFromVideo() {
@@ -734,54 +531,38 @@ let backBtn = null;
     return els.canvas.getContext("2d", { willReadFrequently: true });
   }
 
-  // --- preview + manual crop (uploads) ----------------------------
+  // ================================================================
+  // 8) Preview + manual crop (BELOW camera box)
+  // ================================================================
 
   let previewImg = null;   // Image()
   let previewFit = null;   // {scale, dx, dy, iw, ih, cw, ch}
 
-function showPreview(img) {
-  previewImg = img;
-  if (!els.previewWrap || !els.previewCanvas || !els.previewStage || !els.cropBox) return;
+  function showPreview(img) {
+    previewImg = img;
+    if (!els.previewWrap || !els.previewCanvas || !els.previewStage || !els.cropBox) return;
 
-  if (els.video) els.video.style.visibility = "hidden";
-  if (els.scanFrame) els.scanFrame.style.visibility = "hidden";
-  if (els.canvas) els.canvas.hidden = true;
+    els.previewWrap.style.display = "block";
 
-  els.previewWrap.style.display = "flex";
-  els.previewWrap.style.zIndex = "20";
+    // Default crop box (tall/skinny)
+    els.cropBox.style.left = "30%";
+    els.cropBox.style.top = "8%";
+    els.cropBox.style.width = "40%";
+    els.cropBox.style.height = "84%";
 
-  if (backBtn) backBtn.style.display = "block"; // ✅ show back
+    requestAnimationFrame(() => {
+      drawPreviewCanvas();
+      try { els.previewWrap.scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
+    });
 
-  const isMobile = window.matchMedia("(max-width: 600px)").matches;
-  els.previewWrap.classList.toggle("preview--mobile", isMobile);
+    setStatus("Adjust the crop box around the strip, then click Use Crop.");
+  }
 
-  requestAnimationFrame(() => {
-    layoutPreviewOverlay();
-    drawPreviewCanvas();
-  });
-
-  els.cropBox.style.left = "30%";
-  els.cropBox.style.top = "8%";
-  els.cropBox.style.width = "40%";
-  els.cropBox.style.height = "84%";
-
-  setStatus("Adjust the crop box around the strip, then click Use Crop.");
-}
-
-function hidePreview() {
-  if (els.previewWrap) els.previewWrap.style.display = "none";
-  if (backBtn) backBtn.style.display = "none"; // ✅ hide back
-
-  previewImg = null;
-  previewFit = null;
-
-  // Restore live view
-  if (els.video) els.video.style.visibility = "";
-  if (els.scanFrame) els.scanFrame.style.visibility = "";
-}
-
-
-
+  function hidePreview() {
+    if (els.previewWrap) els.previewWrap.style.display = "none";
+    previewImg = null;
+    previewFit = null;
+  }
 
   function drawPreviewCanvas() {
     const c = els.previewCanvas;
@@ -809,25 +590,6 @@ function hidePreview() {
     ctx.drawImage(previewImg, 0, 0, iw, ih, dx, dy, dw, dh);
     previewFit = { scale, dx, dy, iw, ih, cw, ch };
   }
-
- function layoutPreviewOverlay() {
-  if (!els.previewStage || !els.scanView) return;
-
-  const scanH = els.scanView.getBoundingClientRect().height;
-
-  const headerEl = els.previewWrap.querySelector('[data-pt="previewHeader"]');
-  const headerH = headerEl ? headerEl.getBoundingClientRect().height : 80;
-
-  const footerEl = els.previewWrap.querySelector('[data-pt="previewTip"]');
-  const footerH = footerEl ? footerEl.getBoundingClientRect().height : 24;
-
-  const pad = 16;
-  const stageH = Math.max(180, Math.floor(scanH - headerH - footerH - pad));
-
-  els.previewStage.style.height = `${stageH}px`;
-  els.previewStage.style.aspectRatio = "3 / 4";
-}
-
 
   function getCropRectInImagePixels() {
     if (!previewFit || !els.cropBox || !els.previewStage) return null;
@@ -887,128 +649,114 @@ function hidePreview() {
     analyze(ctx);
   }
 
-  // Crop box drag + resize
-// scanner.js
-// Replace ONLY the existing "(function wireCropBox() { ... })();" block with this one.
+  // Crop box drag + resize (pointer-friendly)
+  (function wireCropBox() {
+    if (!els.cropBox || !els.cropHandle || !els.previewStage) return;
 
-(function wireCropBox() {
-  if (!els.cropBox || !els.cropHandle || !els.previewStage) return;
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+    let mode = null; // "drag" | "resize"
+    let start = null;
+    let captureEl = null;
 
-  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-  let mode = null; // "drag" | "resize"
-  let start = null;
-  let captureEl = null;
-
-  function pctFromPx(x, y, w, h) {
-    const stage = els.previewStage.getBoundingClientRect();
-    return {
-      left: (x / stage.width) * 100,
-      top: (y / stage.height) * 100,
-      width: (w / stage.width) * 100,
-      height: (h / stage.height) * 100
-    };
-  }
-
-  function boxPx() {
-    const stage = els.previewStage.getBoundingClientRect();
-    const box = els.cropBox.getBoundingClientRect();
-    return {
-      x: box.left - stage.left,
-      y: box.top - stage.top,
-      w: box.width,
-      h: box.height,
-      sw: stage.width,
-      sh: stage.height
-    };
-  }
-
-  function down(ev, which) {
-    ev.preventDefault();
-    ev.stopPropagation();
-
-    mode = which;
-    captureEl = ev.currentTarget; // ✅ capture on the element that received pointerdown
-
-    const b = boxPx();
-    start = {
-      pid: ev.pointerId,
-      px: ev.clientX,
-      py: ev.clientY,
-      x: b.x,
-      y: b.y,
-      w: b.w,
-      h: b.h,
-      sw: b.sw,
-      sh: b.sh
-    };
-
-    try {
-      captureEl?.setPointerCapture?.(ev.pointerId);
-    } catch {
-      // Some browsers can be picky; if capture fails, dragging still works via window listeners.
-    }
-  }
-
-  function move(ev) {
-    if (!mode || !start) return;
-    ev.preventDefault();
-
-    const dx = ev.clientX - start.px;
-    const dy = ev.clientY - start.py;
-
-    let x = start.x, y = start.y, w = start.w, h = start.h;
-
-    if (mode === "drag") {
-      x = clamp(start.x + dx, 0, start.sw - start.w);
-      y = clamp(start.y + dy, 0, start.sh - start.h);
-    } else {
-      const minW = 40, minH = 80;
-      w = clamp(start.w + dx, minW, start.sw - start.x);
-      h = clamp(start.h + dy, minH, start.sh - start.y);
+    function pctFromPx(x, y, w, h) {
+      const stage = els.previewStage.getBoundingClientRect();
+      return {
+        left: (x / stage.width) * 100,
+        top: (y / stage.height) * 100,
+        width: (w / stage.width) * 100,
+        height: (h / stage.height) * 100
+      };
     }
 
-    const p = pctFromPx(x, y, w, h);
-    els.cropBox.style.left = `${p.left}%`;
-    els.cropBox.style.top = `${p.top}%`;
-    els.cropBox.style.width = `${p.width}%`;
-    els.cropBox.style.height = `${p.height}%`;
-  }
+    function boxPx() {
+      const stage = els.previewStage.getBoundingClientRect();
+      const box = els.cropBox.getBoundingClientRect();
+      return {
+        x: box.left - stage.left,
+        y: box.top - stage.top,
+        w: box.width,
+        h: box.height,
+        sw: stage.width,
+        sh: stage.height
+      };
+    }
 
-  function up(ev) {
-    if (!mode) return;
-    mode = null;
-    start = null;
+    function down(ev, which) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      mode = which;
+      captureEl = ev.currentTarget;
 
-    try {
-      if (captureEl?.hasPointerCapture?.(ev.pointerId)) {
-        captureEl.releasePointerCapture(ev.pointerId);
+      const b = boxPx();
+      start = {
+        pid: ev.pointerId,
+        px: ev.clientX,
+        py: ev.clientY,
+        x: b.x, y: b.y, w: b.w, h: b.h, sw: b.sw, sh: b.sh
+      };
+
+      try { captureEl?.setPointerCapture?.(ev.pointerId); } catch {}
+    }
+
+    function move(ev) {
+      if (!mode || !start) return;
+      ev.preventDefault();
+
+      const dx = ev.clientX - start.px;
+      const dy = ev.clientY - start.py;
+
+      let x = start.x, y = start.y, w = start.w, h = start.h;
+
+      if (mode === "drag") {
+        x = clamp(start.x + dx, 0, start.sw - start.w);
+        y = clamp(start.y + dy, 0, start.sh - start.h);
+      } else {
+        const minW = 40, minH = 80;
+        w = clamp(start.w + dx, minW, start.sw - start.x);
+        h = clamp(start.h + dy, minH, start.sh - start.y);
       }
-    } catch {
-      // ignore
-    } finally {
-      captureEl = null;
-    }
-  }
 
-  els.cropBox.addEventListener("pointerdown", (ev) => {
-    if (ev.target === els.cropHandle) return;
-    down(ev, "drag");
+      const p = pctFromPx(x, y, w, h);
+      els.cropBox.style.left = `${p.left}%`;
+      els.cropBox.style.top = `${p.top}%`;
+      els.cropBox.style.width = `${p.width}%`;
+      els.cropBox.style.height = `${p.height}%`;
+    }
+
+    function up(ev) {
+      if (!mode) return;
+      mode = null;
+      start = null;
+
+      try {
+        if (captureEl?.hasPointerCapture?.(ev.pointerId)) {
+          captureEl.releasePointerCapture(ev.pointerId);
+        }
+      } catch {} finally {
+        captureEl = null;
+      }
+    }
+
+    els.cropBox.addEventListener("pointerdown", (ev) => {
+      if (ev.target === els.cropHandle) return;
+      down(ev, "drag");
+    });
+
+    els.cropHandle.addEventListener("pointerdown", (ev) => down(ev, "resize"));
+
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  })();
+
+  window.addEventListener("resize", () => {
+    if (!previewImg) return;
+    drawPreviewCanvas();
   });
 
-  els.cropHandle.addEventListener("pointerdown", (ev) => down(ev, "resize"));
-
-  window.addEventListener("pointermove", move, { passive: false });
-  window.addEventListener("pointerup", up);
-  window.addEventListener("pointercancel", up);
-})();
-
-window.addEventListener("resize", () => {
-  if (!previewImg) return;
-  layoutPreviewOverlay();
-  drawPreviewCanvas();
-});
-
-  // --- sampling ---------------------------------------------------
+  // ================================================================
+  // 9) Sampling
+  // ================================================================
 
   function sampleStripe(ctx) {
     const w = els.canvas.width;
@@ -1031,12 +779,11 @@ window.addEventListener("resize", () => {
     return { r: r / c, g: g / c, b: b / c };
   }
 
-  // Robust pad sampling: grid + median + variability
+  // Robust pad sampling: scan center line for colored segments, then grid-median each segment
   function samplePadsEasyTest(ctx) {
     const w = els.canvas.width;
     const h = els.canvas.height;
 
-    // Scan down the center line and find "colored" segments
     const x = Math.floor(w * 0.5);
     const img = ctx.getImageData(0, 0, w, h).data;
 
@@ -1048,14 +795,12 @@ window.addEventListener("resize", () => {
       return { r, g, b, v, sat };
     }
 
-    // "colored-ish": not super bright white, and has some saturation
     const colored = [];
     for (let y = 0; y < h; y++) {
       const p = getPixel(y);
       colored[y] = (p.v < 245 && p.sat > 0.08);
     }
 
-    // collect segments
     const segments = [];
     let inSeg = false, start = 0;
     for (let y = 0; y < h; y++) {
@@ -1068,10 +813,8 @@ window.addEventListener("resize", () => {
     }
     if (inSeg) segments.push([start, h - 1]);
 
-    // keep the 7 biggest, sorted top->bottom
     segments.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
     const top7 = segments.slice(0, 7).sort((a, b) => a[0] - b[0]);
-
     if (top7.length !== 7) return {};
 
     const padColors = {};
@@ -1136,6 +879,12 @@ window.addEventListener("resize", () => {
     whiteBalance = { r: d[0] / avg, g: d[1] / avg, b: d[2] / avg };
     setStatus("White balance set. Capture or upload an EasyTest strip.");
   }
+
+  // ================================================================
+  // 10) RGB -> chemistry (with stabilization + offsets)
+  // ================================================================
+
+  let lastVals = null;
 
   function rgbToChemistryEasyTest(padColors) {
     if (!padColors || !Object.keys(padColors).length) {
@@ -1206,30 +955,26 @@ window.addEventListener("resize", () => {
     const tcPick = valueFromPad("totalCl", () => Math.max(result.freeCl, result.freeCl + 0.5));
     result.totalCl = tcPick.value;
 
-    // --- Chlorine sanity correction (science fair safe) ---
+    // Sanity correction: TC >= FC
     let chlorineCorrected = false;
-
-    // If TC < FC, attempt a swap (adjacent-pad misassignment)
     if (result.totalCl < result.freeCl) {
       const tmp = result.totalCl;
       result.totalCl = result.freeCl;
       result.freeCl = tmp;
       chlorineCorrected = true;
     }
-
-    // Enforce chemistry reality (TC >= FC)
     if (result.totalCl < result.freeCl) {
       result.totalCl = result.freeCl;
       chlorineCorrected = true;
     }
-
     result.__chlorineCorrected = chlorineCorrected;
 
+    // Bromine
     const brPick = valueFromPad("bromine", () => null);
     const bromFromPad = brPick.value;
     result.bromine = bromFromPad != null ? bromFromPad : (result.totalCl * 2.25);
 
-    // Hardness (offset-capable)
+    // Hardness
     const hardPick = valueFromPad("hardness", () => 250);
     result.hardness = hardPick.value;
 
@@ -1247,7 +992,7 @@ window.addEventListener("resize", () => {
     if (cyaStab.range) result.__cyaRange = cyaStab.range;
     result.__cyaConfidence = cyaStab.confidence;
 
-    // Apply calibration offsets (device-specific)
+    // Apply calibration offsets
     result.ph = Number((result.ph + (calOffsets.ph || 0)).toFixed(2));
     result.alk = Math.round(result.alk + (calOffsets.alk || 0));
     result.cya = Math.round(result.cya + (calOffsets.cya || 0));
@@ -1264,7 +1009,10 @@ window.addEventListener("resize", () => {
 
     return result;
   }
-  // --- bars + tips ------------------------------------------------
+
+  // ================================================================
+  // 11) Bars + recommendations
+  // ================================================================
 
   const pct = (v, min, max) => Math.max(0, Math.min(100, ((v - min) / (max - min)) * 100));
 
@@ -1296,7 +1044,6 @@ window.addEventListener("resize", () => {
     else if (vals.freeCl > 3) tag(els.tagFCl, "warn", `High (${vals.freeCl} ppm)`);
     else tag(els.tagFCl, "ok", `Good (${vals.freeCl} ppm)`);
 
-    // Total chlorine tag
     tag(els.tagTCl, "ok", `${vals.totalCl} ppm`);
 
     if (vals.bromine < 2) tag(els.tagBr, "warn", `Low (${vals.bromine} ppm)`);
@@ -1317,6 +1064,9 @@ window.addEventListener("resize", () => {
     else if (vals.cya > 100) tag(els.tagCya, "warn", `High (${cyaText})`);
     else tag(els.tagCya, "ok", `Good (${cyaText})`);
   }
+
+  let poolGallons = null;
+  let poolCollapsed = false;
 
   function renderRecs(vals) {
     if (!els.recs) return;
@@ -1351,7 +1101,7 @@ window.addEventListener("resize", () => {
       const dose = formatWeightOz(ozCl);
       recs.push(`Free chlorine is low (${vals.freeCl} ppm). Target is about ${targets.freeCl} ppm. ${dose ? `Add about ${dose} of 12% liquid chlorine, then circulate and retest after 30–60 minutes.` : `Add liquid chlorine per the dosing chart on your product label.`}`);
     } else if (vals.freeCl > 3) {
-      recs.push(`Free chlorine is high (${vals.freeCl} ppm). Usually you just keep the pump running and avoid adding more chlorine so it can drift down.`);
+      recs.push(`Free chlorine is high (${vals.freeCl} ppm). Keep the pump running and avoid adding more chlorine so it can drift down.`);
     } else recs.push(`Free chlorine is in a normal range (${vals.freeCl} ppm).`);
 
     if (vals.alk < 80) {
@@ -1360,7 +1110,7 @@ window.addEventListener("resize", () => {
       const ozBicarb = lbsBicarb * 16;
       const dose = formatWeightOz(ozBicarb);
       recs.push(`Total alkalinity is low (${vals.alk} ppm). Target is ~${targets.alk} ppm. ${dose ? `Add about ${dose} of alkalinity increaser (baking soda) in portions with the pump running.` : `Use an alkalinity increaser according to the package chart for your pool gallons.`}`);
-    } else if (vals.alk > 120) recs.push(`Total alkalinity is high (${vals.alk} ppm). Usually you lower alkalinity gradually using pH reducer and/or partial water replacement.`);
+    } else if (vals.alk > 120) recs.push(`Total alkalinity is high (${vals.alk} ppm). Usually lowered gradually with pH reducer and/or partial water replacement.`);
     else recs.push(`Total alkalinity is in range (${vals.alk} ppm).`);
 
     if (vals.cya < 30) {
@@ -1379,12 +1129,14 @@ window.addEventListener("resize", () => {
     els.recs.innerHTML = recs.map(x => `<li>${x}</li>`).join("");
   }
 
+  // ================================================================
+  // 12) Analyze (cache -> sample -> compute -> render -> save)
+  // ================================================================
+
   function analyze(ctx) {
-    // Hash pixels AFTER crop/scale (so identical cropped content matches)
     let imgHash = null;
     try { imgHash = hashCanvas(ctx); } catch { imgHash = null; }
 
-    // 1) Cache: same image => identical output
     if (imgHash) {
       const hit = cacheGet(imgHash);
       if (hit?.vals) {
@@ -1392,20 +1144,16 @@ window.addEventListener("resize", () => {
         renderBars(hit.vals);
         renderRecs(hit.vals);
         setStatus(`EasyTest scan (cached) | id=${imgHash}`);
-        recordReading(hit.vals);
         els.canvas && (els.canvas.hidden = true);
         return;
       }
     }
 
-    // 2) Fresh compute
     const padColors = samplePadsEasyTest(ctx);
     const avgRgb = sampleStripe(ctx);
     padColors.__avg = avgRgb;
 
     const padCount = Object.keys(padColors).filter(k => k !== "__avg").length;
-
-    // Science-fair safe: require all 7 pads detected, or ask for retake
     if (padCount < 7) {
       setStatus(`Low confidence: only detected ${padCount}/7 pads. Retake photo (bright light, straight-on, avoid glare, include all pads).`);
       els.canvas && (els.canvas.hidden = true);
@@ -1419,15 +1167,134 @@ window.addEventListener("resize", () => {
     renderRecs(vals);
     setStatus(`EasyTest scan | Avg RGB ≈ (${avgRgb.r | 0}, ${avgRgb.g | 0}, ${avgRgb.b | 0})${imgHash ? ` | id=${imgHash}` : ""}`);
 
-    recordReading(vals);
     els.canvas && (els.canvas.hidden = true);
 
-    // 3) Save caches
     if (imgHash) cachePut(imgHash, vals);
     recordFingerprint(imgHash, padColors, avgRgb);
   }
 
-  // --- pool setup + persistence ----------------------------------
+  // ================================================================
+  // 13) Pool setup persistence
+  // ================================================================
+
+  const HISTORY_KEY = "pt_history_v2";
+  const POOL_SETUP_KEY = "pt_pool_setup_v1";
+  const MAX_HISTORY = 365;
+
+  const historyCharts = { ph: null, chlorine: null, alk: null, cya: null };
+
+  function loadHistory() {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); }
+    catch { return []; }
+  }
+  function saveHistory(arr) {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(arr)); } catch {}
+  }
+
+  function recordReading(vals) {
+    const history = loadHistory();
+    history.push({
+      t: Date.now(),
+      gallons: poolGallons,
+      ph: vals.ph,
+      freeCl: vals.freeCl,
+      totalCl: vals.totalCl,
+      bromine: vals.bromine,
+      hardness: vals.hardness,
+      alk: vals.alk,
+      cya: vals.cya,
+      chlorineCorrected: !!vals.__chlorineCorrected
+    });
+    if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+    saveHistory(history);
+    renderHistoryCharts(history);
+  }
+
+  function renderHistoryCharts(historyOpt) {
+    if (typeof Chart === "undefined") return;
+    const history = historyOpt || loadHistory();
+    if (!history.length) return;
+
+    const labels = history.map(h => new Date(h.t).toLocaleString(undefined, {
+      month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit"
+    }));
+
+    const series = {
+      ph: history.map(h => h.ph),
+      freeCl: history.map(h => h.freeCl),
+      totalCl: history.map(h => Math.max(h.totalCl, h.freeCl)),
+      alk: history.map(h => h.alk),
+      cya: history.map(h => h.cya)
+    };
+
+    function upsertChart(key, yLabel, canvas, datasets, optionsOverride) {
+      if (!canvas || !canvas.getContext) return;
+
+      const baseOptions = {
+        responsive: true,
+        scales: {
+          y: { title: { display: true, text: yLabel } },
+          x: { ticks: { maxRotation: 0, minRotation: 0 } }
+        },
+        plugins: { legend: { display: datasets.length > 1 } }
+      };
+
+      const mergedOptions = Object.assign({}, baseOptions, optionsOverride || {});
+      if (optionsOverride?.plugins) mergedOptions.plugins = Object.assign({}, baseOptions.plugins || {}, optionsOverride.plugins);
+      if (optionsOverride?.scales) mergedOptions.scales = Object.assign({}, baseOptions.scales || {}, optionsOverride.scales);
+
+      if (!historyCharts[key]) {
+        historyCharts[key] = new Chart(canvas.getContext("2d"), {
+          type: "line",
+          data: { labels, datasets },
+          options: mergedOptions
+        });
+      } else {
+        const c = historyCharts[key];
+        c.data.labels = labels;
+        c.data.datasets = datasets;
+        c.options = mergedOptions;
+        c.update();
+      }
+    }
+
+    upsertChart("ph", "pH", els.chartPh, [
+      { label: "pH", data: series.ph, tension: 0.3, pointRadius: 2 }
+    ], { plugins: { legend: { display: false } }, scales: { y: { suggestedMin: 6, suggestedMax: 9 } } });
+
+    upsertChart("chlorine", "ppm", els.chartFCl, [
+      { label: "Free Chlorine", data: series.freeCl, tension: 0.3, pointRadius: 2 },
+      { label: "Total Chlorine", data: series.totalCl, tension: 0.3, pointRadius: 2, borderDash: [6, 4] }
+    ], {
+      plugins: {
+        legend: { display: true },
+        tooltip: {
+          callbacks: {
+            footer: (tooltipItems) => {
+              const i = tooltipItems?.[0]?.dataIndex;
+              if (i == null) return "";
+              const fc = Number(series.freeCl[i]);
+              const tc = Number(series.totalCl[i]);
+              if (!isFinite(fc) || !isFinite(tc)) return "";
+              const corrected = !!history?.[i]?.chlorineCorrected;
+              if (corrected) return "Combined Chlorine: inferred (TC/FC corrected)";
+              const cc = Math.max(0, tc - fc);
+              return `Combined Chlorine: ${cc.toFixed(2)} ppm`;
+            }
+          }
+        }
+      },
+      scales: { y: { suggestedMin: 0, suggestedMax: 20 } }
+    });
+
+    upsertChart("alk", "ppm", els.chartAlk, [
+      { label: "Total Alkalinity (ppm)", data: series.alk, tension: 0.3, pointRadius: 2 }
+    ], { plugins: { legend: { display: false } }, scales: { y: { suggestedMin: 0, suggestedMax: 360 } } });
+
+    upsertChart("cya", "ppm", els.chartCya, [
+      { label: "Cyanuric Acid (ppm)", data: series.cya, tension: 0.3, pointRadius: 2 }
+    ], { plugins: { legend: { display: false } }, scales: { y: { suggestedMin: 0, suggestedMax: 240 } } });
+  }
 
   const getNum = el => el ? parseFloat(el.value || "0") : 0;
 
@@ -1458,12 +1325,12 @@ window.addEventListener("resize", () => {
       gallons: poolGallons || 0,
       collapsed: !!poolCollapsed
     };
-    try { localStorage.setItem(POOL_SETUP_KEY, JSON.stringify(conf)); } catch { }
+    try { localStorage.setItem(POOL_SETUP_KEY, JSON.stringify(conf)); } catch {}
   }
 
   function loadPoolSetup() {
     let raw = null;
-    try { raw = localStorage.getItem(POOL_SETUP_KEY); } catch { }
+    try { raw = localStorage.getItem(POOL_SETUP_KEY); } catch {}
     if (!raw) {
       updateShapeVisibility();
       applyPoolCollapsed();
@@ -1484,7 +1351,7 @@ window.addEventListener("resize", () => {
       if (els.gallonsManual && conf.gallonsManual != null) els.gallonsManual.value = conf.gallonsManual;
       poolGallons = conf.gallons > 0 ? Math.round(conf.gallons) : null;
       poolCollapsed = !!conf.collapsed;
-    } catch { }
+    } catch {}
 
     updateShapeVisibility();
     applyPoolCollapsed();
@@ -1534,7 +1401,7 @@ window.addEventListener("resize", () => {
     try {
       localStorage.removeItem(HISTORY_KEY);
       localStorage.removeItem(POOL_SETUP_KEY);
-    } catch { }
+    } catch {}
 
     poolGallons = null;
     poolCollapsed = false;
@@ -1542,7 +1409,7 @@ window.addEventListener("resize", () => {
 
     els.gallonsDisplay && (els.gallonsDisplay.textContent = "Pool volume: – (enter shape/size or manual gallons)");
     els.recs && (els.recs.innerHTML = "<li>Local data cleared. Enter pool setup and scan a new strip.</li>");
-    renderHistoryCharts([]);
+    try { Object.keys(historyCharts).forEach(k => historyCharts[k]?.destroy?.()); } catch {}
 
     try {
       if (els.shape) els.shape.value = "rect";
@@ -1550,18 +1417,12 @@ window.addEventListener("resize", () => {
         .forEach(el => el && (el.value = ""));
       updateShapeVisibility();
       applyPoolCollapsed();
-    } catch { }
+    } catch {}
   }
 
-  function clearScanCache() {
-    try {
-      localStorage.removeItem(RESULT_CACHE_KEY);
-      localStorage.removeItem(FP_KEY);
-    } catch { }
-    setStatus("Scan cache cleared (results + fingerprints).");
-  }
-
-  // --- iOS reliable "Take Photo" pipeline -------------------------
+  // ================================================================
+  // 14) iOS reliable "Take Photo" pipeline
+  // ================================================================
 
   async function loadFileToImageIOSReliable(file) {
     let bmp = null;
@@ -1581,10 +1442,16 @@ window.addEventListener("resize", () => {
     });
   }
 
-  // --- events -----------------------------------------------------
+  // ================================================================
+  // 15) Events
+  // ================================================================
 
   els.btnStart?.addEventListener("click", startCamera);
-  els.btnCapture?.addEventListener("click", () => analyze(drawFromVideo()));
+  els.btnCapture?.addEventListener("click", () => {
+    const ctx = drawFromVideo();
+    analyze(ctx);
+    if (lastVals) recordReading(lastVals);
+  });
 
   // Phone-first buttons
   els.btnTakePhoto?.addEventListener("click", () => els.takeInput?.click());
@@ -1616,7 +1483,10 @@ window.addEventListener("resize", () => {
   els.fileInput?.addEventListener("change", handlePickedFile);
   els.takeInput?.addEventListener("change", handlePickedFile);
 
-  els.btnUseCrop?.addEventListener("click", analyzeFromPreviewCrop);
+  els.btnUseCrop?.addEventListener("click", () => {
+    analyzeFromPreviewCrop();
+    if (lastVals) recordReading(lastVals);
+  });
 
   els.btnCancelCrop?.addEventListener("click", () => {
     hidePreview();
@@ -1662,7 +1532,9 @@ window.addEventListener("resize", () => {
   els.btnRecalc?.addEventListener("click", () => { if (lastVals) renderRecs(lastVals); });
   els.btnClearData?.addEventListener("click", clearLocalData);
 
-  // --- init -------------------------------------------------------
+  // ================================================================
+  // 16) Init
+  // ================================================================
 
   loadPoolSetup();
   renderHistoryCharts();
@@ -1671,7 +1543,7 @@ window.addEventListener("resize", () => {
 
   if (isIOS) {
     els.btnStart && (els.btnStart.textContent = "Live Camera (beta)");
-    setStatus("Ready. iPhone/iPad: use Upload/Take Photo for the most reliable scan. Then crop and scan.");
+    setStatus("Ready. iPhone/iPad: use Take Photo / Choose Photo for the most reliable scan. Then crop and scan.");
   } else {
     setStatus("Ready. Upload a photo to crop, or enable camera.");
   }
