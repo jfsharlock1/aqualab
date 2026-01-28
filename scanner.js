@@ -1,4 +1,4 @@
-﻿// scanner.js (EasyTest-only)
+﻿﻿// scanner.js (EasyTest-only)
 // Reverted UX: Preview + Crop shows BELOW the camera box (not overlaid)
 // Features:
 // - EasyTest 7-in-1 swatches

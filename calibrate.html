@@ -169,6 +169,20 @@
 
       <hr style="border:0; border-top:1px solid rgba(148,163,184,0.25); margin:14px 0;">
 
+      <h3>3.5) Import From Excel / CSV / Google Sheets</h3>
+      <p class="muted hint">
+        Upload an Excel (.xlsx) or CSV file (including a Google Sheet exported as CSV).
+        Each row becomes a history point saved on this device.
+      </p>
+
+      <div class="row row-wrap" style="gap:10px; margin-top:8px; align-items:center;">
+        <input id="importFile" type="file" accept=".csv,.xlsx" />
+        <button type="button" class="btn-ghost" id="importTemplate">Download Template</button>
+      </div>
+      <div class="muted" id="importStatus" style="margin-top:6px;"></div>
+
+      <hr style="border:0; border-top:1px solid rgba(148,163,184,0.25); margin:14px 0;">
+
       <h3>4) What Judges Should Notice</h3>
       <ul>
         <li>Lighting changes RGB values — white balance reduces that error.</li>
@@ -177,6 +191,9 @@
       </ul>
     </section>
   </main>
+
+  <!-- Excel/CSV parser (SheetJS) MUST load first -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <script type="module">
     const CAL_KEY = "pt_calibration_v1";
@@ -233,25 +250,12 @@
       try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
     }
 
-    function loadCal() {
-      return loadJson(CAL_KEY, null);
-    }
+    function loadCal() { return loadJson(CAL_KEY, null); }
+    function saveCalObj(obj) { saveJson(CAL_KEY, obj); }
+    function resetCal() { try { localStorage.removeItem(CAL_KEY); } catch {} }
 
-    function saveCalObj(obj) {
-      saveJson(CAL_KEY, obj);
-    }
-
-    function resetCal() {
-      try { localStorage.removeItem(CAL_KEY); } catch {}
-    }
-
-    function loadHistory() {
-      return loadJson(HISTORY_KEY, []);
-    }
-
-    function saveHistory(arr) {
-      saveJson(HISTORY_KEY, arr);
-    }
+    function loadHistory() { return loadJson(HISTORY_KEY, []); }
+    function saveHistory(arr) { saveJson(HISTORY_KEY, arr); }
 
     function safeNum(v) {
       const n = Number(v);
@@ -297,15 +301,11 @@
 
     function addHistoryPoint(point) {
       const history = loadHistory();
-
       history.push(point);
       history.sort((a, b) => (a.t || 0) - (b.t || 0));
-
       if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
       saveHistory(history);
-
       renderHistoryList();
-      setHint("Added. Go back to Scanner to see charts update.");
     }
 
     function deleteHistoryPointByTime(t) {
@@ -369,6 +369,19 @@
         btn.addEventListener("click", () => deleteHistoryPointByTime(btn.getAttribute("data-del")));
       });
     }
+
+    // ✅ Expose API for sheet.js (must exist BEFORE sheet.js loads)
+    window.__aqualabImportApi = {
+      addHistoryPoint,
+      setImportStatus: (msg) => {
+        const el = document.getElementById("importStatus");
+        if (el) el.textContent = msg || "";
+      },
+      refreshUI: () => {
+        renderHistoryList();
+        setHint("Imported. Go back to Scanner to see charts update.");
+      }
+    };
 
     // Load existing calibration
     const existing = loadCal();
@@ -475,7 +488,6 @@
       setStatus("Calibration reset.");
     });
 
-    // Manual history handlers
     els.mAdd?.addEventListener("click", () => {
       setHint("");
 
@@ -490,7 +502,6 @@
       const tcIn = safeNum(els.mTc?.value);
       const { fc, tc, corrected } = clampTcFc(tcIn, fcIn);
 
-      // Require minimum needed for graphs
       if (ph == null || alk == null || cya == null || fc == null || tc == null) {
         setHint("Please fill at least pH, FC, TC, Alk, and CYA.");
         return;
@@ -514,17 +525,19 @@
 
       addHistoryPoint(point);
 
-      // Keep date (often adding a series), clear values
       [els.mPh, els.mFc, els.mTc, els.mAlk, els.mCya, els.mHard, els.mBr].forEach(el => { if (el) el.value = ""; });
       if (els.mCorrected) els.mCorrected.checked = false;
+
+      setHint("Added. Go back to Scanner to see charts update.");
     });
 
-    els.mClearHistory?.addEventListener("click", () => {
-      clearHistory();
-    });
+    els.mClearHistory?.addEventListener("click", () => clearHistory());
 
     renderHistoryList();
     setStatus("Ready. Load an unused strip photo to begin calibration.");
   </script>
+
+  <!-- ✅ Load sheet.js AFTER API is defined (and with defer) -->
+  <script src="./sheet.js?v=2" defer></script>
 </body>
 </html>
