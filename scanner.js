@@ -265,9 +265,25 @@ export function initPoolTestScanner(root) {
   let whiteBalance = { r: 1, g: 1, b: 1 };
   let calOffsets = { ph: 0, alk: 0, cya: 0, hardness: 0 };
 
+  function clampNumber(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function normalizeWhiteBalance(wb) {
+    const r = Number(wb?.r);
+    const g = Number(wb?.g);
+    const b = Number(wb?.b);
+    if (![r, g, b].every(v => Number.isFinite(v) && v > 0)) return { r: 1, g: 1, b: 1 };
+    return {
+      r: clampNumber(r, 0.45, 2.25),
+      g: clampNumber(g, 0.45, 2.25),
+      b: clampNumber(b, 0.45, 2.25)
+    };
+  }
+
   (function applySavedCalibration() {
     const cal = loadCalibration();
-    if (cal?.whiteBalance) whiteBalance = cal.whiteBalance;
+    if (cal?.whiteBalance) whiteBalance = normalizeWhiteBalance(cal.whiteBalance);
     if (cal?.offsets) {
       calOffsets = {
         ph: Number(cal.offsets.ph || 0),
@@ -277,6 +293,20 @@ export function initPoolTestScanner(root) {
       };
     }
   })();
+
+  function calibrationFingerprint() {
+    const wb = normalizeWhiteBalance(whiteBalance);
+    const offsets = {
+      ph: Number(calOffsets.ph || 0),
+      alk: Number(calOffsets.alk || 0),
+      cya: Number(calOffsets.cya || 0),
+      hardness: Number(calOffsets.hardness || 0)
+    };
+    return [
+      wb.r.toFixed(3), wb.g.toFixed(3), wb.b.toFixed(3),
+      offsets.ph.toFixed(2), offsets.alk, offsets.cya, offsets.hardness
+    ].join(":");
+  }
 
   // ================================================================
   // 5) UI mode (hide live controls on phones)
@@ -633,7 +663,7 @@ export function initPoolTestScanner(root) {
     const r = getCropRectInImagePixels();
     if (!r || !previewImg) {
       setStatus("Crop box is not over the image (or too small).");
-      return;
+      return null;
     }
 
     const maxW = 1600;
@@ -646,7 +676,7 @@ export function initPoolTestScanner(root) {
     ctx.drawImage(previewImg, r.sx, r.sy, r.sw, r.sh, 0, 0, els.canvas.width, els.canvas.height);
 
     hidePreview();
-    analyze(ctx);
+    return analyze(ctx);
   }
 
   // Crop box drag + resize (pointer-friendly)
@@ -779,15 +809,14 @@ export function initPoolTestScanner(root) {
     return { r: r / c, g: g / c, b: b / c };
   }
 
-  // Robust pad sampling: scan center line for colored segments, then grid-median each segment
+  // Robust pad sampling: scan several vertical lanes for colored pad segments, then grid-median each segment.
   function samplePadsEasyTest(ctx) {
     const w = els.canvas.width;
     const h = els.canvas.height;
 
-    const x = Math.floor(w * 0.5);
     const img = ctx.getImageData(0, 0, w, h).data;
 
-    function getPixel(y) {
+    function getPixel(x, y) {
       const i = (y * w + x) * 4;
       const r = img[i], g = img[i + 1], b = img[i + 2];
       const v = Math.max(r, g, b);
@@ -795,27 +824,45 @@ export function initPoolTestScanner(root) {
       return { r, g, b, v, sat };
     }
 
-    const colored = [];
-    for (let y = 0; y < h; y++) {
-      const p = getPixel(y);
-      colored[y] = (p.v < 245 && p.sat > 0.08);
-    }
-
-    const segments = [];
-    let inSeg = false, start = 0;
-    for (let y = 0; y < h; y++) {
-      if (colored[y] && !inSeg) { inSeg = true; start = y; }
-      if (!colored[y] && inSeg) {
-        const end = y - 1;
-        inSeg = false;
-        if (end - start > 25) segments.push([start, end]);
+    function detectSegmentsAtX(x) {
+      const colored = [];
+      for (let y = 0; y < h; y++) {
+        const p = getPixel(x, y);
+        colored[y] = (p.v < 245 && p.sat > 0.08);
       }
-    }
-    if (inSeg) segments.push([start, h - 1]);
 
-    segments.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
-    const top7 = segments.slice(0, 7).sort((a, b) => a[0] - b[0]);
-    if (top7.length !== 7) return {};
+      const segments = [];
+      let inSeg = false, start = 0;
+      for (let y = 0; y < h; y++) {
+        if (colored[y] && !inSeg) { inSeg = true; start = y; }
+        if (!colored[y] && inSeg) {
+          const end = y - 1;
+          inSeg = false;
+          if (end - start > 25) segments.push([start, end]);
+        }
+      }
+      if (inSeg) segments.push([start, h - 1]);
+
+      segments.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
+      const top7 = segments.slice(0, 7).sort((a, b) => a[0] - b[0]);
+      if (top7.length !== 7) return null;
+
+      const totalHeight = top7.reduce((sum, seg) => sum + (seg[1] - seg[0]), 0);
+      const span = top7[6][1] - top7[0][0];
+      const centerPenalty = Math.abs(x - w * 0.5) / w;
+      const score = totalHeight + span * 0.2 - centerPenalty * 80;
+      return { x, top7, score };
+    }
+
+    const laneFractions = [0.32, 0.38, 0.44, 0.5, 0.56, 0.62, 0.68];
+    const candidates = laneFractions
+      .map(frac => detectSegmentsAtX(clampNumber(Math.floor(w * frac), 0, w - 1)))
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score);
+
+    if (!candidates.length) return {};
+
+    const { x, top7 } = candidates[0];
 
     const padColors = {};
     const padW = Math.max(20, Math.floor(w * 0.34));
@@ -874,9 +921,33 @@ export function initPoolTestScanner(root) {
   }
 
   function setWBAt(x, y) {
-    const d = els.canvas.getContext("2d", { willReadFrequently: true }).getImageData(x, y, 1, 1).data;
-    const avg = (d[0] + d[1] + d[2]) / 3 || 1;
-    whiteBalance = { r: d[0] / avg, g: d[1] / avg, b: d[2] / avg };
+    const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
+    const size = 21;
+    const half = Math.floor(size / 2);
+    const sx = clampNumber(x - half, 0, Math.max(0, els.canvas.width - size));
+    const sy = clampNumber(y - half, 0, Math.max(0, els.canvas.height - size));
+    const imgData = ctx.getImageData(Math.round(sx), Math.round(sy), Math.min(size, els.canvas.width), Math.min(size, els.canvas.height));
+    const data = imgData.data;
+    const rs = [], gs = [], bs = [];
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const mx = Math.max(r, g, b);
+      const mn = Math.min(r, g, b);
+      const sat = mx === 0 ? 0 : (mx - mn) / mx;
+      if (mx < 80 || sat > 0.22) continue;
+      rs.push(r); gs.push(g); bs.push(b);
+    }
+
+    if (rs.length < 24) {
+      setStatus("White balance needs a bright white/gray strip-body area. Avoid pads, shadows, and glare.");
+      return;
+    }
+
+    const median = vals => vals.slice().sort((a, b) => a - b)[Math.floor(vals.length / 2)];
+    const r = median(rs), g = median(gs), b = median(bs);
+    const avg = (r + g + b) / 3 || 1;
+    whiteBalance = normalizeWhiteBalance({ r: r / avg, g: g / avg, b: b / avg });
     setStatus("White balance set. Capture or upload an EasyTest strip.");
   }
 
@@ -1136,16 +1207,17 @@ export function initPoolTestScanner(root) {
   function analyze(ctx) {
     let imgHash = null;
     try { imgHash = hashCanvas(ctx); } catch { imgHash = null; }
+    const cacheKey = imgHash ? `${imgHash}:${calibrationFingerprint()}` : null;
 
-    if (imgHash) {
-      const hit = cacheGet(imgHash);
+    if (cacheKey) {
+      const hit = cacheGet(cacheKey);
       if (hit?.vals) {
         lastVals = hit.vals;
         renderBars(hit.vals);
         renderRecs(hit.vals);
         setStatus(`EasyTest scan (cached) | id=${imgHash}`);
         els.canvas && (els.canvas.hidden = true);
-        return;
+        return hit.vals;
       }
     }
 
@@ -1155,9 +1227,10 @@ export function initPoolTestScanner(root) {
 
     const padCount = Object.keys(padColors).filter(k => k !== "__avg").length;
     if (padCount < 7) {
+      lastVals = null;
       setStatus(`Low confidence: only detected ${padCount}/7 pads. Retake photo (bright light, straight-on, avoid glare, include all pads).`);
       els.canvas && (els.canvas.hidden = true);
-      return;
+      return null;
     }
 
     const vals = rgbToChemistryEasyTest(padColors);
@@ -1169,8 +1242,9 @@ export function initPoolTestScanner(root) {
 
     els.canvas && (els.canvas.hidden = true);
 
-    if (imgHash) cachePut(imgHash, vals);
+    if (cacheKey) cachePut(cacheKey, vals);
     recordFingerprint(imgHash, padColors, avgRgb);
+    return vals;
   }
 
   // ================================================================
@@ -1449,8 +1523,8 @@ export function initPoolTestScanner(root) {
   els.btnStart?.addEventListener("click", startCamera);
   els.btnCapture?.addEventListener("click", () => {
     const ctx = drawFromVideo();
-    analyze(ctx);
-    if (lastVals) recordReading(lastVals);
+    const vals = analyze(ctx);
+    if (vals) recordReading(vals);
   });
 
   // Phone-first buttons
@@ -1484,8 +1558,8 @@ export function initPoolTestScanner(root) {
   els.takeInput?.addEventListener("change", handlePickedFile);
 
   els.btnUseCrop?.addEventListener("click", () => {
-    analyzeFromPreviewCrop();
-    if (lastVals) recordReading(lastVals);
+    const vals = analyzeFromPreviewCrop();
+    if (vals) recordReading(vals);
   });
 
   els.btnCancelCrop?.addEventListener("click", () => {

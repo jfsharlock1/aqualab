@@ -256,6 +256,48 @@
       return Number.isFinite(n) ? n : null;
     }
 
+    function clampNumber(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function normalizeWhiteBalance(wb) {
+      const r = Number(wb?.r);
+      const g = Number(wb?.g);
+      const b = Number(wb?.b);
+      if (![r, g, b].every(v => Number.isFinite(v) && v > 0)) return { r: 1, g: 1, b: 1 };
+      return {
+        r: clampNumber(r, 0.45, 2.25),
+        g: clampNumber(g, 0.45, 2.25),
+        b: clampNumber(b, 0.45, 2.25)
+      };
+    }
+
+    function whiteBalanceFromPatch(ctx, x, y) {
+      const size = 21;
+      const half = Math.floor(size / 2);
+      const sx = clampNumber(x - half, 0, Math.max(0, els.canvas.width - size));
+      const sy = clampNumber(y - half, 0, Math.max(0, els.canvas.height - size));
+      const imgData = ctx.getImageData(Math.round(sx), Math.round(sy), Math.min(size, els.canvas.width), Math.min(size, els.canvas.height));
+      const data = imgData.data;
+      const rs = [], gs = [], bs = [];
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        const mx = Math.max(r, g, b);
+        const mn = Math.min(r, g, b);
+        const sat = mx === 0 ? 0 : (mx - mn) / mx;
+        if (mx < 80 || sat > 0.22) continue;
+        rs.push(r); gs.push(g); bs.push(b);
+      }
+
+      if (rs.length < 24) return null;
+
+      const median = vals => vals.slice().sort((a, b) => a - b)[Math.floor(vals.length / 2)];
+      const r = median(rs), g = median(gs), b = median(bs);
+      const avg = (r + g + b) / 3 || 1;
+      return normalizeWhiteBalance({ r: r / avg, g: g / avg, b: b / avg });
+    }
+
     function clampTcFc(tc, fc) {
       if (tc == null && fc == null) return { tc: null, fc: null, corrected: false };
       const _fc = fc == null ? 0 : Math.max(0, fc);
@@ -447,9 +489,11 @@
       const x = Math.round((ev.clientX - rect.left) * (els.canvas.width / rect.width));
       const y = Math.round((ev.clientY - rect.top) * (els.canvas.height / rect.height));
 
-      const d = ctx.getImageData(x, y, 1, 1).data;
-      const avg = (d[0] + d[1] + d[2]) / 3 || 1;
-      const wb = { r: d[0] / avg, g: d[1] / avg, b: d[2] / avg };
+      const wb = whiteBalanceFromPatch(ctx, x, y);
+      if (!wb) {
+        setStatus("White balance needs a bright white/gray strip-body area. Avoid pads, shadows, and glare.");
+        return;
+      }
 
       const cur = loadCal() || {};
       cur.whiteBalance = wb;
