@@ -60,6 +60,11 @@ a { color: inherit; text-decoration: none; }
   border: 1px solid rgba(148,163,184,0.5);
 }
 .pt-nav a:hover { background: rgba(148,163,184,0.12); }
+.pt-nav a.active {
+  border-color: rgba(14,165,233,0.85);
+  background: rgba(14,165,233,0.16);
+  color: #e0f2fe;
+}
 
 /* Mobile header fix */
 @media (max-width: 700px) {
@@ -114,17 +119,20 @@ a { color: inherit; text-decoration: none; }
 .field label { display:block; font-size:0.8rem; margin-bottom:4px; }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   width: 100%;
   padding: 6px 8px;
   border-radius: 10px;
   border: 1px solid rgba(75,85,99,0.9);
   background: rgba(15,23,42,0.95);
   color: var(--fg);
+  font: inherit;
 }
 
 .field input:focus,
-.field select:focus {
+.field select:focus,
+.field textarea:focus {
   outline: 1px solid var(--accent);
   border-color: var(--accent);
 }
@@ -375,6 +383,293 @@ button:hover:not(:disabled),
 
 .pooltest--pool-hidden { grid-template-columns: minmax(0,1fr); }
 .pooltest--pool-hidden [data-pt="poolCard"] { display: none; }
+
+/* Sensor Array placeholders */
+.sensor-array {
+  display: grid;
+  gap: 18px;
+}
+
+.sensor-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.sensor-hero p { margin: 6px 0 0; }
+
+.sensor-hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sensor-auth-card {
+  max-width: 560px;
+}
+
+.sensor-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.sensor-card {
+  min-height: 140px;
+}
+
+.sensor-card h2 {
+  margin-bottom: 8px;
+}
+
+.sensor-card-wide {
+  grid-column: 1 / -1;
+  min-height: 220px;
+}
+
+.sensor-reading-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 10px 0 12px;
+}
+
+.sensor-reading {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(51,65,85,0.9);
+  background: rgba(15,23,42,0.72);
+}
+
+.sensor-reading small,
+.sensor-reading span {
+  display: block;
+  font-size: 0.76rem;
+}
+
+.sensor-reading strong {
+  display: block;
+  margin: 4px 0 2px;
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+
+.sensor-actions {
+  justify-content: flex-start;
+  margin-bottom: 8px;
+}
+
+.sensor-classification {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(51,65,85,0.9);
+  background: rgba(15,23,42,0.55);
+}
+
+.sensor-classification strong {
+  font-size: 0.95rem;
+}
+
+.sensor-classification p {
+  margin: 0;
+}
+
+.sensor-calibration-values {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 10px 0 12px;
+}
+
+.weather-reading-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 10px 0 12px;
+}
+
+.status-badge-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.diagnostic-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.diagnostic-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(51,65,85,0.7);
+}
+
+.diagnostic-list span {
+  color: var(--fg-muted);
+  text-align: right;
+}
+
+.diagnostic-warnings {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+}
+
+.sensor-history-charts {
+  display: grid;
+  gap: 12px;
+}
+
+.sensor-history-charts h3 {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+}
+
+.sensor-history-charts > div {
+  position: relative;
+  height: 220px;
+  min-height: 0;
+  max-height: 220px;
+  overflow: hidden;
+}
+
+.sensor-history-charts canvas {
+  display: block;
+  width: 100% !important;
+  height: 178px !important;
+  max-height: 178px;
+}
+
+.session-indicator {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(51,65,85,0.9);
+  background: rgba(15,23,42,0.55);
+}
+
+.session-indicator strong,
+.session-indicator p {
+  margin: 0;
+}
+
+.map-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+
+.map-controls label {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+  font-size: 0.8rem;
+}
+
+.map-controls select {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(75,85,99,0.9);
+  background: rgba(15,23,42,0.95);
+  color: var(--fg);
+}
+
+.sensor-map {
+  width: 100%;
+  min-height: 360px;
+  margin: 12px 0;
+  border-radius: 14px;
+  border: 1px solid rgba(51,65,85,0.9);
+  background: rgba(15,23,42,0.72);
+  overflow: hidden;
+}
+
+.unmapped-panel h3 {
+  margin: 8px 0;
+  font-size: 0.95rem;
+}
+
+.unmapped-list {
+  display: grid;
+  gap: 8px;
+}
+
+.unmapped-reading {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(51,65,85,0.85);
+  background: rgba(15,23,42,0.55);
+}
+
+.unmapped-reading span {
+  color: var(--fg-muted);
+  font-size: 0.82rem;
+}
+
+.map-popup {
+  display: grid;
+  gap: 3px;
+  color: #0f172a;
+}
+
+.map-popup span {
+  font-size: 12px;
+}
+
+.sensor-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+  color: var(--fg);
+  font-size: 0.85rem;
+}
+
+.sensor-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.location-ok {
+  color: #bbf7d0;
+}
+
+.location-bad {
+  color: #fecaca;
+}
+
+@media (max-width: 900px) {
+  .sensor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .sensor-hero { flex-direction: column; }
+  .sensor-grid { grid-template-columns: minmax(0, 1fr); }
+  .sensor-reading-grid { grid-template-columns: minmax(0, 1fr); }
+  .sensor-calibration-values { grid-template-columns: minmax(0, 1fr); }
+  .weather-reading-grid { grid-template-columns: minmax(0, 1fr); }
+}
 
 .pt-footer {
   max-width: 1200px;

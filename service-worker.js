@@ -5,15 +5,25 @@
 // - JS/CSS: stale-while-revalidate (fast, but updates in background)
 // - Everything else: cache-first
 
-const CACHE_VERSION = "v16"; // bump to force refresh
+const CACHE_VERSION = "v30"; // bump to force refresh
 const CACHE_NAME = `pooltest-cache-${CACHE_VERSION}`;
 
 const ASSETS = [
   "./",
   "./index.html",
+  "./sensors.html",
   "./calibrate.html",
   "./pooltest.css",
   "./scanner.js",
+  "./sensors.js",
+  "./sensorService.js",
+  "./sensorStorageService.js",
+  "./sensorAuthService.js",
+  "./waterQuality.js",
+  "./wifiTransport.js",
+  "./mockTransport.js",
+  "./bluetoothTransport.js",
+  "./sheet.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png"

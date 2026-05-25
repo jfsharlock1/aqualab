@@ -25,6 +25,8 @@
       <div class="muted">Scan a test strip → analyze water chemistry → get volume-aware, science-based recommendations</div>
     </div>
     <nav class="pt-nav">
+      <a href="./index.html" class="active" aria-current="page">Test Strip Scan</a>
+      <a href="./sensors.html">Sensor Array</a>
       <a href="calibrate.html">Calibration Lab</a>
       <button type="button" class="btn-ghost" data-pt="poolToggleGlobal">Pool Setup</button>
     </nav>
@@ -223,6 +225,10 @@
         <button type="button" class="btn-ghost" data-pt="btnClearCache">
           Clear Scan Cache (debug)
         </button>
+
+        <button type="button" class="btn-ghost" data-pt="btnExportDataset">
+          Export Calibration Dataset
+        </button>
       </div>
 
       <div class="history-grid">
@@ -241,7 +247,7 @@
     </small>
   </footer>
 
-  <!-- Install prompt banner (PWA) 
+  <!-- Install prompt banner (PWA) -->
   <div id="installBanner" class="install-banner" hidden>
     <div class="install-text">
       <strong>Add AquaLab to your Home Screen</strong>
@@ -251,19 +257,19 @@
       <button id="installBtn" class="btn">Add</button>
       <button id="installClose" class="btn-ghost">Not now</button>
     </div>
-  </div>-->
+  </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev16";
+    import { initPoolTestScanner } from "./scanner.js?v=dev17";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>
 
   <script>
     // --- Add-to-Home Screen (A2HS) prompt ---
-    //--const banner = document.getElementById("installBanner");--
+    const banner = document.getElementById("installBanner");
     const btnInstall = document.getElementById("installBtn");
     const btnClose = document.getElementById("installClose");
     const hint = document.getElementById("installHint");

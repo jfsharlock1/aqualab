@@ -237,6 +237,7 @@ export function initPoolTestScanner(root) {
     btnRecalc: root.querySelector('[data-pt="btnRecalc"]'),
     btnClearData: root.querySelector('[data-pt="btnClearData"]'),
     btnClearCache: root.querySelector('[data-pt="btnClearCache"]'),
+    btnExportDataset: root.querySelector('[data-pt="btnExportDataset"]'),
 
     // Preview (below camera box)
     previewWrap: root.querySelector('[data-pt="previewWrap"]'),
@@ -399,6 +400,42 @@ export function initPoolTestScanner(root) {
       localStorage.removeItem(FP_KEY);
     } catch {}
     setStatus("Scan cache cleared (results + fingerprints).");
+  }
+
+  function exportCalibrationDataset() {
+    const fingerprints = loadJson(FP_KEY, []);
+    const history = loadJson("pt_history_v2", []);
+    const calibration = loadCalibration();
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      app: "AquaLab",
+      format: "aqualab-calibration-dataset-v1",
+      note: "Fingerprints are sampled pad RGB medians. Pair these with known test-kit readings when building calibration data.",
+      calibration,
+      history,
+      fingerprints
+    };
+
+    if (!fingerprints.length && !history.length) {
+      setStatus("No scan fingerprints or history to export yet.");
+      return;
+    }
+
+    try {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `aqualab-calibration-dataset-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setStatus(`Exported ${fingerprints.length} scan fingerprint(s) and ${history.length} history reading(s).`);
+    } catch {
+      setStatus("Could not export the calibration dataset from this browser.");
+    }
   }
 
   // ================================================================
@@ -1483,7 +1520,12 @@ export function initPoolTestScanner(root) {
 
     els.gallonsDisplay && (els.gallonsDisplay.textContent = "Pool volume: – (enter shape/size or manual gallons)");
     els.recs && (els.recs.innerHTML = "<li>Local data cleared. Enter pool setup and scan a new strip.</li>");
-    try { Object.keys(historyCharts).forEach(k => historyCharts[k]?.destroy?.()); } catch {}
+    try {
+      Object.keys(historyCharts).forEach(k => {
+        historyCharts[k]?.destroy?.();
+        historyCharts[k] = null;
+      });
+    } catch {}
 
     try {
       if (els.shape) els.shape.value = "rect";
@@ -1532,6 +1574,7 @@ export function initPoolTestScanner(root) {
   els.btnChoosePhoto?.addEventListener("click", () => els.fileInput?.click());
 
   els.btnClearCache?.addEventListener("click", clearScanCache);
+  els.btnExportDataset?.addEventListener("click", exportCalibrationDataset);
 
   els.cameraSelect?.addEventListener("change", () => {
     const id = getSelectedCameraId();
