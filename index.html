@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css" />
+  <link rel="stylesheet" href="pooltest.css?v=14" />
 </head>
 
 <body>
@@ -176,6 +176,9 @@
       </div>
 
       <p data-pt="status" class="muted" style="margin-top:8px;"></p>
+      <div class="scan-quality-row">
+        <span data-pt="scanQuality" class="tag warn">Scan quality: not evaluated</span>
+      </div>
     </section>
 
     <!-- Results -->
@@ -210,6 +213,15 @@
 
       <h3 style="margin-top:16px;">Volume-Aware Tips</h3>
       <ul data-pt="recs" class="muted"></ul>
+    </section>
+
+    <section class="card full-width">
+      <details class="scan-debug-panel">
+        <summary>Advanced Scan Diagnostics</summary>
+        <div data-pt="scanDebug">
+          <p class="muted hint">Run a scan to see LAB/Delta-E diagnostics.</p>
+        </div>
+      </details>
     </section>
 
     <!-- History -->
@@ -256,76 +268,204 @@
     <div class="install-actions">
       <button id="installBtn" class="btn">Add</button>
       <button id="installClose" class="btn-ghost">Not now</button>
+      <button id="installDismiss" class="btn-ghost install-dismiss" aria-label="Close install prompt">×</button>
     </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev17";
+    import { initPoolTestScanner } from "./scanner.js?v=dev18";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>
 
   <script>
     // --- Add-to-Home Screen (A2HS) prompt ---
-    const banner = document.getElementById("installBanner");
-    const btnInstall = document.getElementById("installBtn");
-    const btnClose = document.getElementById("installClose");
-    const hint = document.getElementById("installHint");
+    (() => {
+      if (window.__aqualabInstallPromptInitialized) return;
+      window.__aqualabInstallPromptInitialized = true;
 
-    const DISMISS_KEY = "pt_install_dismissed_v1";
-    const dismissed = (() => { try { return localStorage.getItem(DISMISS_KEY) === "1"; } catch { return false; } })();
+      const banner = document.getElementById("installBanner");
+      const btnInstall = document.getElementById("installBtn");
+      const btnClose = document.getElementById("installClose");
+      const btnDismiss = document.getElementById("installDismiss");
+      const hint = document.getElementById("installHint");
 
-    function isStandalone() {
-      return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
-    }
-    function isIOS() {
-      return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-    }
+      const DISMISS_KEY = "pwaInstallPromptDismissed";
+      const DISMISS_AT_KEY = "pwaInstallPromptDismissedAt";
+      const LEGACY_DISMISS_KEY = "pt_install_dismissed_v1";
+      const COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+      let deferredPrompt = null;
+      let beforeInstallPromptSeen = false;
+      let promptOpen = false;
 
-    let deferredPrompt = null;
+      function safeGet(key) {
+        try { return localStorage.getItem(key); } catch { return null; }
+      }
 
-    function setBannerVisible(visible) {
-      if (!banner) return;
-      banner.hidden = !visible;
-      document.body.classList.toggle("has-install-banner", !!visible);
-    }
+      function safeSet(key, value) {
+        try { localStorage.setItem(key, value); } catch {}
+      }
 
-    function showBanner(message, showAddButton) {
-      if (!banner || dismissed || isStandalone()) return;
-      if (hint && message) hint.textContent = message;
-      if (btnInstall) btnInstall.style.display = showAddButton ? "" : "none";
-      setBannerVisible(true);
-    }
+      function isStandalone() {
+        return window.navigator.standalone === true ||
+          window.matchMedia("(display-mode: standalone)").matches;
+      }
 
-    function hideBanner() {
-      setBannerVisible(false);
-    }
+      function isIOS() {
+        return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+      }
 
-    btnClose?.addEventListener("click", () => {
-      hideBanner();
-      try { localStorage.setItem(DISMISS_KEY, "1"); } catch {}
-    });
+      function isMobile() {
+        return isIOS() || /Android|Mobi|Mobile|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+          window.matchMedia("(max-width: 760px)").matches ||
+          (navigator.maxTouchPoints > 1 && window.matchMedia("(pointer: coarse)").matches);
+      }
 
-    btnInstall?.addEventListener("click", async () => {
-      if (!deferredPrompt) return;
-      deferredPrompt.prompt();
-      try { await deferredPrompt.userChoice; } catch {}
-      deferredPrompt = null;
-      hideBanner();
-    });
+      function platformLabel() {
+        if (isIOS()) return "ios";
+        if (/Android/i.test(navigator.userAgent)) return "android";
+        return isMobile() ? "mobile-webview-or-other" : "desktop";
+      }
 
-    window.addEventListener("beforeinstallprompt", (e) => {
-      e.preventDefault();
-      deferredPrompt = e;
-      showBanner("Install for faster access and full-screen scanning.", true);
-    });
+      function dismissedAt() {
+        const legacy = safeGet(LEGACY_DISMISS_KEY) === "1";
+        const raw = Number(safeGet(DISMISS_AT_KEY) || 0);
+        if (!raw && legacy) return Date.now();
+        return Number.isFinite(raw) ? raw : 0;
+      }
 
-    window.addEventListener("load", () => {
-      if (dismissed || isStandalone()) return;
-      if (isIOS()) showBanner('On iPhone: tap Share → "Add to Home Screen".', false);
-    });
+      function markDismissed(reason) {
+        const now = Date.now();
+        safeSet(DISMISS_KEY, "true");
+        safeSet(DISMISS_AT_KEY, String(now));
+        safeSet(LEGACY_DISMISS_KEY, "1");
+        debugInstallPrompt("dismissed", { reason, dismissedAt: now });
+      }
+
+      function cooldownRemaining() {
+        const at = dismissedAt();
+        if (!at) return 0;
+        return Math.max(0, COOLDOWN_MS - (Date.now() - at));
+      }
+
+      function debugInstallPrompt(decision, extra = {}) {
+        const remaining = cooldownRemaining();
+        console.debug("[AquaLab install prompt]", {
+          decision,
+          platform: platformLabel(),
+          mobile: isMobile(),
+          standalone: isStandalone(),
+          dismissed: safeGet(DISMISS_KEY) === "true" || safeGet(LEGACY_DISMISS_KEY) === "1",
+          dismissedAt: dismissedAt() || null,
+          cooldownRemainingMs: remaining,
+          beforeinstallpromptAvailable: beforeInstallPromptSeen,
+          deferredPromptAvailable: Boolean(deferredPrompt),
+          promptOpen,
+          ...extra
+        });
+      }
+
+      function shouldShowInstallPrompt(kind) {
+        const remaining = cooldownRemaining();
+        const supportsPrompt = kind === "android" && Boolean(deferredPrompt);
+        const supportsInstructions = kind === "ios" && isIOS();
+        const shouldShow = Boolean(
+          banner &&
+          isMobile() &&
+          !isStandalone() &&
+          !promptOpen &&
+          remaining <= 0 &&
+          (supportsPrompt || supportsInstructions)
+        );
+        debugInstallPrompt(shouldShow ? "show" : "hide", {
+          kind,
+          supportsPrompt,
+          supportsInstructions
+        });
+        return shouldShow;
+      }
+
+      function setBannerVisible(visible) {
+        if (!banner) return;
+        promptOpen = Boolean(visible);
+        banner.hidden = !visible;
+        document.body.classList.toggle("has-install-banner", promptOpen);
+      }
+
+      function closePrompt({ persist = false, reason = "closed" } = {}) {
+        if (persist) markDismissed(reason);
+        setBannerVisible(false);
+      }
+
+      function showBanner(kind) {
+        if (!shouldShowInstallPrompt(kind)) {
+          setBannerVisible(false);
+          return;
+        }
+
+        if (kind === "ios") {
+          if (hint) hint.textContent = 'On iPhone: tap Share, then "Add to Home Screen".';
+          if (btnInstall) btnInstall.style.display = "none";
+        } else {
+          if (hint) hint.textContent = "Install for faster access and full-screen scanning.";
+          if (btnInstall) btnInstall.style.display = "";
+        }
+
+        setBannerVisible(true);
+      }
+
+      btnClose?.addEventListener("click", () => {
+        closePrompt({ persist: true, reason: "not-now" });
+      });
+
+      btnDismiss?.addEventListener("click", () => {
+        closePrompt({ persist: true, reason: "dismiss-button" });
+      });
+
+      btnInstall?.addEventListener("click", async () => {
+        if (!deferredPrompt) {
+          closePrompt({ persist: true, reason: "install-click-no-browser-prompt" });
+          return;
+        }
+
+        const promptEvent = deferredPrompt;
+        deferredPrompt = null;
+        try {
+          promptEvent.prompt();
+          const choice = await promptEvent.userChoice;
+          markDismissed(choice?.outcome === "accepted" ? "accepted" : "browser-dismissed");
+        } catch {
+          markDismissed("browser-prompt-error");
+        }
+        closePrompt({ persist: false, reason: "install-finished" });
+      });
+
+      window.addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault();
+        if (deferredPrompt) {
+          debugInstallPrompt("ignored-duplicate-beforeinstallprompt");
+          return;
+        }
+        beforeInstallPromptSeen = true;
+        deferredPrompt = e;
+        showBanner("android");
+      }, { once: true });
+
+      window.addEventListener("appinstalled", () => {
+        deferredPrompt = null;
+        closePrompt({ persist: true, reason: "appinstalled" });
+      });
+
+      window.addEventListener("pagehide", () => {
+        if (promptOpen) closePrompt({ persist: true, reason: "pagehide" });
+      });
+
+      window.addEventListener("load", () => {
+        showBanner(isIOS() ? "ios" : "android");
+      }, { once: true });
+    })();
   </script>
 
   <script>

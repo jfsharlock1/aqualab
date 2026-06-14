@@ -372,6 +372,77 @@ button:hover:not(:disabled),
 .tag.warn { border-color: rgba(249,115,22,0.7); color: #fed7aa; }
 .tag.bad { border-color: rgba(239,68,68,0.75); color: #fecaca; }
 
+.scan-quality-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.scan-debug-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.scan-debug-panel[open] summary {
+  margin-bottom: 12px;
+}
+
+.scan-debug-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.scan-debug-warnings {
+  margin: 8px 0 12px;
+  padding-left: 18px;
+  color: #fed7aa;
+}
+
+.scan-debug-table-wrap {
+  overflow-x: auto;
+  border: 1px solid rgba(51,65,85,0.9);
+  border-radius: 12px;
+}
+
+.scan-debug-table {
+  width: 100%;
+  min-width: 920px;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.scan-debug-table th,
+.scan-debug-table td {
+  padding: 8px;
+  border-bottom: 1px solid rgba(51,65,85,0.75);
+  text-align: left;
+  vertical-align: top;
+}
+
+.scan-debug-table th {
+  color: #bfdbfe;
+  background: rgba(15,23,42,0.85);
+}
+
+.scan-debug-table td:last-child {
+  max-width: 260px;
+  overflow-wrap: anywhere;
+}
+
+.scan-color-chip {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  border-radius: 6px;
+  border: 1px solid rgba(226,232,240,0.7);
+  vertical-align: middle;
+}
+
 /* History grid */
 .history-grid {
   display: grid;
@@ -699,6 +770,14 @@ button:hover:not(:disabled),
 
 .install-text .small { font-size: 12px; }
 .install-actions { display: flex; gap: 8px; align-items: center; }
+.install-dismiss {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 1.2rem;
+  line-height: 1;
+}
 
 @media (max-width: 700px) {
   .install-banner { padding: 10px; }

@@ -8,7 +8,7 @@
 // - Multiple camera selection + remembers device
 // - Stabilization: pH/Alk/CYA range + snap
 // - Hash-based caching: same image -> same result
-// - Pad RGB fingerprints logged (for calibration + judge explanations)
+// - Pad LAB/Delta-E diagnostics logged (for calibration + judge explanations)
 // - “Clear Scan Cache (debug)” button support
 // - Chlorine “inferred CC” when TC/FC corrected
 // - Low-confidence scan gate (requires 7/7 pads)
@@ -112,32 +112,162 @@ function formatWeightOz(oz) {
   return `${Math.round(lbs)} lb`;
 }
 
-function rgbDistance2(a, rgb) {
-  const dr = a.r - rgb[0];
-  const dg = a.g - rgb[1];
-  const db = a.b - rgb[2];
-  return dr * dr + dg * dg + db * db;
+function clamp01(value) {
+  return Math.max(0, Math.min(1, Number(value) || 0));
 }
 
-function chooseNearestTwoSwatches(rgb, swatches) {
+function clamp255(value) {
+  return Math.max(0, Math.min(255, Number(value) || 0));
+}
+
+function rgbToArray(rgb) {
+  return [
+    clamp255(Array.isArray(rgb) ? rgb[0] : rgb?.r),
+    clamp255(Array.isArray(rgb) ? rgb[1] : rgb?.g),
+    clamp255(Array.isArray(rgb) ? rgb[2] : rgb?.b)
+  ];
+}
+
+function normalizeRgbObject(rgb, neutral = null) {
+  const arr = rgbToArray(rgb);
+  if (!neutral) return { r: arr[0], g: arr[1], b: arr[2] };
+
+  const n = rgbToArray(neutral);
+  const avg = (n[0] + n[1] + n[2]) / 3 || 1;
+  return {
+    r: clamp255(arr[0] * avg / Math.max(1, n[0])),
+    g: clamp255(arr[1] * avg / Math.max(1, n[1])),
+    b: clamp255(arr[2] * avg / Math.max(1, n[2]))
+  };
+}
+
+function srgbChannelToLinear(value) {
+  const v = clamp01(value / 255);
+  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+
+function rgbToLab(rgb) {
+  const [r8, g8, b8] = rgbToArray(rgb);
+  const r = srgbChannelToLinear(r8);
+  const g = srgbChannelToLinear(g8);
+  const b = srgbChannelToLinear(b8);
+
+  const x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047;
+  const y = (r * 0.2126729 + g * 0.7151522 + b * 0.0721750) / 1.00000;
+  const z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883;
+  const f = value => value > 0.008856 ? Math.cbrt(value) : (7.787 * value) + (16 / 116);
+
+  const fx = f(x);
+  const fy = f(y);
+  const fz = f(z);
+
+  return {
+    l: (116 * fy) - 16,
+    a: 500 * (fx - fy),
+    b: 200 * (fy - fz)
+  };
+}
+
+function deltaE76(lab1, lab2) {
+  const dl = lab1.l - lab2.l;
+  const da = lab1.a - lab2.a;
+  const db = lab1.b - lab2.b;
+  return Math.sqrt(dl * dl + da * da + db * db);
+}
+
+function deg2rad(deg) {
+  return deg * (Math.PI / 180);
+}
+
+function rad2deg(rad) {
+  return rad * (180 / Math.PI);
+}
+
+function deltaE2000(lab1, lab2) {
+  if (!lab1 || !lab2) return Infinity;
+
+  const L1 = lab1.l, a1 = lab1.a, b1 = lab1.b;
+  const L2 = lab2.l, a2 = lab2.a, b2 = lab2.b;
+  const kL = 1, kC = 1, kH = 1;
+  const c1 = Math.sqrt(a1 * a1 + b1 * b1);
+  const c2 = Math.sqrt(a2 * a2 + b2 * b2);
+  const cBar = (c1 + c2) / 2;
+  const cBar7 = Math.pow(cBar, 7);
+  const g = 0.5 * (1 - Math.sqrt(cBar7 / (cBar7 + Math.pow(25, 7))));
+  const a1p = (1 + g) * a1;
+  const a2p = (1 + g) * a2;
+  const c1p = Math.sqrt(a1p * a1p + b1 * b1);
+  const c2p = Math.sqrt(a2p * a2p + b2 * b2);
+  const h1p = c1p === 0 ? 0 : (rad2deg(Math.atan2(b1, a1p)) + 360) % 360;
+  const h2p = c2p === 0 ? 0 : (rad2deg(Math.atan2(b2, a2p)) + 360) % 360;
+  const dLp = L2 - L1;
+  const dCp = c2p - c1p;
+  let dhp = h2p - h1p;
+  if (c1p * c2p === 0) dhp = 0;
+  else if (dhp > 180) dhp -= 360;
+  else if (dhp < -180) dhp += 360;
+  const dHp = 2 * Math.sqrt(c1p * c2p) * Math.sin(deg2rad(dhp / 2));
+  const LpBar = (L1 + L2) / 2;
+  const CpBar = (c1p + c2p) / 2;
+  let hpBar = h1p + h2p;
+  if (c1p * c2p === 0) hpBar = h1p + h2p;
+  else if (Math.abs(h1p - h2p) > 180) hpBar = h1p + h2p < 360 ? (h1p + h2p + 360) / 2 : (h1p + h2p - 360) / 2;
+  else hpBar = (h1p + h2p) / 2;
+  const t =
+    1 -
+    0.17 * Math.cos(deg2rad(hpBar - 30)) +
+    0.24 * Math.cos(deg2rad(2 * hpBar)) +
+    0.32 * Math.cos(deg2rad(3 * hpBar + 6)) -
+    0.20 * Math.cos(deg2rad(4 * hpBar - 63));
+  const dTheta = 30 * Math.exp(-Math.pow((hpBar - 275) / 25, 2));
+  const Rc = 2 * Math.sqrt(Math.pow(CpBar, 7) / (Math.pow(CpBar, 7) + Math.pow(25, 7)));
+  const Sl = 1 + (0.015 * Math.pow(LpBar - 50, 2)) / Math.sqrt(20 + Math.pow(LpBar - 50, 2));
+  const Sc = 1 + 0.045 * CpBar;
+  const Sh = 1 + 0.015 * CpBar * t;
+  const Rt = -Math.sin(deg2rad(2 * dTheta)) * Rc;
+  const l = dLp / (kL * Sl);
+  const c = dCp / (kC * Sc);
+  const h = dHp / (kH * Sh);
+  return Math.sqrt(l * l + c * c + h * h + Rt * c * h);
+}
+
+function swatchLab(swatch, neutral = null) {
+  const normalized = normalizeRgbObject(swatch.rgb, neutral);
+  return rgbToLab(normalized);
+}
+
+function chooseNearestTwoSwatchesLab(rgb, swatches, neutral = null) {
   if (!rgb || !swatches || !swatches.length) return null;
 
-  let best = swatches[0];
-  let bestD = rgbDistance2(rgb, best.rgb);
+  const normalizedRgb = normalizeRgbObject(rgb, neutral);
+  const measuredLab = rgbToLab(normalizedRgb);
+  const ranked = swatches
+    .map(swatch => {
+      const lab = swatchLab(swatch, neutral);
+      return {
+        swatch,
+        lab,
+        deltaE: deltaE2000(measuredLab, lab),
+        deltaE76: deltaE76(measuredLab, lab)
+      };
+    })
+    .sort((a, b) => a.deltaE - b.deltaE);
 
-  let second = null;
-  let secondD = Infinity;
-
-  for (let i = 1; i < swatches.length; i++) {
-    const d = rgbDistance2(rgb, swatches[i].rgb);
-    if (d < bestD) {
-      second = best; secondD = bestD;
-      best = swatches[i]; bestD = d;
-    } else if (d < secondD) {
-      second = swatches[i]; secondD = d;
-    }
-  }
-  return { best, bestD, second, secondD };
+  return {
+    measuredRgb: normalizedRgb,
+    measuredLab,
+    best: ranked[0]?.swatch || null,
+    bestLab: ranked[0]?.lab || null,
+    bestD: ranked[0]?.deltaE ?? Infinity,
+    second: ranked[1]?.swatch || null,
+    secondLab: ranked[1]?.lab || null,
+    secondD: ranked[1]?.deltaE ?? Infinity,
+    distances: ranked.map(item => ({
+      value: item.swatch.value,
+      deltaE: item.deltaE,
+      deltaE76: item.deltaE76
+    }))
+  };
 }
 
 function rgbToChemistryFallback(avgRgb) {
@@ -179,6 +309,8 @@ export function initPoolTestScanner(root) {
     scanView: root.querySelector('[data-pt="scanView"]'),
     scanFrame: root.querySelector('[data-pt="scanView"] .scan-frame'),
     status: root.querySelector('[data-pt="status"]'),
+    scanQuality: root.querySelector('[data-pt="scanQuality"]'),
+    scanDebug: root.querySelector('[data-pt="scanDebug"]'),
 
     btnStart: root.querySelector('[data-pt="btnStart"]'),
     btnCapture: root.querySelector('[data-pt="btnCapture"]'),
@@ -251,6 +383,12 @@ export function initPoolTestScanner(root) {
   };
 
   const setStatus = msg => { if (els.status) els.status.textContent = msg || ""; };
+  const escapeHtml = value => String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
@@ -265,6 +403,7 @@ export function initPoolTestScanner(root) {
 
   let whiteBalance = { r: 1, g: 1, b: 1 };
   let calOffsets = { ph: 0, alk: 0, cya: 0, hardness: 0 };
+  let latestScanDebug = null;
 
   function clampNumber(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -364,7 +503,7 @@ export function initPoolTestScanner(root) {
     saveJson(RESULT_CACHE_KEY, cache);
   }
 
-  function recordFingerprint(hash, padColors, avgRgb) {
+  function recordFingerprint(hash, padColors, avgRgb, vals = null) {
     const arr = loadJson(FP_KEY, []);
     const pads = {};
     Object.keys(padColors || {}).forEach(k => {
@@ -387,7 +526,9 @@ export function initPoolTestScanner(root) {
         g: Math.round(avgRgb?.g || 0),
         b: Math.round(avgRgb?.b || 0)
       },
-      pads
+      quality: vals?.__scanQuality || null,
+      pads,
+      labDebug: vals?.__padDebug || null
     });
 
     if (arr.length > FP_MAX) arr.splice(0, arr.length - FP_MAX);
@@ -826,8 +967,8 @@ export function initPoolTestScanner(root) {
   // ================================================================
 
   function sampleStripe(ctx) {
-    const w = els.canvas.width;
-    const h = els.canvas.height;
+    const w = ctx.canvas.width;
+    const h = ctx.canvas.height;
     const roi = {
       x: Math.round(w * 0.2),
       y: Math.round(h * 0.45),
@@ -846,10 +987,143 @@ export function initPoolTestScanner(root) {
     return { r: r / c, g: g / c, b: b / c };
   }
 
+  function sampleNeutralReference(ctx) {
+    const w = ctx.canvas.width;
+    const h = ctx.canvas.height;
+    const img = ctx.getImageData(0, 0, w, h).data;
+    const samples = [];
+    const edge = Math.max(8, Math.floor(Math.min(w, h) * 0.08));
+    const step = Math.max(2, Math.floor(Math.min(w, h) / 80));
+
+    for (let y = 0; y < h; y += step) {
+      for (let x = 0; x < w; x += step) {
+        const onEdge = x < edge || y < edge || x > w - edge || y > h - edge;
+        if (!onEdge) continue;
+        const i = (y * w + x) * 4;
+        const r = img[i] / whiteBalance.r;
+        const g = img[i + 1] / whiteBalance.g;
+        const b = img[i + 2] / whiteBalance.b;
+        const mx = Math.max(r, g, b);
+        const mn = Math.min(r, g, b);
+        const sat = mx === 0 ? 0 : (mx - mn) / mx;
+        if (mx > 110 && mx < 252 && sat < 0.18) samples.push([r, g, b]);
+      }
+    }
+
+    if (samples.length < 20) return null;
+    const median = index => {
+      const vals = samples.map(s => s[index]).sort((a, b) => a - b);
+      return vals[Math.floor(vals.length / 2)];
+    };
+    return { r: median(0), g: median(1), b: median(2), sampleCount: samples.length };
+  }
+
+  function luminance(rgb) {
+    return 0.2126 * (rgb?.r || 0) + 0.7152 * (rgb?.g || 0) + 0.0722 * (rgb?.b || 0);
+  }
+
+  function saturationOf(rgb) {
+    const r = Number(rgb?.r || 0);
+    const g = Number(rgb?.g || 0);
+    const b = Number(rgb?.b || 0);
+    const mx = Math.max(r, g, b);
+    const mn = Math.min(r, g, b);
+    return mx === 0 ? 0 : (mx - mn) / mx;
+  }
+
+  function evaluateScanQuality(ctx, padColors, avgRgb, neutralReference) {
+    const warnings = [];
+    const details = {};
+    let score = 100;
+
+    const avgLuma = luminance(avgRgb);
+    details.exposure = avgLuma;
+    if (avgLuma < 70) {
+      score -= 28;
+      warnings.push("Lighting quality is too low. Move to indirect daylight and rescan.");
+    } else if (avgLuma > 225) {
+      score -= 22;
+      warnings.push("Image is overexposed. Avoid glare and retake the photo.");
+    }
+
+    const wbSpread = Math.max(whiteBalance.r, whiteBalance.g, whiteBalance.b) - Math.min(whiteBalance.r, whiteBalance.g, whiteBalance.b);
+    details.whiteBalanceSpread = wbSpread;
+    if (wbSpread > 0.55) {
+      score -= 18;
+      warnings.push("White balance looks unstable. Set white balance on the strip backing or use neutral daylight.");
+    }
+
+    if (!neutralReference) {
+      score -= 12;
+      warnings.push("Could not find enough neutral strip/background pixels for reference normalization.");
+    } else {
+      const neutralSat = saturationOf(neutralReference);
+      details.neutralSaturation = neutralSat;
+      if (neutralSat > 0.12) {
+        score -= 12;
+        warnings.push("Background or strip backing has color contamination. Use a neutral white/gray background.");
+      }
+    }
+
+    const pads = Object.values(padColors || {}).filter(p => p && typeof p === "object" && Number.isFinite(p.r));
+    const variances = pads.map(p => Number(p.__var || 0));
+    const avgVariance = variances.length ? variances.reduce((sum, v) => sum + v, 0) / variances.length : 999;
+    details.averagePadVariance = avgVariance;
+    if (avgVariance > 18) {
+      score -= 18;
+      warnings.push("Pad colors vary too much inside the crop. Avoid shadows/reflections and keep the strip flat.");
+    }
+
+    const saturations = pads.map(saturationOf);
+    const avgSat = saturations.length ? saturations.reduce((sum, v) => sum + v, 0) / saturations.length : 0;
+    details.averagePadSaturation = avgSat;
+    if (avgSat < 0.08) {
+      score -= 12;
+      warnings.push("Pad colors have low contrast. Improve lighting and crop tightly around the strip.");
+    }
+
+    const w = ctx.canvas.width;
+    const h = ctx.canvas.height;
+    const data = ctx.getImageData(0, 0, w, h).data;
+    let glarePixels = 0;
+    let shadowPixels = 0;
+    let checked = 0;
+    const step = Math.max(2, Math.floor(Math.min(w, h) / 80));
+    for (let y = 0; y < h; y += step) {
+      for (let x = 0; x < w; x += step) {
+        const i = (y * w + x) * 4;
+        const p = { r: data[i], g: data[i + 1], b: data[i + 2] };
+        const luma = luminance(p);
+        const sat = saturationOf(p);
+        if (luma > 242 && sat < 0.08) glarePixels++;
+        if (luma < 35) shadowPixels++;
+        checked++;
+      }
+    }
+    details.glareRatio = checked ? glarePixels / checked : 0;
+    details.shadowRatio = checked ? shadowPixels / checked : 0;
+    if (details.glareRatio > 0.04) {
+      score -= 16;
+      warnings.push("Glare/reflections detected. Tilt away from direct light and rescan.");
+    }
+    if (details.shadowRatio > 0.05) {
+      score -= 16;
+      warnings.push("Strong shadows detected. Use even indirect daylight.");
+    }
+
+    const finalScore = Math.max(0, Math.min(100, Math.round(score)));
+    return {
+      score: finalScore,
+      label: finalScore >= 82 ? "High" : finalScore >= 62 ? "Medium" : "Low",
+      warnings: Array.from(new Set(warnings)),
+      details
+    };
+  }
+
   // Robust pad sampling: scan several vertical lanes for colored pad segments, then grid-median each segment.
   function samplePadsEasyTest(ctx) {
-    const w = els.canvas.width;
-    const h = els.canvas.height;
+    const w = ctx.canvas.width;
+    const h = ctx.canvas.height;
 
     const img = ctx.getImageData(0, 0, w, h).data;
 
@@ -994,7 +1268,13 @@ export function initPoolTestScanner(root) {
 
   let lastVals = null;
 
-  function rgbToChemistryEasyTest(padColors) {
+  function confidenceLabel(score) {
+    if (score >= 0.78) return "High";
+    if (score >= 0.52) return "Medium";
+    return "Low";
+  }
+
+  function rgbToChemistryEasyTest(padColors, scanQuality, neutralReference) {
     if (!padColors || !Object.keys(padColors).length) {
       return rgbToChemistryFallback({ r: 150, g: 150, b: 150 });
     }
@@ -1002,20 +1282,66 @@ export function initPoolTestScanner(root) {
     const padByKey = {};
     EASYTEST_CFG.pads.forEach(p => (padByKey[p.key] = p));
 
-    const result = {};
+    const result = {
+      __scanQuality: scanQuality || { score: 0, label: "Low", warnings: ["No scan quality data available."] },
+      __padDebug: {},
+      __warnings: []
+    };
 
     function valueFromPad(key, fallback) {
       const rgb = padColors[key];
       const pad = padByKey[key];
       if (rgb && pad && pad.swatches && pad.swatches.length) {
-        const pick = chooseNearestTwoSwatches(rgb, pad.swatches);
-        if (!pick) return { value: fallback(), bestD: Infinity, secondValue: null, secondD: Infinity, variance: 999 };
+        const pick = chooseNearestTwoSwatchesLab(rgb, pad.swatches, neutralReference);
+        if (!pick?.best) return { value: fallback(), bestD: Infinity, secondValue: null, secondD: Infinity, variance: 999, confidence: 0, confidenceLabel: "Low" };
+
+        const separation = Math.max(0, pick.secondD - pick.bestD);
+        const distanceScore = clamp01(1 - pick.bestD / 18);
+        const separationScore = clamp01(separation / 8);
+        const qualityScore = clamp01((scanQuality?.score ?? 0) / 100);
+        const varianceScore = 1 / (1 + (rgb.__var || 0) / 14);
+        const confidence = clamp01(distanceScore * 0.45 + separationScore * 0.30 + qualityScore * 0.15 + varianceScore * 0.10);
+        const debug = {
+          key,
+          label: pad.label,
+          measuredRgb: {
+            r: Math.round(rgb.r || 0),
+            g: Math.round(rgb.g || 0),
+            b: Math.round(rgb.b || 0)
+          },
+          normalizedRgb: {
+            r: Math.round(pick.measuredRgb.r || 0),
+            g: Math.round(pick.measuredRgb.g || 0),
+            b: Math.round(pick.measuredRgb.b || 0)
+          },
+          measuredLab: {
+            l: Number(pick.measuredLab.l.toFixed(1)),
+            a: Number(pick.measuredLab.a.toFixed(1)),
+            b: Number(pick.measuredLab.b.toFixed(1))
+          },
+          bestValue: pick.best.value,
+          bestDeltaE: Number(pick.bestD.toFixed(2)),
+          secondValue: pick.second ? pick.second.value : null,
+          secondDeltaE: Number((pick.secondD || Infinity).toFixed(2)),
+          confidence: Number(confidence.toFixed(2)),
+          confidenceLabel: confidenceLabel(confidence),
+          variance: Number((rgb.__var || 0).toFixed(2)),
+          distances: pick.distances.map(item => ({
+            value: item.value,
+            deltaE: Number(item.deltaE.toFixed(2)),
+            deltaE76: Number(item.deltaE76.toFixed(2))
+          }))
+        };
+        result.__padDebug[key] = debug;
         return {
           value: pick.best.value,
           bestD: pick.bestD,
           secondValue: pick.second ? pick.second.value : null,
           secondD: pick.secondD,
-          variance: rgb.__var ?? 0
+          variance: rgb.__var ?? 0,
+          separation,
+          confidence,
+          confidenceLabel: debug.confidenceLabel
         };
       }
       return { value: fallback(), bestD: Infinity, secondValue: null, secondD: Infinity, variance: 999 };
@@ -1023,10 +1349,12 @@ export function initPoolTestScanner(root) {
 
     function stabilizedValue(key, pick, lastValue) {
       const cfg = PAD_STABILITY[key];
-      if (!cfg) return { value: pick.value, range: null, confidence: 1 };
+      if (!cfg) return { value: pick.value, range: null, confidence: pick.confidence ?? 1 };
 
-      const ratio = (pick.secondD && pick.secondD < Infinity) ? (pick.bestD / pick.secondD) : 0;
-      const ambiguous = (pick.secondValue != null && ratio > cfg.ambiguousRatio) || (pick.variance > 10);
+      const ambiguous = (
+        pick.secondValue != null &&
+        ((pick.secondD - pick.bestD) < 2.2 || (pick.confidence ?? 0) < 0.58)
+      ) || (pick.variance > 10);
 
       let value = pick.value;
       let range = null;
@@ -1042,9 +1370,9 @@ export function initPoolTestScanner(root) {
         if (Math.abs(value - lastValue) <= cfg.snap) value = lastValue;
       }
 
-      const dScore = 1 / (1 + Math.sqrt(pick.bestD) / 35);
+      const dScore = 1 / (1 + pick.bestD / 12);
       const vScore = 1 / (1 + (pick.variance || 0) / 12);
-      const confidence = Math.max(0, Math.min(1, dScore * vScore));
+      const confidence = Math.max(0, Math.min(1, Math.min(pick.confidence ?? 1, dScore * vScore)));
 
       return { value, range, confidence };
     }
@@ -1059,9 +1387,11 @@ export function initPoolTestScanner(root) {
     // Chlorine
     const fcPick = valueFromPad("freeCl", () => 2.0);
     result.freeCl = fcPick.value;
+    result.__freeClConfidence = fcPick.confidence ?? 0;
 
     const tcPick = valueFromPad("totalCl", () => Math.max(result.freeCl, result.freeCl + 0.5));
     result.totalCl = tcPick.value;
+    result.__totalClConfidence = tcPick.confidence ?? 0;
 
     // Sanity correction: TC >= FC
     let chlorineCorrected = false;
@@ -1081,10 +1411,12 @@ export function initPoolTestScanner(root) {
     const brPick = valueFromPad("bromine", () => null);
     const bromFromPad = brPick.value;
     result.bromine = bromFromPad != null ? bromFromPad : (result.totalCl * 2.25);
+    result.__bromineConfidence = brPick.confidence ?? 0;
 
     // Hardness
     const hardPick = valueFromPad("hardness", () => 250);
     result.hardness = hardPick.value;
+    result.__hardnessConfidence = hardPick.confidence ?? 0;
 
     // Alkalinity (stabilized)
     const alkPick = valueFromPad("alk", () => 100);
@@ -1099,6 +1431,13 @@ export function initPoolTestScanner(root) {
     result.cya = cyaStab.value;
     if (cyaStab.range) result.__cyaRange = cyaStab.range;
     result.__cyaConfidence = cyaStab.confidence;
+
+    Object.entries(result.__padDebug).forEach(([key, debug]) => {
+      if (debug.confidenceLabel === "Low") {
+        result.__warnings.push(`${debug.label} result has low confidence. Rescan under improved lighting.`);
+      }
+    });
+    if (scanQuality?.warnings?.length) result.__warnings.push(...scanQuality.warnings);
 
     // Apply calibration offsets
     result.ph = Number((result.ph + (calOffsets.ph || 0)).toFixed(2));
@@ -1173,12 +1512,106 @@ export function initPoolTestScanner(root) {
     else tag(els.tagCya, "ok", `Good (${cyaText})`);
   }
 
+  function renderScanDiagnostics(vals) {
+    latestScanDebug = vals || null;
+    const quality = vals?.__scanQuality || null;
+
+    if (els.scanQuality) {
+      if (!quality) {
+        els.scanQuality.className = "tag warn";
+        els.scanQuality.textContent = "Scan quality: not evaluated";
+      } else {
+        const state = quality.score >= 82 ? "ok" : quality.score >= 62 ? "warn" : "bad";
+        els.scanQuality.className = `tag ${state}`;
+        els.scanQuality.textContent = `Scan quality: ${quality.label} (${quality.score}/100)`;
+      }
+    }
+
+    if (!els.scanDebug) return;
+    if (!vals?.__padDebug) {
+      els.scanDebug.innerHTML = `<p class="muted hint">Run a scan to see LAB/Delta-E diagnostics.</p>`;
+      return;
+    }
+
+    const warningItems = Array.from(new Set([...(vals.__warnings || []), ...(quality?.warnings || [])]));
+    const padRows = EASYTEST_CFG.pads.map(pad => vals.__padDebug[pad.key]).filter(Boolean).map(debug => {
+      const distances = debug.distances
+        .map(item => `${escapeHtml(item.value)}: ${item.deltaE}`)
+        .join(", ");
+      return `
+        <tr>
+          <td>${escapeHtml(debug.label)}</td>
+          <td>
+            <span class="scan-color-chip" style="background:rgb(${debug.measuredRgb.r},${debug.measuredRgb.g},${debug.measuredRgb.b})"></span>
+            <span class="scan-color-chip" style="background:rgb(${debug.normalizedRgb.r},${debug.normalizedRgb.g},${debug.normalizedRgb.b})"></span>
+          </td>
+          <td>${escapeHtml(debug.measuredRgb.r)}, ${escapeHtml(debug.measuredRgb.g)}, ${escapeHtml(debug.measuredRgb.b)}</td>
+          <td>${escapeHtml(debug.measuredLab.l)}, ${escapeHtml(debug.measuredLab.a)}, ${escapeHtml(debug.measuredLab.b)}</td>
+          <td>${escapeHtml(debug.bestValue)} (${escapeHtml(debug.bestDeltaE)})</td>
+          <td>${escapeHtml(debug.secondValue ?? "-")} (${escapeHtml(debug.secondDeltaE ?? "-")})</td>
+          <td>${escapeHtml(debug.confidenceLabel)} (${Math.round(debug.confidence * 100)}%)</td>
+          <td>${escapeHtml(distances)}</td>
+        </tr>
+      `;
+    }).join("");
+
+    els.scanDebug.innerHTML = `
+      <div class="scan-debug-summary">
+        <span class="tag ${quality?.score >= 82 ? "ok" : quality?.score >= 62 ? "warn" : "bad"}">${escapeHtml(quality?.label || "Low")} quality</span>
+        <span class="muted hint">Exposure: ${Number(quality?.details?.exposure || 0).toFixed(1)}</span>
+        <span class="muted hint">Pad variance: ${Number(quality?.details?.averagePadVariance || 0).toFixed(1)}</span>
+      </div>
+      ${warningItems.length ? `<ul class="scan-debug-warnings">${warningItems.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+      <div class="scan-debug-table-wrap">
+        <table class="scan-debug-table">
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Preview</th>
+              <th>RGB</th>
+              <th>LAB</th>
+              <th>Best Delta-E</th>
+              <th>Second</th>
+              <th>Confidence</th>
+              <th>All distances</th>
+            </tr>
+          </thead>
+          <tbody>${padRows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
   let poolGallons = null;
   let poolCollapsed = false;
+
+  function chemistrySanityWarnings(vals) {
+    const warnings = [];
+    const history = (() => {
+      try { return loadHistory(); } catch { return []; }
+    })();
+    const previous = history.length ? history[history.length - 1] : null;
+    if (previous && Number.isFinite(Number(previous.cya)) && Number.isFinite(Number(vals.cya))) {
+      const jump = Math.abs(Number(vals.cya) - Number(previous.cya));
+      if (jump >= 70 && (vals.__cyaConfidence ?? 1) < 0.65) {
+        warnings.push("CYA result has low confidence and differs sharply from the previous scan. Rescan under improved lighting.");
+      }
+    }
+    if ((vals.__phConfidence ?? 1) < 0.55 && (vals.ph <= 6.4 || vals.ph >= 8.2)) {
+      warnings.push("pH result is extreme with low confidence. Confirm with a fresh strip or rescan in indirect daylight.");
+    }
+    if ((vals.__freeClConfidence ?? 1) < 0.55 && (vals.__totalClConfidence ?? 1) < 0.55) {
+      warnings.push("Chlorine pads have low confidence. Confirm under better light before dosing.");
+    }
+    return warnings;
+  }
 
   function renderRecs(vals) {
     if (!els.recs) return;
     const recs = [];
+    const warnings = Array.from(new Set([...(vals.__warnings || []), ...chemistrySanityWarnings(vals)]));
+
+    warnings.forEach(warning => recs.push(`Scan warning: ${warning}`));
 
     if (!poolGallons) {
       recs.push("Enter your pool size above (or manual gallons) so the app can calculate real chemical amounts.");
@@ -1241,7 +1674,75 @@ export function initPoolTestScanner(root) {
   // 12) Analyze (cache -> sample -> compute -> render -> save)
   // ================================================================
 
-  function analyze(ctx) {
+  function averageRgbList(items) {
+    const list = items.filter(Boolean);
+    if (!list.length) return null;
+    return {
+      r: list.reduce((sum, item) => sum + item.r, 0) / list.length,
+      g: list.reduce((sum, item) => sum + item.g, 0) / list.length,
+      b: list.reduce((sum, item) => sum + item.b, 0) / list.length
+    };
+  }
+
+  function averageFrameSamples(frameContexts) {
+    const frames = frameContexts.length ? frameContexts : [];
+    const sampled = frames.map(frameCtx => ({
+      ctx: frameCtx,
+      padColors: samplePadsEasyTest(frameCtx),
+      avgRgb: sampleStripe(frameCtx),
+      neutral: sampleNeutralReference(frameCtx)
+    }));
+    const complete = sampled.filter(frame => Object.keys(frame.padColors || {}).filter(k => k !== "__avg").length === 7);
+    const source = complete.length ? complete : sampled;
+    const padColors = {};
+
+    EASYTEST_CFG.pads.forEach(pad => {
+      const colors = source.map(frame => frame.padColors?.[pad.key]).filter(Boolean);
+      if (!colors.length) return;
+      const avg = averageRgbList(colors);
+      const frameVariance = colors.reduce((sum, color) => {
+        return sum + Math.abs(color.r - avg.r) + Math.abs(color.g - avg.g) + Math.abs(color.b - avg.b);
+      }, 0) / (colors.length * 3);
+      const internalVariance = colors.reduce((sum, color) => sum + Number(color.__var || 0), 0) / colors.length;
+      padColors[pad.key] = {
+        ...avg,
+        __var: internalVariance + frameVariance,
+        __frameVariance: frameVariance,
+        __frameCount: colors.length
+      };
+    });
+
+    return {
+      ctx: source[source.length - 1]?.ctx || frames[frames.length - 1],
+      padColors,
+      avgRgb: averageRgbList(source.map(frame => frame.avgRgb)) || { r: 0, g: 0, b: 0 },
+      neutralReference: averageRgbList(source.map(frame => frame.neutral).filter(Boolean)),
+      frameCount: source.length
+    };
+  }
+
+  function cloneCanvasContext() {
+    const off = document.createElement("canvas");
+    off.width = els.canvas.width;
+    off.height = els.canvas.height;
+    const offCtx = off.getContext("2d", { willReadFrequently: true });
+    offCtx.drawImage(els.canvas, 0, 0);
+    return offCtx;
+  }
+
+  const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
+
+  async function analyzeLiveMultiFrame() {
+    const frames = [];
+    for (let i = 0; i < 5; i++) {
+      drawFromVideo();
+      frames.push(cloneCanvasContext());
+      if (i < 4) await wait(90);
+    }
+    return analyze(frames[frames.length - 1], frames);
+  }
+
+  function analyze(ctx, frameContexts = null) {
     let imgHash = null;
     try { imgHash = hashCanvas(ctx); } catch { imgHash = null; }
     const cacheKey = imgHash ? `${imgHash}:${calibrationFingerprint()}` : null;
@@ -1252,35 +1753,45 @@ export function initPoolTestScanner(root) {
         lastVals = hit.vals;
         renderBars(hit.vals);
         renderRecs(hit.vals);
+        renderScanDiagnostics(hit.vals);
         setStatus(`EasyTest scan (cached) | id=${imgHash}`);
         els.canvas && (els.canvas.hidden = true);
         return hit.vals;
       }
     }
 
-    const padColors = samplePadsEasyTest(ctx);
-    const avgRgb = sampleStripe(ctx);
+    const frameSample = averageFrameSamples(frameContexts?.length ? frameContexts : [ctx]);
+    const padColors = frameSample.padColors;
+    const avgRgb = frameSample.avgRgb;
     padColors.__avg = avgRgb;
 
     const padCount = Object.keys(padColors).filter(k => k !== "__avg").length;
     if (padCount < 7) {
       lastVals = null;
+      renderScanDiagnostics(null);
       setStatus(`Low confidence: only detected ${padCount}/7 pads. Retake photo (bright light, straight-on, avoid glare, include all pads).`);
       els.canvas && (els.canvas.hidden = true);
       return null;
     }
 
-    const vals = rgbToChemistryEasyTest(padColors);
+    const neutralReference = frameSample.neutralReference;
+    const scanQuality = evaluateScanQuality(frameSample.ctx || ctx, padColors, avgRgb, neutralReference);
+    scanQuality.details.frameCount = frameSample.frameCount || 1;
+    const vals = rgbToChemistryEasyTest(padColors, scanQuality, neutralReference);
     lastVals = vals;
 
     renderBars(vals);
     renderRecs(vals);
-    setStatus(`EasyTest scan | Avg RGB ≈ (${avgRgb.r | 0}, ${avgRgb.g | 0}, ${avgRgb.b | 0})${imgHash ? ` | id=${imgHash}` : ""}`);
+    renderScanDiagnostics(vals);
+    const statusPrefix = scanQuality.score < 55
+      ? "Low scan quality. Move to indirect daylight and rescan."
+      : "EasyTest scan";
+    setStatus(`${statusPrefix} | Avg RGB ≈ (${avgRgb.r | 0}, ${avgRgb.g | 0}, ${avgRgb.b | 0}) | quality ${scanQuality.score}/100${imgHash ? ` | id=${imgHash}` : ""}`);
 
     els.canvas && (els.canvas.hidden = true);
 
     if (cacheKey) cachePut(cacheKey, vals);
-    recordFingerprint(imgHash, padColors, avgRgb);
+    recordFingerprint(imgHash, padColors, avgRgb, vals);
     return vals;
   }
 
@@ -1314,7 +1825,16 @@ export function initPoolTestScanner(root) {
       hardness: vals.hardness,
       alk: vals.alk,
       cya: vals.cya,
-      chlorineCorrected: !!vals.__chlorineCorrected
+      chlorineCorrected: !!vals.__chlorineCorrected,
+      scanQuality: vals.__scanQuality || null,
+      confidence: {
+        ph: vals.__phConfidence ?? null,
+        freeCl: vals.__freeClConfidence ?? null,
+        totalCl: vals.__totalClConfidence ?? null,
+        alk: vals.__alkConfidence ?? null,
+        cya: vals.__cyaConfidence ?? null,
+        hardness: vals.__hardnessConfidence ?? null
+      }
     });
     if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
     saveHistory(history);
@@ -1563,9 +2083,9 @@ export function initPoolTestScanner(root) {
   // ================================================================
 
   els.btnStart?.addEventListener("click", startCamera);
-  els.btnCapture?.addEventListener("click", () => {
-    const ctx = drawFromVideo();
-    const vals = analyze(ctx);
+  els.btnCapture?.addEventListener("click", async () => {
+    setStatus("Capturing 5 frames for a steadier reading...");
+    const vals = await analyzeLiveMultiFrame();
     if (vals) recordReading(vals);
   });
 
