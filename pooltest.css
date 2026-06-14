@@ -784,3 +784,225 @@ button:hover:not(:disabled),
   .install-actions .btn,
   .install-actions .btn-ghost { padding: 6px 10px; font-size: 0.8rem; }
 }
+
+/* UI overhaul shell */
+:root {
+  --bg: #061018;
+  --bg-card: #0b1520;
+  --accent-2: #14b8a6;
+  --accent-3: #84cc16;
+  --surface: rgba(10,20,30,0.88);
+  --surface-strong: rgba(8,15,24,0.96);
+  --line: rgba(125,154,176,0.28);
+  --radius-card: 10px;
+  --scan-radius: 10px;
+}
+
+body {
+  background:
+    linear-gradient(180deg, rgba(6,16,24,0.72), rgba(6,16,24,0.96)),
+    radial-gradient(circle at 12% 0%, rgba(20,184,166,0.20), transparent 32%),
+    radial-gradient(circle at 88% 8%, rgba(132,204,22,0.12), transparent 28%),
+    #061018;
+}
+
+.pt-header.app-header,
+.pt-header {
+  gap: 16px;
+  padding: 12px clamp(14px, 3vw, 28px);
+  border-bottom: 1px solid var(--line);
+  background: rgba(5,13,21,0.88);
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pt-header .logo {
+  border-radius: 10px;
+  border: 1px solid rgba(45,212,191,0.72);
+  background:
+    linear-gradient(135deg, rgba(14,165,233,0.95), rgba(20,184,166,0.92) 52%, rgba(132,204,22,0.85));
+  box-shadow: 0 0 18px rgba(45,212,191,0.22);
+}
+
+.pt-nav {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pt-nav a,
+.pt-nav button {
+  border-radius: 10px;
+  border-color: rgba(148,163,184,0.38);
+  background: rgba(8,15,24,0.45);
+}
+
+.pt-nav a.active {
+  border-color: rgba(45,212,191,0.78);
+  background: rgba(20,184,166,0.18);
+  color: #ccfbf1;
+}
+
+.container {
+  margin-top: 20px;
+  margin-bottom: 44px;
+}
+
+.card {
+  background: linear-gradient(180deg, rgba(12,23,34,0.94), rgba(7,14,22,0.98));
+  border: 1px solid var(--line);
+  box-shadow: 0 16px 32px rgba(0,0,0,0.22);
+}
+
+.section-eyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: #67e8f9;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mode-hero {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: clamp(18px, 3vw, 28px);
+  border: 1px solid rgba(45,212,191,0.26);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(8,47,73,0.72), rgba(12,23,34,0.86) 54%, rgba(22,45,32,0.74));
+  box-shadow: 0 20px 48px rgba(0,0,0,0.24);
+}
+
+.mode-hero h2 {
+  margin: 0;
+  max-width: 760px;
+  font-size: clamp(1.45rem, 3vw, 2.35rem);
+  line-height: 1.08;
+}
+
+.mode-hero p {
+  max-width: 62ch;
+  margin: 10px 0 0;
+}
+
+.mode-hero-actions,
+.sensor-hero-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.workflow-card {
+  border-color: rgba(125,154,176,0.32);
+}
+
+.scan-card {
+  order: 1;
+  border-color: rgba(45,212,191,0.38);
+}
+
+.pool-setup-card {
+  order: 2;
+}
+
+.result-panel,
+.debug-card,
+.history-card {
+  order: 3;
+}
+
+.app-workspace .mode-hero {
+  order: 0;
+}
+
+.scan-card .row.row-wrap {
+  justify-content: flex-start;
+}
+
+.scan-view,
+.preview-stage,
+.sensor-map {
+  border-color: rgba(125,154,176,0.34);
+  background: rgba(3,10,17,0.94);
+}
+
+.bars {
+  display: grid;
+  gap: 10px;
+}
+
+.bars .row {
+  padding-top: 2px;
+  border-top: 1px solid rgba(125,154,176,0.12);
+}
+
+.sensor-card-primary {
+  grid-column: span 2;
+  border-color: rgba(45,212,191,0.38);
+}
+
+.sensor-array .mode-hero {
+  align-items: flex-start;
+}
+
+.calibration-workspace {
+  display: grid;
+  gap: 18px;
+}
+
+@media (max-width: 900px) {
+  .sensor-card-primary {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 700px) {
+  .pt-header {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .pt-header .titling {
+    flex: 1 1 auto;
+  }
+
+  .pt-header .titling .muted {
+    margin: 0;
+  }
+
+  .pt-nav {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 3px;
+  }
+
+  .pt-nav a,
+  .pt-nav button {
+    flex: 0 0 auto;
+  }
+
+  .mode-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .mode-hero h2 {
+    font-size: 1.55rem;
+  }
+
+  .card {
+    padding: 14px;
+  }
+}

@@ -12,15 +12,17 @@
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="pooltest.css?v=12" />
+  <link rel="stylesheet" href="pooltest.css?v=15" />
 </head>
 
 <body>
-  <header class="pt-header">
-    <div class="logo"></div>
-    <div class="titling">
-      <h1>AquaLab</h1>
-      <div class="muted">Sensor Array mode for connected pool monitoring</div>
+  <header class="pt-header app-header">
+    <div class="brand-lockup">
+      <div class="logo"></div>
+      <div class="titling">
+        <h1>AquaLab</h1>
+        <div class="muted">Pool chemistry scanning and field sensing</div>
+      </div>
     </div>
     <nav class="pt-nav">
       <a href="./index.html">Test Strip Scan</a>
@@ -30,11 +32,12 @@
   </header>
 
   <main class="container sensor-array">
-    <section class="card sensor-hero">
+    <section class="mode-hero sensor-hero">
       <div>
+        <span class="section-eyebrow">Sensor Array</span>
         <h2>Sensor Array</h2>
         <p class="muted hint">
-          Placeholder workspace for future live sensor readings, connectivity, location-aware context, diagnostics, and history.
+          Monitor live water readings, location, sessions, diagnostics, and saved history from one field dashboard.
         </p>
         <p class="muted hint" data-sa="authStatus">Sensor Array requires login.</p>
       </div>
@@ -44,7 +47,8 @@
       </div>
     </section>
 
-    <section class="card sensor-card sensor-auth-card" data-sa="authGate">
+    <section class="card sensor-card sensor-auth-card workflow-card" data-sa="authGate">
+      <span class="section-eyebrow">Access</span>
       <h2>Sensor Array Login</h2>
       <p class="muted hint">Cloud auth is not connected yet. Use a local/offline login saved on this device.</p>
       <div class="field">
@@ -63,7 +67,8 @@
     </section>
 
     <section class="sensor-grid" data-sa="sensorContent" hidden>
-      <section class="card sensor-card">
+      <section class="card sensor-card sensor-card-primary">
+        <span class="section-eyebrow">Live</span>
         <h2>Live Readings</h2>
         <div class="sensor-reading-grid">
           <div class="sensor-reading">
@@ -104,6 +109,7 @@
       </section>
 
       <section class="card sensor-card">
+        <span class="section-eyebrow">Setup</span>
         <h2>Connection</h2>
         <div class="field">
           <label>Connection method</label>
@@ -149,6 +155,7 @@
       </section>
 
       <section class="card sensor-card">
+        <span class="section-eyebrow">Context</span>
         <h2>Location</h2>
         <div class="field">
           <label>Location name</label>
@@ -163,6 +170,7 @@
       </section>
 
       <section class="card sensor-card">
+        <span class="section-eyebrow">Context</span>
         <h2>Weather</h2>
         <div class="status-badge-grid">
           <span class="tag warn" data-sa="weatherSource">Mock weather mode</span>
@@ -196,6 +204,7 @@
       </section>
 
       <section class="card sensor-card">
+        <span class="section-eyebrow">Quality</span>
         <h2>Calibration</h2>
         <p class="muted hint">Use raw prototype readings to tune estimated clarity. These are not lab-grade NTU values.</p>
         <div class="sensor-calibration-values">
@@ -216,6 +225,7 @@
       </section>
 
       <section class="card sensor-card">
+        <span class="section-eyebrow">System</span>
         <h2>Diagnostics</h2>
         <div class="status-badge-grid">
           <span class="tag warn" data-sa="sensorBadge">Sensor: unknown</span>
@@ -235,6 +245,7 @@
       </section>
 
       <section class="card sensor-card">
+        <span class="section-eyebrow">Field Work</span>
         <h2>Sessions</h2>
         <div class="field">
           <label>Session name</label>
@@ -255,7 +266,8 @@
       </section>
 
       <section class="card sensor-card">
-        <h2>History Charts</h2>
+        <span class="section-eyebrow">History</span>
+        <h2>Charts</h2>
         <div class="field">
           <label>Time range</label>
           <select data-sa="historyRange">
@@ -279,6 +291,7 @@
       </section>
 
       <section class="card sensor-card sensor-card-wide">
+        <span class="section-eyebrow">Map</span>
         <h2>Map View</h2>
         <div class="map-controls">
           <button type="button" class="btn-ghost" data-sa="centerDeviceLocation">Center on current device location</button>

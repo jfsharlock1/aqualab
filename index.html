@@ -14,15 +14,17 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=14" />
+  <link rel="stylesheet" href="pooltest.css?v=15" />
 </head>
 
 <body>
-  <header class="pt-header">
-    <div class="logo"></div>
-    <div class="titling">
-      <h1>AquaLab</h1>
-      <div class="muted">Scan a test strip → analyze water chemistry → get volume-aware, science-based recommendations</div>
+  <header class="pt-header app-header">
+    <div class="brand-lockup">
+      <div class="logo"></div>
+      <div class="titling">
+        <h1>AquaLab</h1>
+        <div class="muted">Pool chemistry scanning and field sensing</div>
+      </div>
     </div>
     <nav class="pt-nav">
       <a href="./index.html" class="active" aria-current="page">Test Strip Scan</a>
@@ -32,12 +34,27 @@
     </nav>
   </header>
 
-  <main class="container grid grid-2 pooltest">
+  <main class="container grid grid-2 pooltest app-workspace">
+    <section class="mode-hero full-width">
+      <div>
+        <span class="section-eyebrow">Test Strip Scan</span>
+        <h2>Capture, validate, and classify an EasyTest 7-in-1 strip.</h2>
+        <p class="muted">
+          Start with a photo, crop the strip, review scan quality, then save results to this device.
+        </p>
+      </div>
+      <div class="mode-hero-actions">
+        <span data-pt="scanQuality" class="tag warn">Scan quality: not evaluated</span>
+      </div>
+    </section>
 
     <!-- Pool setup / gallons -->
-    <section class="card" data-pt="poolCard">
+    <section class="card workflow-card pool-setup-card" data-pt="poolCard">
       <div class="card-header-row">
-        <h2>Pool Setup</h2>
+        <div>
+          <span class="section-eyebrow">Setup</span>
+          <h2>Pool Volume</h2>
+        </div>
         <button type="button" class="card-toggle btn-ghost" data-pt="poolToggle">Hide</button>
       </div>
 
@@ -110,8 +127,14 @@
     </section>
 
     <!-- Scanner -->
-    <section class="card">
-      <h2>Scanner (EasyTest strip only)</h2>
+    <section class="card workflow-card scan-card">
+      <div class="card-header-row">
+        <div>
+          <span class="section-eyebrow">Step 1</span>
+          <h2>Scan Strip</h2>
+        </div>
+        <span class="tag ok">EasyTest 7-in-1</span>
+      </div>
 
       <!-- Camera chooser (desktop/tablet) -->
       <div class="field" data-pt="cameraRow">
@@ -176,15 +199,15 @@
       </div>
 
       <p data-pt="status" class="muted" style="margin-top:8px;"></p>
-      <div class="scan-quality-row">
-        <span data-pt="scanQuality" class="tag warn">Scan quality: not evaluated</span>
-      </div>
     </section>
 
     <!-- Results -->
-    <section class="card full-width">
+    <section class="card full-width result-panel">
       <div class="card-header-row">
-        <h2>Results</h2>
+        <div>
+          <span class="section-eyebrow">Step 2</span>
+          <h2>Results & Guidance</h2>
+        </div>
         <button type="button" class="btn-ghost" data-pt="btnRecalc">Recalculate Tips</button>
       </div>
 
@@ -215,7 +238,7 @@
       <ul data-pt="recs" class="muted"></ul>
     </section>
 
-    <section class="card full-width">
+    <section class="card full-width debug-card">
       <details class="scan-debug-panel">
         <summary>Advanced Scan Diagnostics</summary>
         <div data-pt="scanDebug">
@@ -225,8 +248,9 @@
     </section>
 
     <!-- History -->
-    <section class="card full-width">
-      <h2>History (saved on this device)</h2>
+    <section class="card full-width history-card">
+      <span class="section-eyebrow">Step 3</span>
+      <h2>History</h2>
       <p class="muted hint">Each point is a reading saved in this browser using local storage.</p>
 
       <div class="row row-wrap" style="margin-bottom:8px;">
