@@ -13,6 +13,8 @@
 // - Chlorine “inferred CC” when TC/FC corrected
 // - Low-confidence scan gate (requires 7/7 pads)
 
+import { runStripSanityCheck } from "./sanityCheckEngine.js";
+
 // ================================================================
 // 1) EasyTest configuration
 // ================================================================
@@ -311,6 +313,9 @@ export function initPoolTestScanner(root) {
     status: root.querySelector('[data-pt="status"]'),
     scanQuality: root.querySelector('[data-pt="scanQuality"]'),
     scanDebug: root.querySelector('[data-pt="scanDebug"]'),
+    sanitySummary: root.querySelector('[data-pt="sanitySummary"]'),
+    sanityContext: root.querySelector('[data-pt="sanityContext"]'),
+    sanityDetails: root.querySelector('[data-pt="sanityDetails"]'),
 
     btnStart: root.querySelector('[data-pt="btnStart"]'),
     btnCapture: root.querySelector('[data-pt="btnCapture"]'),
@@ -1267,6 +1272,25 @@ export function initPoolTestScanner(root) {
   // ================================================================
 
   let lastVals = null;
+  let lastSanityCheck = null;
+  const CHEM_CONTEXT_KEY = "pt_sanity_context_v1";
+
+  function loadSanityContext() {
+    const saved = loadJson(CHEM_CONTEXT_KEY, null);
+    return {
+      recentActions: Array.isArray(saved?.recentActions) ? saved.recentActions : [],
+      updatedAt: saved?.updatedAt || null
+    };
+  }
+
+  function saveSanityContext(recentActions) {
+    const context = {
+      recentActions: Array.isArray(recentActions) ? recentActions : [],
+      updatedAt: new Date().toISOString()
+    };
+    saveJson(CHEM_CONTEXT_KEY, context);
+    return context;
+  }
 
   function confidenceLabel(score) {
     if (score >= 0.78) return "High";
@@ -1582,6 +1606,119 @@ export function initPoolTestScanner(root) {
     `;
   }
 
+  function runSanityCheck(vals) {
+    if (!vals) return null;
+    lastSanityCheck = runStripSanityCheck(vals, {
+      history: loadHistory(),
+      recentActions: loadSanityContext().recentActions,
+      poolContext: { gallons: poolGallons }
+    });
+    vals.__sanityCheck = lastSanityCheck;
+    return lastSanityCheck;
+  }
+
+  function severityClass(severity) {
+    if (severity === "Critical" || severity === "Warning") return "bad";
+    if (severity === "Caution") return "warn";
+    return "ok";
+  }
+
+  function renderSanityCheck(sanity) {
+    if (!els.sanitySummary && !els.sanityDetails && !els.sanityContext) return;
+
+    if (!sanity) {
+      if (els.sanitySummary) {
+        els.sanitySummary.innerHTML = `<p class="muted hint">Run a scan to see AquaLab's sanity check.</p>`;
+      }
+      if (els.sanityDetails) {
+        els.sanityDetails.innerHTML = `<p class="muted hint">Engineer Mode will show rule triggers after a scan.</p>`;
+      }
+      if (els.sanityContext) els.sanityContext.hidden = true;
+      return;
+    }
+
+    const cautionChecks = sanity.checks.filter(check => check.severity !== "Info" || check.adjustedConfidence === "Low");
+    const scoreClass = sanity.scoreConfidence === "High" ? "ok" : sanity.scoreConfidence === "Medium" ? "warn" : "bad";
+
+    if (els.sanitySummary) {
+      els.sanitySummary.innerHTML = `
+        <div class="sanity-score-row">
+          <span class="tag ${scoreClass}">Pool Health Score: ${escapeHtml(sanity.poolHealthScore)}</span>
+          <span class="tag ${scoreClass}">Score Confidence: ${escapeHtml(sanity.scoreConfidence)}</span>
+        </div>
+        <p class="muted hint">${escapeHtml(sanity.summary)}</p>
+        ${cautionChecks.length ? `<div class="sanity-cards">${cautionChecks.slice(0, 4).map(check => `
+          <article class="sanity-card ${severityClass(check.severity)}">
+            <strong>${escapeHtml(check.parameter)}: ${escapeHtml(check.status)}</strong>
+            <p>${escapeHtml(check.message)}</p>
+            <small>${escapeHtml(check.recommendedAction)}</small>
+          </article>
+        `).join("")}</div>` : `<p class="muted hint">No suspicious chemistry jumps or low-confidence dosing guards were triggered.</p>`}
+      `;
+    }
+
+    if (els.sanityContext) {
+      if (!sanity.contextQuestion) {
+        els.sanityContext.hidden = true;
+      } else {
+        const selected = new Set(loadSanityContext().recentActions);
+        els.sanityContext.hidden = false;
+        els.sanityContext.innerHTML = `
+          <strong>${escapeHtml(sanity.contextQuestion.prompt)}</strong>
+          <div class="sanity-context-options">
+            ${sanity.contextQuestion.options.map(option => `
+              <label>
+                <input type="checkbox" data-pt-sanity-action="${escapeHtml(option.value)}" ${selected.has(option.value) ? "checked" : ""}>
+                <span>${escapeHtml(option.label)}</span>
+              </label>
+            `).join("")}
+          </div>
+          <button type="button" class="btn-ghost" data-pt="sanityApplyContext">Update sanity check</button>
+        `;
+      }
+    }
+
+    if (els.sanityDetails) {
+      els.sanityDetails.innerHTML = `
+        <div class="scan-debug-table-wrap">
+          <table class="scan-debug-table">
+            <thead>
+              <tr>
+                <th>Parameter</th>
+                <th>Raw</th>
+                <th>Adjusted</th>
+                <th>Status</th>
+                <th>Reason codes</th>
+                <th>Prior comparison</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sanity.checks.map(check => `
+                <tr>
+                  <td>${escapeHtml(check.parameter)}</td>
+                  <td>${escapeHtml(check.measuredValue)} ${escapeHtml(check.unit)} / ${escapeHtml(check.rawConfidence)}</td>
+                  <td>${escapeHtml(check.adjustedConfidence)}</td>
+                  <td>${escapeHtml(check.status)} (${escapeHtml(check.severity)})</td>
+                  <td>${escapeHtml(check.reasonCodes.join(", ") || "HIGH_CONFIDENCE_CONFIRMED")}</td>
+                  <td>${check.priorValue == null ? "-" : `${escapeHtml(check.priorValue)} -> ${escapeHtml(check.measuredValue)} (${escapeHtml(check.change)})`}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+  }
+
+  function rerunSanityWithContext() {
+    if (!lastVals) return;
+    const checked = Array.from(root.querySelectorAll("[data-pt-sanity-action]:checked")).map(input => input.getAttribute("data-pt-sanity-action"));
+    const finalActions = checked.includes("none") ? ["none"] : checked.filter(value => value !== "none");
+    saveSanityContext(finalActions);
+    renderSanityCheck(runSanityCheck(lastVals));
+    renderRecs(lastVals);
+  }
+
   let poolGallons = null;
   let poolCollapsed = false;
 
@@ -1609,7 +1746,11 @@ export function initPoolTestScanner(root) {
   function renderRecs(vals) {
     if (!els.recs) return;
     const recs = [];
-    const warnings = Array.from(new Set([...(vals.__warnings || []), ...chemistrySanityWarnings(vals)]));
+    const sanity = vals.__sanityCheck || lastSanityCheck || runSanityCheck(vals);
+    const sanityMessages = (sanity?.checks || [])
+      .filter(check => check.severity !== "Info" || check.adjustedConfidence === "Low")
+      .map(check => `${check.message} ${check.recommendedAction}`);
+    const warnings = Array.from(new Set([...(vals.__warnings || []), ...chemistrySanityWarnings(vals), ...sanityMessages]));
 
     warnings.forEach(warning => recs.push(`Scan warning: ${warning}`));
 
@@ -1623,17 +1764,19 @@ export function initPoolTestScanner(root) {
     recs.push(`Estimated pool volume: about ${poolGallons.toLocaleString()} gallons (~${factor10k.toFixed(2)} × 10,000 gal).`);
 
     const targets = { ph: 7.5, freeCl: 2.5, hardness: 250, alk: 100, cya: 40 };
+    const checkFor = key => sanity?.checks?.find(check => check.key === key);
+    const highConfidence = key => (checkFor(key)?.adjustedConfidence || "Low") === "High";
 
     if (vals.ph < 7.2) {
       const deltaPh = Math.max(0, targets.ph - vals.ph);
       const ozSodaAsh = (deltaPh / 0.2) * 6 * factor10k;
       const dose = formatWeightOz(ozSodaAsh);
-      recs.push(`pH is low (${vals.ph}). Target is ~${targets.ph}. ${dose ? `Add about ${dose} of pH increaser (soda ash), split into smaller doses with circulation.` : `Use a pH increaser per the product label for your pool volume.`}`);
+      recs.push(`pH is low (${vals.ph}). Target is ~${targets.ph}. ${dose && highConfidence("ph") ? `Add about ${dose} of pH increaser (soda ash), split into smaller doses with circulation.` : `Confirm pH with a fresh strip before making a large pH adjustment.`}`);
     } else if (vals.ph > 7.8) {
       const deltaPh = Math.max(0, vals.ph - targets.ph);
       const ozAcid = (deltaPh / 0.2) * 12 * factor10k;
       const dose = formatWeightOz(ozAcid);
-      recs.push(`pH is high (${vals.ph}). Target is ~${targets.ph}. ${dose ? `Add about ${dose} of pH reducer (muriatic acid ~31%) in divided doses.` : `Use a pH reducer according to the product label for your pool volume.`}`);
+      recs.push(`pH is high (${vals.ph}). Target is ~${targets.ph}. ${dose && highConfidence("ph") ? `Add about ${dose} of pH reducer (muriatic acid ~31%) in divided doses.` : `Confirm pH with a fresh strip before making a large acid adjustment.`}`);
     } else recs.push(`pH is in the recommended range (${vals.ph}).`);
 
     if (vals.freeCl < 1) {
@@ -1658,8 +1801,10 @@ export function initPoolTestScanner(root) {
       const deltaCya = Math.max(0, targets.cya - vals.cya);
       const ozCya = (deltaCya / 10) * 13 * factor10k;
       const dose = formatWeightOz(ozCya);
-      recs.push(`Cyanuric acid is low (${vals.cya} ppm). Target ~${targets.cya} ppm. ${dose ? `Add about ${dose} of stabilizer (per-label directions), then retest in 1–2 days.` : `Use a stabilizer product and follow its dosing chart.`}`);
-    } else if (vals.cya > 100) recs.push(`Cyanuric acid is high (${vals.cya} ppm). Partial drain/refill is usually how you lower it safely.`);
+      recs.push(`Cyanuric acid is low (${vals.cya} ppm). Target ~${targets.cya} ppm. ${dose && highConfidence("cya") ? `Add about ${dose} of stabilizer (per-label directions), then retest in 1–2 days.` : `Retest or confirm CYA before adding stabilizer.`}`);
+    } else if (vals.cya > 100) {
+      recs.push(`Cyanuric acid is high (${vals.cya} ppm). ${highConfidence("cya") ? `Partial drain/refill is usually how you lower it safely.` : `Retest or confirm with a dedicated CYA test before considering drain/refill.`}`);
+    }
     else recs.push(`Cyanuric acid is in a normal range (${vals.cya} ppm).`);
 
     if (vals.hardness < 150) recs.push(`Total hardness is low (${vals.hardness} ppm). Some pools may need calcium hardness increaser.`);
@@ -1751,7 +1896,9 @@ export function initPoolTestScanner(root) {
       const hit = cacheGet(cacheKey);
       if (hit?.vals) {
         lastVals = hit.vals;
+        const sanity = runSanityCheck(hit.vals);
         renderBars(hit.vals);
+        renderSanityCheck(sanity);
         renderRecs(hit.vals);
         renderScanDiagnostics(hit.vals);
         setStatus(`EasyTest scan (cached) | id=${imgHash}`);
@@ -1779,8 +1926,10 @@ export function initPoolTestScanner(root) {
     scanQuality.details.frameCount = frameSample.frameCount || 1;
     const vals = rgbToChemistryEasyTest(padColors, scanQuality, neutralReference);
     lastVals = vals;
+    const sanity = runSanityCheck(vals);
 
     renderBars(vals);
+    renderSanityCheck(sanity);
     renderRecs(vals);
     renderScanDiagnostics(vals);
     const statusPrefix = scanQuality.score < 55
@@ -1834,7 +1983,8 @@ export function initPoolTestScanner(root) {
         alk: vals.__alkConfidence ?? null,
         cya: vals.__cyaConfidence ?? null,
         hardness: vals.__hardnessConfidence ?? null
-      }
+      },
+      sanityCheck: vals.__sanityCheck || null
     });
     if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
     saveHistory(history);
@@ -2167,6 +2317,11 @@ export function initPoolTestScanner(root) {
   els.poolToggleGlobal?.addEventListener("click", () => { poolCollapsed = !poolCollapsed; applyPoolCollapsed(); savePoolSetup(); });
 
   els.btnRecalc?.addEventListener("click", () => { if (lastVals) renderRecs(lastVals); });
+  root.addEventListener("click", (event) => {
+    if (event.target?.matches?.('[data-pt="sanityApplyContext"]')) {
+      rerunSanityWithContext();
+    }
+  });
   els.btnClearData?.addEventListener("click", clearLocalData);
 
   // ================================================================

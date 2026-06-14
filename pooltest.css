@@ -22,9 +22,6 @@ body {
   color: var(--fg);
 }
 
-/* when install banner visible */
-body.has-install-banner { padding-bottom: 92px; }
-
 a { color: inherit; text-decoration: none; }
 
 /* Header */
@@ -443,6 +440,84 @@ button:hover:not(:disabled),
   vertical-align: middle;
 }
 
+.sanity-panel {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid rgba(125,154,176,0.28);
+  border-radius: 10px;
+  background: rgba(8,15,24,0.55);
+}
+
+.sanity-panel h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.sanity-score-row,
+.sanity-cards,
+.sanity-context-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sanity-score-row {
+  margin-bottom: 8px;
+}
+
+.sanity-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.sanity-card {
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(125,154,176,0.24);
+  background: rgba(15,23,42,0.72);
+}
+
+.sanity-card.warn { border-color: rgba(249,115,22,0.55); }
+.sanity-card.bad { border-color: rgba(239,68,68,0.62); }
+.sanity-card.ok { border-color: rgba(34,197,94,0.42); }
+
+.sanity-card strong,
+.sanity-card p,
+.sanity-card small {
+  display: block;
+}
+
+.sanity-card p {
+  margin: 6px 0;
+}
+
+.sanity-card small {
+  color: var(--fg-muted);
+  line-height: 1.35;
+}
+
+.sanity-context {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(125,154,176,0.18);
+}
+
+.sanity-context-options {
+  margin: 10px 0;
+}
+
+.sanity-context-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid rgba(125,154,176,0.28);
+  border-radius: 999px;
+  background: rgba(15,23,42,0.72);
+  font-size: 0.82rem;
+}
+
 /* History grid */
 .history-grid {
   display: grid;
@@ -749,42 +824,6 @@ button:hover:not(:disabled),
   font-size: 0.75rem;
 }
 
-/* PWA Install banner */
-.install-banner {
-  position: fixed;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 12px;
-  border-radius: 16px;
-  border: 1px solid rgba(148,163,184,0.35);
-  background: rgba(15,23,42,0.92);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-}
-
-.install-text .small { font-size: 12px; }
-.install-actions { display: flex; gap: 8px; align-items: center; }
-.install-dismiss {
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border-radius: 999px;
-  font-size: 1.2rem;
-  line-height: 1;
-}
-
-@media (max-width: 700px) {
-  .install-banner { padding: 10px; }
-  .install-actions .btn,
-  .install-actions .btn-ghost { padding: 6px 10px; font-size: 0.8rem; }
-}
-
 /* UI overhaul shell */
 :root {
   --bg: #061018;
@@ -1004,5 +1043,9 @@ body {
 
   .card {
     padding: 14px;
+  }
+
+  .sanity-cards {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

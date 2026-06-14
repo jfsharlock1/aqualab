@@ -5,7 +5,7 @@
 // - JS/CSS: stale-while-revalidate (fast, but updates in background)
 // - Everything else: cache-first
 
-const CACHE_VERSION = "v33"; // bump to force refresh
+const CACHE_VERSION = "v35"; // bump to force refresh
 const CACHE_NAME = `pooltest-cache-${CACHE_VERSION}`;
 
 const ASSETS = [
@@ -15,6 +15,7 @@ const ASSETS = [
   "./calibrate.html",
   "./pooltest.css",
   "./scanner.js",
+  "./sanityCheckEngine.js",
   "./sensors.js",
   "./sensorService.js",
   "./sensorStorageService.js",
