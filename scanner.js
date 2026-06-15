@@ -1,4 +1,4 @@
-﻿﻿// scanner.js (EasyTest-only)
+﻿// scanner.js (EasyTest-only)
 // Reverted UX: Preview + Crop shows BELOW the camera box (not overlaid)
 // Features:
 // - EasyTest 7-in-1 swatches
@@ -316,6 +316,12 @@ export function initPoolTestScanner(root) {
     sanitySummary: root.querySelector('[data-pt="sanitySummary"]'),
     sanityContext: root.querySelector('[data-pt="sanityContext"]'),
     sanityDetails: root.querySelector('[data-pt="sanityDetails"]'),
+    poolContextPanel: root.querySelector('[data-pt="poolContextPanel"]'),
+    waterAppearance: root.querySelector('[data-pt="waterAppearance"]'),
+    recentRain: root.querySelector('[data-pt="recentRain"]'),
+    poolUsage: root.querySelector('[data-pt="poolUsage"]'),
+    surfaceCondition: root.querySelector('[data-pt="surfaceCondition"]'),
+    historyLog: root.querySelector('[data-pt="historyLog"]'),
 
     btnStart: root.querySelector('[data-pt="btnStart"]'),
     btnCapture: root.querySelector('[data-pt="btnCapture"]'),
@@ -1274,6 +1280,24 @@ export function initPoolTestScanner(root) {
   let lastVals = null;
   let lastSanityCheck = null;
   const CHEM_CONTEXT_KEY = "pt_sanity_context_v1";
+  const POOL_CONTEXT_KEY = "pt_pool_context_v1";
+  const POOL_CONTEXT_LABELS = {
+    waterAppearance: {
+      crystalClear: "Crystal Clear",
+      clear: "Clear",
+      slightlyDull: "Slightly Dull",
+      slightlyCloudy: "Slightly Cloudy",
+      cloudy: "Cloudy",
+      veryCloudy: "Very Cloudy",
+      greenTint: "Green Tint",
+      lightGreen: "Light Green",
+      darkGreen: "Dark Green",
+      brownTea: "Brown / Tea Colored"
+    },
+    recentRain: { none: "None", light: "Light", moderate: "Moderate", heavy: "Heavy" },
+    poolUsage: { none: "None", light: "Light", moderate: "Moderate", heavy: "Heavy" },
+    surfaceCondition: { normal: "Normal", pollen: "Pollen Present", debris: "Debris Present", foam: "Foam Present", oily: "Oily Surface" }
+  };
 
   function loadSanityContext() {
     const saved = loadJson(CHEM_CONTEXT_KEY, null);
@@ -1290,6 +1314,48 @@ export function initPoolTestScanner(root) {
     };
     saveJson(CHEM_CONTEXT_KEY, context);
     return context;
+  }
+
+  function loadPoolContext() {
+    const saved = loadJson(POOL_CONTEXT_KEY, null) || {};
+    return {
+      waterAppearance: saved.waterAppearance || "crystalClear",
+      recentRain: saved.recentRain || "none",
+      poolUsage: saved.poolUsage || "none",
+      surfaceCondition: saved.surfaceCondition || "normal"
+    };
+  }
+
+  function savePoolContext(context) {
+    const next = {
+      waterAppearance: context.waterAppearance || "crystalClear",
+      recentRain: context.recentRain || "none",
+      poolUsage: context.poolUsage || "none",
+      surfaceCondition: context.surfaceCondition || "normal",
+      updatedAt: new Date().toISOString()
+    };
+    saveJson(POOL_CONTEXT_KEY, next);
+    return next;
+  }
+
+  function getPoolContextFromInputs() {
+    return savePoolContext({
+      waterAppearance: els.waterAppearance?.value || loadPoolContext().waterAppearance,
+      recentRain: els.recentRain?.value || loadPoolContext().recentRain,
+      poolUsage: els.poolUsage?.value || loadPoolContext().poolUsage,
+      surfaceCondition: els.surfaceCondition?.value || loadPoolContext().surfaceCondition
+    });
+  }
+
+  function applyPoolContextInputs(context = loadPoolContext()) {
+    if (els.waterAppearance) els.waterAppearance.value = context.waterAppearance;
+    if (els.recentRain) els.recentRain.value = context.recentRain;
+    if (els.poolUsage) els.poolUsage.value = context.poolUsage;
+    if (els.surfaceCondition) els.surfaceCondition.value = context.surfaceCondition;
+  }
+
+  function poolContextLabel(group, value) {
+    return POOL_CONTEXT_LABELS[group]?.[value] || value || "Not provided";
   }
 
   function confidenceLabel(score) {
@@ -1608,11 +1674,14 @@ export function initPoolTestScanner(root) {
 
   function runSanityCheck(vals) {
     if (!vals) return null;
+    const poolContext = getPoolContextFromInputs();
     lastSanityCheck = runStripSanityCheck(vals, {
       history: loadHistory(),
       recentActions: loadSanityContext().recentActions,
-      poolContext: { gallons: poolGallons }
+      poolContext: { gallons: poolGallons },
+      ...poolContext
     });
+    vals.__poolContext = poolContext;
     vals.__sanityCheck = lastSanityCheck;
     return lastSanityCheck;
   }
@@ -1628,32 +1697,50 @@ export function initPoolTestScanner(root) {
 
     if (!sanity) {
       if (els.sanitySummary) {
-        els.sanitySummary.innerHTML = `<p class="muted hint">Run a scan to see AquaLab's sanity check.</p>`;
+        els.sanitySummary.innerHTML = `<p class="muted hint">Run a scan to see AquaLab's smart review.</p>`;
       }
       if (els.sanityDetails) {
         els.sanityDetails.innerHTML = `<p class="muted hint">Engineer Mode will show rule triggers after a scan.</p>`;
       }
       if (els.sanityContext) els.sanityContext.hidden = true;
+      if (els.poolContextPanel) els.poolContextPanel.hidden = true;
       return;
     }
 
-    const cautionChecks = sanity.checks.filter(check => check.severity !== "Info" || check.adjustedConfidence === "Low");
+    if (els.poolContextPanel) els.poolContextPanel.hidden = false;
+    const context = lastVals?.__poolContext || loadPoolContext();
     const scoreClass = sanity.scoreConfidence === "High" ? "ok" : sanity.scoreConfidence === "Medium" ? "warn" : "bad";
+    const findings = sanity.topFindings || [];
 
     if (els.sanitySummary) {
       els.sanitySummary.innerHTML = `
-        <div class="sanity-score-row">
-          <span class="tag ${scoreClass}">Pool Health Score: ${escapeHtml(sanity.poolHealthScore)}</span>
-          <span class="tag ${scoreClass}">Score Confidence: ${escapeHtml(sanity.scoreConfidence)}</span>
-        </div>
-        <p class="muted hint">${escapeHtml(sanity.summary)}</p>
-        ${cautionChecks.length ? `<div class="sanity-cards">${cautionChecks.slice(0, 4).map(check => `
+        <article class="smart-review-hero ${scoreClass}">
+          <div>
+            <span class="section-eyebrow">${escapeHtml(sanity.summaryState || "Pool Health Analysis")}</span>
+            <h3>Pool Health: ${escapeHtml(sanity.poolHealthScore)} / 100</h3>
+          </div>
+          <div class="smart-review-meta">
+            <span class="tag ${scoreClass}">Confidence: ${escapeHtml(sanity.scoreConfidence)}</span>
+            <span class="tag">Water Appearance: ${escapeHtml(sanity.waterAppearanceLabel || poolContextLabel("waterAppearance", context.waterAppearance))}</span>
+          </div>
+          <p>${escapeHtml(sanity.summary)}</p>
+          <p><strong>Next Action:</strong> ${escapeHtml(sanity.nextAction || "Review findings before dosing.")}</p>
+          <small class="muted">Retest timing: ${escapeHtml(sanity.retestTiming || "Use normal retest timing.")}</small>
+        </article>
+        ${findings.length ? `<div class="sanity-cards top-findings">${findings.map(check => `
           <article class="sanity-card ${severityClass(check.severity)}">
             <strong>${escapeHtml(check.parameter)}: ${escapeHtml(check.status)}</strong>
             <p>${escapeHtml(check.message)}</p>
             <small>${escapeHtml(check.recommendedAction)}</small>
           </article>
         `).join("")}</div>` : `<p class="muted hint">No suspicious chemistry jumps or low-confidence dosing guards were triggered.</p>`}
+        ${(sanity.allFindings || []).length > findings.length ? `<details class="smart-review-details"><summary>View Details</summary><div class="sanity-cards">${(sanity.allFindings || []).slice(3).map(check => `
+          <article class="sanity-card ${severityClass(check.severity)}">
+            <strong>${escapeHtml(check.parameter)}: ${escapeHtml(check.status)}</strong>
+            <p>${escapeHtml(check.message)}</p>
+            <small>${escapeHtml(check.recommendedAction)}</small>
+          </article>
+        `).join("")}</div></details>` : ""}
       `;
     }
 
@@ -1673,13 +1760,18 @@ export function initPoolTestScanner(root) {
               </label>
             `).join("")}
           </div>
-          <button type="button" class="btn-ghost" data-pt="sanityApplyContext">Update sanity check</button>
+          <button type="button" class="btn-ghost" data-pt="sanityApplyContext">Update smart review</button>
         `;
       }
     }
 
     if (els.sanityDetails) {
       els.sanityDetails.innerHTML = `
+        <div class="scan-debug-summary">
+          <span class="tag ${scoreClass}">Summary: ${escapeHtml(sanity.summaryState)}</span>
+          <span class="muted hint">Chemistry score: ${escapeHtml(sanity.chemistryScore ?? "-")}</span>
+          <span class="muted hint">Appearance adjustment: ${escapeHtml(sanity.appearanceAdjustment ?? 0)}</span>
+        </div>
         <div class="scan-debug-table-wrap">
           <table class="scan-debug-table">
             <thead>
@@ -1709,12 +1801,19 @@ export function initPoolTestScanner(root) {
       `;
     }
   }
-
   function rerunSanityWithContext() {
     if (!lastVals) return;
     const checked = Array.from(root.querySelectorAll("[data-pt-sanity-action]:checked")).map(input => input.getAttribute("data-pt-sanity-action"));
     const finalActions = checked.includes("none") ? ["none"] : checked.filter(value => value !== "none");
     saveSanityContext(finalActions);
+    renderSanityCheck(runSanityCheck(lastVals));
+    renderRecs(lastVals);
+  }
+
+  function updatePoolContextReview() {
+    const context = getPoolContextFromInputs();
+    applyPoolContextInputs(context);
+    if (!lastVals) return;
     renderSanityCheck(runSanityCheck(lastVals));
     renderRecs(lastVals);
   }
@@ -1984,6 +2083,11 @@ export function initPoolTestScanner(root) {
         cya: vals.__cyaConfidence ?? null,
         hardness: vals.__hardnessConfidence ?? null
       },
+      waterAppearance: vals.__poolContext?.waterAppearance || loadPoolContext().waterAppearance,
+      recentRain: vals.__poolContext?.recentRain || loadPoolContext().recentRain,
+      poolUsage: vals.__poolContext?.poolUsage || loadPoolContext().poolUsage,
+      surfaceCondition: vals.__poolContext?.surfaceCondition || loadPoolContext().surfaceCondition,
+      timestamp: new Date().toISOString(),
       sanityCheck: vals.__sanityCheck || null
     });
     if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
@@ -1991,6 +2095,29 @@ export function initPoolTestScanner(root) {
     renderHistoryCharts(history);
   }
 
+  function renderHistoryLog(historyOpt) {
+    if (!els.historyLog) return;
+    const history = historyOpt || loadHistory();
+    if (!history.length) {
+      els.historyLog.innerHTML = `<p class="muted hint">No saved readings yet.</p>`;
+      return;
+    }
+    const recent = history.slice(-5).reverse();
+    els.historyLog.innerHTML = `
+      <h3>Recent Saved Context</h3>
+      <div class="history-log-list">
+        ${recent.map(item => `
+          <article class="history-log-item">
+            <strong>${escapeHtml(new Date(item.t || Date.now()).toLocaleString())}</strong>
+            <span>${escapeHtml(poolContextLabel("waterAppearance", item.waterAppearance))}</span>
+            <span>Rain: ${escapeHtml(poolContextLabel("recentRain", item.recentRain))}</span>
+            <span>Usage: ${escapeHtml(poolContextLabel("poolUsage", item.poolUsage))}</span>
+            <span>Surface: ${escapeHtml(poolContextLabel("surfaceCondition", item.surfaceCondition))}</span>
+          </article>
+        `).join("")}
+      </div>
+    `;
+  }
   function renderHistoryCharts(historyOpt) {
     if (typeof Chart === "undefined") return;
     const history = historyOpt || loadHistory();
@@ -2317,6 +2444,9 @@ export function initPoolTestScanner(root) {
   els.poolToggleGlobal?.addEventListener("click", () => { poolCollapsed = !poolCollapsed; applyPoolCollapsed(); savePoolSetup(); });
 
   els.btnRecalc?.addEventListener("click", () => { if (lastVals) renderRecs(lastVals); });
+  [els.waterAppearance, els.recentRain, els.poolUsage, els.surfaceCondition].forEach(input => {
+    input?.addEventListener("change", updatePoolContextReview);
+  });
   root.addEventListener("click", (event) => {
     if (event.target?.matches?.('[data-pt="sanityApplyContext"]')) {
       rerunSanityWithContext();
@@ -2329,7 +2459,9 @@ export function initPoolTestScanner(root) {
   // ================================================================
 
   loadPoolSetup();
+  applyPoolContextInputs();
   renderHistoryCharts();
+  renderHistoryLog();
   listCameras();
   applyScannerMode();
 

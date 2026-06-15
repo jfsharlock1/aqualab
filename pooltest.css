@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg: #020617;
   --bg-card: #020617;
   --fg: #e5e7eb;
@@ -1047,5 +1047,119 @@ body {
 
   .sanity-cards {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.smart-review-hero {
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid rgba(125,154,176,0.28);
+  border-radius: 10px;
+  background: rgba(15,23,42,0.74);
+}
+
+.smart-review-hero.ok { border-color: rgba(34,197,94,0.46); }
+.smart-review-hero.warn { border-color: rgba(249,115,22,0.55); }
+.smart-review-hero.bad { border-color: rgba(239,68,68,0.62); }
+
+.smart-review-hero h3 {
+  margin: 2px 0 8px;
+  font-size: 1.35rem;
+}
+
+.smart-review-hero p {
+  margin: 8px 0;
+}
+
+.smart-review-meta,
+.pool-context-grid,
+.history-log-list {
+  display: grid;
+  gap: 10px;
+}
+
+.smart-review-meta {
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  align-items: center;
+}
+
+.pool-context-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(125,154,176,0.18);
+}
+
+.card-header-row.compact h3 {
+  margin: 2px 0 0;
+  font-size: 1rem;
+}
+
+.pool-context-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.pool-context-grid label {
+  display: grid;
+  gap: 5px;
+  color: var(--fg-muted);
+  font-size: 0.82rem;
+}
+
+.pool-context-grid select {
+  width: 100%;
+  min-width: 0;
+}
+
+.top-findings {
+  margin-top: 12px;
+}
+
+.smart-review-details {
+  margin-top: 12px;
+}
+
+.smart-review-details summary {
+  cursor: pointer;
+  color: var(--fg);
+  font-weight: 700;
+}
+
+.history-log {
+  margin-top: 18px;
+}
+
+.history-log h3 {
+  margin: 0 0 10px;
+}
+
+.history-log-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.history-log-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(125,154,176,0.24);
+  border-radius: 10px;
+  background: rgba(15,23,42,0.68);
+  color: var(--fg-muted);
+  font-size: 0.82rem;
+}
+
+.history-log-item strong {
+  color: var(--fg);
+}
+
+@media (max-width: 700px) {
+  .smart-review-meta,
+  .pool-context-grid,
+  .history-log-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .smart-review-hero h3 {
+    font-size: 1.12rem;
   }
 }

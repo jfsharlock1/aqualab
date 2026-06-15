@@ -1,11 +1,11 @@
-﻿// service-worker.js
+// service-worker.js
 // Update-friendly PWA cache:
 // - New SW activates immediately (skipWaiting + clients.claim)
 // - HTML: network-first (so new index loads)
 // - JS/CSS: stale-while-revalidate (fast, but updates in background)
 // - Everything else: cache-first
 
-const CACHE_VERSION = "v35"; // bump to force refresh
+const CACHE_VERSION = "v36"; // bump to force refresh
 const CACHE_NAME = `pooltest-cache-${CACHE_VERSION}`;
 
 const ASSETS = [

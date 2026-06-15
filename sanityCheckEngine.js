@@ -1,12 +1,12 @@
 const PARAMS = {
-  ph: { label: "pH", unit: "", confidenceKey: "__phConfidence" },
-  freeCl: { label: "Free Chlorine", unit: "ppm", confidenceKey: "__freeClConfidence" },
-  totalCl: { label: "Total Chlorine", unit: "ppm", confidenceKey: "__totalClConfidence" },
-  combinedCl: { label: "Combined Chlorine", unit: "ppm", confidenceKey: null },
-  alk: { label: "Total Alkalinity", unit: "ppm", confidenceKey: "__alkConfidence" },
-  cya: { label: "CYA", unit: "ppm", confidenceKey: "__cyaConfidence" },
-  hardness: { label: "Total Hardness", unit: "ppm", confidenceKey: "__hardnessConfidence" },
-  bromine: { label: "Bromine", unit: "ppm", confidenceKey: "__bromineConfidence" }
+  ph: { label: "pH", unit: "", confidenceKey: "__phConfidence", safetyImpact: 8 },
+  freeCl: { label: "Free Chlorine", unit: "ppm", confidenceKey: "__freeClConfidence", safetyImpact: 10 },
+  totalCl: { label: "Total Chlorine", unit: "ppm", confidenceKey: "__totalClConfidence", safetyImpact: 7 },
+  combinedCl: { label: "Combined Chlorine", unit: "ppm", confidenceKey: null, safetyImpact: 7 },
+  alk: { label: "Total Alkalinity", unit: "ppm", confidenceKey: "__alkConfidence", safetyImpact: 5 },
+  cya: { label: "CYA", unit: "ppm", confidenceKey: "__cyaConfidence", safetyImpact: 9 },
+  hardness: { label: "Total Hardness", unit: "ppm", confidenceKey: "__hardnessConfidence", safetyImpact: 4 },
+  bromine: { label: "Bromine", unit: "ppm", confidenceKey: "__bromineConfidence", safetyImpact: 6 }
 };
 
 const CONTEXT_LABELS = {
@@ -21,6 +21,35 @@ const CONTEXT_LABELS = {
   aeration: "aeration",
   none: "none of these"
 };
+
+const APPEARANCE_ADJUSTMENTS = {
+  crystalClear: 4,
+  clear: 2,
+  slightlyDull: -6,
+  slightlyCloudy: -12,
+  cloudy: -20,
+  veryCloudy: -30,
+  greenTint: -35,
+  lightGreen: -45,
+  darkGreen: -60,
+  brownTea: -30
+};
+
+const APPEARANCE_LABELS = {
+  crystalClear: "Crystal Clear",
+  clear: "Clear",
+  slightlyDull: "Slightly Dull",
+  slightlyCloudy: "Slightly Cloudy",
+  cloudy: "Cloudy",
+  veryCloudy: "Very Cloudy",
+  greenTint: "Green Tint",
+  lightGreen: "Light Green",
+  darkGreen: "Dark Green",
+  brownTea: "Brown / Tea Colored"
+};
+
+const TROUBLED_APPEARANCES = new Set(["cloudy", "veryCloudy", "greenTint", "lightGreen", "darkGreen", "brownTea"]);
+const CLEAR_APPEARANCES = new Set(["crystalClear", "clear"]);
 
 function toNumber(value) {
   const n = Number(value);
@@ -39,6 +68,10 @@ function confidenceLabel(score) {
 
 function severityRank(severity) {
   return { Info: 0, Caution: 1, Warning: 2, Critical: 3 }[severity] ?? 0;
+}
+
+function confidenceRisk(confidence) {
+  return { Low: 2, Medium: 1, High: 0 }[confidence] ?? 1;
 }
 
 function maxSeverity(a, b) {
@@ -104,7 +137,8 @@ function createCheck(vals, key, measuredValue) {
     reasonCodes: [],
     message: "",
     recommendedAction: "",
-    notes: []
+    notes: [],
+    safetyImpact: param.safetyImpact
   };
 }
 
@@ -120,8 +154,34 @@ function getHistoryChange(history, key, currentValue) {
   };
 }
 
-function buildMessage(check) {
+function buildMessage(check, context) {
   const valueText = `${check.measuredValue}${check.unit ? ` ${check.unit}` : ""}`;
+  const appearance = context?.waterAppearance;
+
+  if (check.key === "freeCl" && check.reasonCodes.includes("CLOUDY_OR_GREEN_LOW_CHLORINE")) {
+    if (check.adjustedConfidence === "Low") {
+      return {
+        message: "Water appearance and chlorine may be pointing in different directions, but the chlorine reading is low confidence.",
+        action: "Retest immediately in indirect daylight before dosing heavily."
+      };
+    }
+    return {
+      message: "Cloudy or green water with low free chlorine needs attention.",
+      action: "Begin corrective chlorination using product-label guidance for your pool volume."
+    };
+  }
+  if (check.reasonCodes.includes("CLEAR_WATER_LOW_CONFIDENCE")) {
+    return {
+      message: `${check.parameter} is low confidence, while the water appearance looks good.`,
+      action: "Retest before making a large chemical adjustment."
+    };
+  }
+  if (check.reasonCodes.includes("WATER_APPEARANCE_DECLINING")) {
+    return {
+      message: "Water appearance appears to be declining compared with recent history.",
+      action: "Retest and inspect circulation, filtration, sanitizer level, and debris load."
+    };
+  }
   if (check.key === "cya" && check.reasonCodes.includes("UNLIKELY_HISTORY_JUMP")) {
     return {
       message: `CYA changed faster than expected, and this scan does not strongly support ${valueText}.`,
@@ -130,13 +190,13 @@ function buildMessage(check) {
   }
   if (check.key === "ph" && check.reasonCodes.includes("UNLIKELY_HISTORY_JUMP")) {
     return {
-      message: `pH moved unusually quickly compared with the previous test.`,
+      message: "pH moved unusually quickly compared with the previous test.",
       action: "Rescan or confirm with a fresh strip unless acid, soda ash, aeration, or alkalinity changes were made."
     };
   }
   if (check.key === "combinedCl" && check.reasonCodes.includes("CHEMISTRY_RELATIONSHIP_WARNING")) {
     return {
-      message: `Combined chlorine is elevated, which can mean chloramines are present.`,
+      message: "Combined chlorine is elevated, which can mean chloramines are present.",
       action: "Consider oxidation/shock guidance if the reading is confident; retest first if the chlorine pads were low confidence."
     };
   }
@@ -153,14 +213,14 @@ function buildMessage(check) {
     };
   }
   return {
-    message: `${check.parameter} appears plausible at ${valueText}.`,
+    message: `${check.parameter} appears plausible at ${valueText}${appearance ? ` with ${APPEARANCE_LABELS[appearance] || appearance} water noted` : ""}.`,
     action: "Use normal pool-care judgment and retest after chemical changes."
   };
 }
 
-function finaliseCheck(check) {
+function finaliseCheck(check, context) {
   check.adjustedConfidence = confidenceLabel(check.adjustedScore);
-  const content = buildMessage(check);
+  const content = buildMessage(check, context);
   check.message = content.message;
   check.recommendedAction = content.action;
   if (check.adjustedConfidence === "Low" && check.status === "Plausible") check.status = "Low confidence";
@@ -169,27 +229,28 @@ function finaliseCheck(check) {
 
 function evaluatePadEvidence(vals, key, check, scanQuality) {
   const debug = padDebug(vals, key);
-  if (!debug) return;
-  const best = toNumber(debug.bestDeltaE);
-  const second = toNumber(debug.secondDeltaE);
-  const variance = toNumber(debug.variance);
-  if (best != null && second != null && second - best < 2.2) {
-    applyAdjustment(check, {
-      code: "LOW_DELTA_E_SEPARATION",
-      penalty: 0.16,
-      severity: "Caution",
-      status: "Ambiguous",
-      note: `Best Delta-E ${best}; second-best Delta-E ${second}.`
-    });
-  }
-  if (variance != null && variance > 14) {
-    applyAdjustment(check, {
-      code: "HIGH_FRAME_VARIANCE",
-      penalty: 0.12,
-      severity: "Caution",
-      status: "Ambiguous",
-      note: `Pad variance ${variance}.`
-    });
+  if (debug) {
+    const best = toNumber(debug.bestDeltaE);
+    const second = toNumber(debug.secondDeltaE);
+    const variance = toNumber(debug.variance);
+    if (best != null && second != null && second - best < 2.2) {
+      applyAdjustment(check, {
+        code: "LOW_DELTA_E_SEPARATION",
+        penalty: 0.16,
+        severity: "Caution",
+        status: "Ambiguous",
+        note: `Best Delta-E ${best}; second-best Delta-E ${second}.`
+      });
+    }
+    if (variance != null && variance > 14) {
+      applyAdjustment(check, {
+        code: "HIGH_FRAME_VARIANCE",
+        penalty: 0.12,
+        severity: "Caution",
+        status: "Ambiguous",
+        note: `Pad variance ${variance}.`
+      });
+    }
   }
   if ((scanQuality?.score ?? 100) < 62) {
     applyAdjustment(check, {
@@ -264,14 +325,188 @@ function evaluateExtremeGuards(vals, check) {
   }
 }
 
-function healthStatus(vals) {
-  let score = 100;
-  if (toNumber(vals.ph) < 7.2 || toNumber(vals.ph) > 7.8) score -= 12;
-  if (toNumber(vals.freeCl) < 1 || toNumber(vals.freeCl) > 5) score -= 12;
-  if (toNumber(vals.alk) < 80 || toNumber(vals.alk) > 120) score -= 10;
-  if (toNumber(vals.cya) < 30 || toNumber(vals.cya) > 100) score -= 12;
-  if (toNumber(vals.hardness) < 100 || toNumber(vals.hardness) > 350) score -= 6;
-  return clamp(score, 0, 100);
+function appearanceRank(value) {
+  return {
+    crystalClear: 0,
+    clear: 1,
+    slightlyDull: 2,
+    slightlyCloudy: 3,
+    cloudy: 4,
+    veryCloudy: 5,
+    greenTint: 6,
+    lightGreen: 7,
+    darkGreen: 8,
+    brownTea: 6
+  }[value] ?? null;
+}
+
+function latestAppearance(history) {
+  if (!Array.isArray(history)) return null;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const value = history[i]?.waterAppearance || history[i]?.poolContext?.waterAppearance;
+    if (value) return value;
+  }
+  return null;
+}
+
+function createAppearanceCheck(context, history) {
+  const appearance = context?.waterAppearance;
+  if (!appearance) return null;
+  const check = createCheck({}, "freeCl", APPEARANCE_LABELS[appearance] || appearance);
+  check.parameter = "Water Appearance";
+  check.key = "waterAppearance";
+  check.unit = "";
+  check.rawScore = 0.9;
+  check.adjustedScore = 0.9;
+  check.rawConfidence = "High";
+  check.adjustedConfidence = "High";
+  check.safetyImpact = TROUBLED_APPEARANCES.has(appearance) ? 8 : 3;
+
+  const previous = latestAppearance(history);
+  const previousRank = appearanceRank(previous);
+  const currentRank = appearanceRank(appearance);
+  if (previousRank != null && currentRank != null && currentRank - previousRank >= 2) {
+    applyAdjustment(check, {
+      code: "WATER_APPEARANCE_DECLINING",
+      penalty: 0.05,
+      severity: "Caution",
+      status: "Needs attention",
+      note: `Previous appearance was ${APPEARANCE_LABELS[previous] || previous}.`
+    });
+  }
+
+  if (TROUBLED_APPEARANCES.has(appearance)) {
+    check.status = "Needs attention";
+    check.severity = maxSeverity(check.severity, "Caution");
+    if (!check.reasonCodes.includes("WATER_APPEARANCE_CONCERN")) check.reasonCodes.push("WATER_APPEARANCE_CONCERN");
+  }
+
+  return finaliseCheck(check, context);
+}
+
+function evaluateContext(vals, context, history, checks) {
+  const appearance = context?.waterAppearance;
+  if (!appearance) return;
+
+  const freeCl = checks.find(check => check.key === "freeCl");
+  if (freeCl && TROUBLED_APPEARANCES.has(appearance) && toNumber(vals.freeCl) != null && toNumber(vals.freeCl) < 1) {
+    applyAdjustment(freeCl, {
+      code: "CLOUDY_OR_GREEN_LOW_CHLORINE",
+      penalty: freeCl.adjustedConfidence === "Low" ? 0.08 : 0,
+      severity: freeCl.adjustedConfidence === "Low" ? "Caution" : "Warning",
+      status: "Needs attention",
+      note: `${APPEARANCE_LABELS[appearance] || appearance} water with free chlorine below 1 ppm.`
+    });
+  }
+
+  if (CLEAR_APPEARANCES.has(appearance)) {
+    checks.forEach(check => {
+      if (check.adjustedScore < 0.52 && check.safetyImpact >= 7) {
+        applyAdjustment(check, {
+          code: "CLEAR_WATER_LOW_CONFIDENCE",
+          penalty: 0,
+          severity: "Caution",
+          status: "Retest before dosing",
+          note: `${APPEARANCE_LABELS[appearance]} water lowers urgency, but does not make unsafe chemistry safe.`
+        });
+      }
+    });
+  }
+
+  const appearanceCheck = createAppearanceCheck(context, history);
+  if (appearanceCheck && (appearanceCheck.reasonCodes.length || TROUBLED_APPEARANCES.has(appearance))) checks.push(appearanceCheck);
+}
+
+function healthStatus(vals, context = {}) {
+  let chemistryScore = 100;
+  if (toNumber(vals.ph) < 7.2 || toNumber(vals.ph) > 7.8) chemistryScore -= 12;
+  if (toNumber(vals.freeCl) < 1 || toNumber(vals.freeCl) > 5) chemistryScore -= 12;
+  if (toNumber(vals.alk) < 80 || toNumber(vals.alk) > 120) chemistryScore -= 10;
+  if (toNumber(vals.cya) < 30 || toNumber(vals.cya) > 100) chemistryScore -= 12;
+  if (toNumber(vals.hardness) < 100 || toNumber(vals.hardness) > 350) chemistryScore -= 6;
+
+  const appearance = context?.waterAppearance;
+  const appearanceAdjustment = APPEARANCE_ADJUSTMENTS[appearance] || 0;
+  const score = clamp(chemistryScore + appearanceAdjustment, 0, 100);
+
+  return {
+    score,
+    chemistryScore,
+    appearanceAdjustment,
+    waterAppearanceLabel: APPEARANCE_LABELS[appearance] || "Not provided"
+  };
+}
+
+function sortedFindings(checks) {
+  return checks
+    .filter(check => check.severity !== "Info" || check.adjustedConfidence === "Low" || check.reasonCodes.length)
+    .sort((a, b) => {
+      const severityDiff = severityRank(b.severity) - severityRank(a.severity);
+      if (severityDiff) return severityDiff;
+      const confidenceDiff = confidenceRisk(b.adjustedConfidence) - confidenceRisk(a.adjustedConfidence);
+      if (confidenceDiff) return confidenceDiff;
+      return (b.safetyImpact || 0) - (a.safetyImpact || 0);
+    });
+}
+
+function groupedLowConfidenceFinding(checks) {
+  const low = checks.filter(check => check.adjustedConfidence === "Low" && check.key !== "waterAppearance");
+  if (low.length < 3) return null;
+  return {
+    parameter: "Scan Confidence",
+    key: "groupedLowConfidence",
+    measuredValue: `${low.length} readings`,
+    unit: "",
+    rawConfidence: "Low",
+    adjustedConfidence: "Low",
+    rawScore: 0.4,
+    adjustedScore: 0.4,
+    status: "Retest recommended",
+    severity: "Caution",
+    reasonCodes: ["LOW_IMAGE_QUALITY"],
+    message: "Several readings have low confidence due to scan conditions.",
+    recommendedAction: "Retest in indirect daylight before making large chemical adjustments.",
+    notes: low.map(check => check.parameter),
+    safetyImpact: 9
+  };
+}
+
+function buildSummaryState(score, scoreConfidence, findings, scanQuality) {
+  if ((scanQuality?.score ?? 100) < 40) return "Unknown / Failed Scan";
+  if (scoreConfidence === "Low") return "Retest Recommended / Low Confidence";
+  const needsAttention = findings.some(check => severityRank(check.severity) >= severityRank("Warning")) || score < 80;
+  if (needsAttention) return scoreConfidence === "High" ? "Needs Attention / High Confidence" : "Needs Attention / Medium Confidence";
+  return scoreConfidence === "High" ? "Healthy / High Confidence" : "Healthy / Medium Confidence";
+}
+
+function summaryCopy(summaryState, score, context) {
+  const appearance = APPEARANCE_LABELS[context?.waterAppearance] || "Not provided";
+  if (summaryState === "Unknown / Failed Scan") {
+    return {
+      summary: "Scan quality was too low to make a reliable pool health call.",
+      nextAction: "Rescan in indirect daylight with the strip flat on a neutral background.",
+      retestTiming: "Now"
+    };
+  }
+  if (summaryState === "Retest Recommended / Low Confidence") {
+    return {
+      summary: `Pool health is estimated at ${score}/100, but result confidence is low. Retest recommended before dosing.`,
+      nextAction: "Retest before making large chemical adjustments.",
+      retestTiming: "Now"
+    };
+  }
+  if (summaryState.startsWith("Needs Attention")) {
+    return {
+      summary: `Pool health is ${score}/100 with ${appearance} water noted. One or more items need attention.`,
+      nextAction: TROUBLED_APPEARANCES.has(context?.waterAppearance) ? "Address sanitizer and filtration after confirming any low-confidence readings." : "Review the top findings before dosing.",
+      retestTiming: "After treatment or within 24 hours"
+    };
+  }
+  return {
+    summary: `Pool health is ${score}/100 with ${appearance} water noted. The current results look balanced overall.`,
+    nextAction: "Looks good. Monitor chlorine and retest on your normal schedule.",
+    retestTiming: "Tonight or tomorrow morning"
+  };
 }
 
 export function runStripSanityCheck(vals, context = {}) {
@@ -297,27 +532,45 @@ export function runStripSanityCheck(vals, context = {}) {
     evaluateHistory(vals, history, { recentActions }, check);
     evaluateChemistry(vals, check);
     evaluateExtremeGuards(vals, check);
-    checks.push(finaliseCheck(check));
+    checks.push(check);
   });
 
-  const suspicious = checks.filter(check => check.status !== "Plausible" || check.adjustedConfidence === "Low");
-  const score = healthStatus(vals);
+  evaluateContext(vals, context, history, checks);
+  checks.forEach(check => finaliseCheck(check, context));
+
+  const baseFindings = sortedFindings(checks);
+  const grouped = groupedLowConfidenceFinding(checks);
+  const allFindings = grouped ? [grouped, ...baseFindings.filter(check => check.adjustedConfidence !== "Low")] : baseFindings;
+  const topFindings = allFindings.slice(0, 3);
+  const health = healthStatus(vals, context);
   const avgConfidence = checks.length
     ? checks.reduce((sum, check) => sum + check.adjustedScore, 0) / checks.length
     : 0.5;
   const scoreConfidence = confidenceLabel(avgConfidence);
   const reasonCodes = Array.from(new Set(checks.flatMap(check => check.reasonCodes)));
   const asksForContext = reasonCodes.includes("UNLIKELY_HISTORY_JUMP") && !recentActions.length;
+  const summaryState = buildSummaryState(Math.round(health.score), scoreConfidence, allFindings, scanQuality);
+  const summary = summaryCopy(summaryState, Math.round(health.score), context);
 
   return {
     source: "strip",
     createdAt: new Date().toISOString(),
-    poolHealthScore: Math.round(score),
+    poolHealthScore: Math.round(health.score),
+    chemistryScore: Math.round(health.chemistryScore),
+    appearanceAdjustment: health.appearanceAdjustment,
     scoreConfidence,
-    summary: suspicious.length
-      ? `Review ${suspicious.length} item${suspicious.length === 1 ? "" : "s"} before dosing.`
-      : "Readings look internally consistent.",
+    summaryState,
+    summary: summary.summary,
+    nextAction: summary.nextAction,
+    retestTiming: summary.retestTiming,
+    waterAppearance: context.waterAppearance || "",
+    waterAppearanceLabel: health.waterAppearanceLabel,
+    recentRain: context.recentRain || "",
+    poolUsage: context.poolUsage || "",
+    surfaceCondition: context.surfaceCondition || "",
     checks,
+    topFindings,
+    allFindings,
     reasonCodes,
     asksForContext,
     contextQuestion: asksForContext
