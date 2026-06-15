@@ -1,4 +1,4 @@
-﻿// scanner.js (EasyTest-only)
+// scanner.js (EasyTest-only)
 // Reverted UX: Preview + Crop shows BELOW the camera box (not overlaid)
 // Features:
 // - EasyTest 7-in-1 swatches
@@ -1042,7 +1042,7 @@ export function initPoolTestScanner(root) {
     return mx === 0 ? 0 : (mx - mn) / mx;
   }
 
-  function evaluateScanQuality(ctx, padColors, avgRgb, neutralReference) {
+  function evaluateScanQuality(ctx, padColors, avgRgb, neutralReference, correctionDiagnostics = null) {
     const warnings = [];
     const details = {};
     let score = 100;
@@ -1057,6 +1057,42 @@ export function initPoolTestScanner(root) {
       warnings.push("Image is overexposed. Avoid glare and retake the photo.");
     }
 
+    if (correctionDiagnostics) {
+      details.detectedAngle = correctionDiagnostics.detectedAngle;
+      details.correctedAngle = correctionDiagnostics.correctedAngle;
+      details.angleFromVertical = correctionDiagnostics.angleFromVertical;
+      details.rotationCorrected = !!correctionDiagnostics.rotationCorrected;
+      details.perspectiveCorrected = !!correctionDiagnostics.perspectiveCorrected;
+      details.stripDetectionConfidence = correctionDiagnostics.stripDetectionConfidence;
+      details.correctionConfidence = correctionDiagnostics.correctionConfidence;
+      details.detectedStripBounds = correctionDiagnostics.detectedStripBounds;
+      details.detectedPadCenters = correctionDiagnostics.detectedPadCenters || [];
+      details.padSpacingConsistency = correctionDiagnostics.padSpacingConsistency;
+      details.padSpacingVariance = correctionDiagnostics.padSpacingVariance;
+      details.perspectiveSkewEstimate = correctionDiagnostics.perspectiveSkewEstimate;
+      details.perspectiveCorrectionAvailable = !!correctionDiagnostics.perspectiveCorrectionAvailable;
+      details.correctedFrameCount = correctionDiagnostics.correctedFrameCount || 0;
+
+      if (correctionDiagnostics.rotationCorrected) {
+        warnings.push("Strip was auto-leveled.");
+      }
+      if ((correctionDiagnostics.correctionConfidence ?? 1) < 0.34) {
+        score -= 14;
+        warnings.push("Strip angle was difficult to detect. Try placing the strip straighter in the frame.");
+      }
+      if (correctionDiagnostics.angleFromVertical == null) {
+        score -= 12;
+        warnings.push("Could not determine strip angle clearly. Crop tightly around the strip and rescan.");
+      }
+      if (Math.abs(correctionDiagnostics.angleFromVertical || 0) > 18 && !correctionDiagnostics.rotationCorrected) {
+        score -= 10;
+        warnings.push("Strip is strongly tilted. Place it straighter in the frame for better pad sampling.");
+      }
+      if ((correctionDiagnostics.padSpacingConsistency ?? 1) < 0.72) {
+        score -= 12;
+        warnings.push("Pad spacing looks inconsistent after correction. Retake the photo straight-on if results look odd.");
+      }
+    }
     const wbSpread = Math.max(whiteBalance.r, whiteBalance.g, whiteBalance.b) - Math.min(whiteBalance.r, whiteBalance.g, whiteBalance.b);
     details.whiteBalanceSpread = wbSpread;
     if (wbSpread > 0.55) {
@@ -1131,6 +1167,173 @@ export function initPoolTestScanner(root) {
     };
   }
 
+  function normalizeAngle180(deg) {
+    let a = deg;
+    while (a <= -90) a += 180;
+    while (a > 90) a -= 180;
+    return a;
+  }
+
+  function detectStripOrientation(ctx) {
+    const w = ctx.canvas.width;
+    const h = ctx.canvas.height;
+    if (!w || !h) return null;
+
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const step = Math.max(2, Math.floor(Math.min(w, h) / 120));
+    const points = [];
+    let minX = w, minY = h, maxX = 0, maxY = 0;
+
+    for (let y = 0; y < h; y += step) {
+      for (let x = 0; x < w; x += step) {
+        const i = (y * w + x) * 4;
+        const r = data[i] / whiteBalance.r;
+        const g = data[i + 1] / whiteBalance.g;
+        const b = data[i + 2] / whiteBalance.b;
+        const mx = Math.max(r, g, b);
+        const mn = Math.min(r, g, b);
+        const sat = mx === 0 ? 0 : (mx - mn) / mx;
+        if (mx > 38 && mx < 248 && sat > 0.075) {
+          points.push([x, y]);
+          minX = Math.min(minX, x);
+          maxX = Math.max(maxX, x);
+          minY = Math.min(minY, y);
+          maxY = Math.max(maxY, y);
+        }
+      }
+    }
+
+    if (points.length < 45) {
+      return {
+        detectedAngle: null,
+        angleFromVertical: null,
+        stripDetectionConfidence: 0,
+        correctionConfidence: 0,
+        detectedStripBounds: null,
+        warning: "Strip angle was difficult to detect. Try placing the strip straighter in the frame."
+      };
+    }
+
+    const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
+    const cy = points.reduce((sum, p) => sum + p[1], 0) / points.length;
+    let xx = 0, yy = 0, xy = 0;
+    points.forEach(([x, y]) => {
+      const dx = x - cx;
+      const dy = y - cy;
+      xx += dx * dx;
+      yy += dy * dy;
+      xy += dx * dy;
+    });
+    xx /= points.length;
+    yy /= points.length;
+    xy /= points.length;
+
+    const angleRad = 0.5 * Math.atan2(2 * xy, xx - yy);
+    const angleDeg = angleRad * 180 / Math.PI;
+    const trace = xx + yy;
+    const disc = Math.sqrt(Math.max(0, ((xx - yy) * (xx - yy)) + 4 * xy * xy));
+    const lambda1 = (trace + disc) / 2;
+    const lambda2 = (trace - disc) / 2;
+    const elongation = lambda2 > 0 ? lambda1 / lambda2 : 99;
+    const angleFromVertical = normalizeAngle180(angleDeg - 90);
+    const coloredRatio = points.length / Math.max(1, Math.ceil(w / step) * Math.ceil(h / step));
+    const bounds = {
+      x: Math.round(minX),
+      y: Math.round(minY),
+      w: Math.round(maxX - minX),
+      h: Math.round(maxY - minY),
+      centerX: Math.round(cx),
+      centerY: Math.round(cy)
+    };
+
+    const confidence = clamp01(
+      0.18 +
+      clamp01((points.length - 45) / 240) * 0.28 +
+      clamp01((elongation - 1.8) / 5.2) * 0.38 +
+      clamp01(coloredRatio / 0.18) * 0.16
+    );
+
+    return {
+      detectedAngle: Number(angleDeg.toFixed(2)),
+      angleFromVertical: Number(angleFromVertical.toFixed(2)),
+      stripDetectionConfidence: Number(confidence.toFixed(2)),
+      correctionConfidence: Number(confidence.toFixed(2)),
+      detectedStripBounds: bounds,
+      pointCount: points.length,
+      coloredRatio: Number(coloredRatio.toFixed(3)),
+      elongation: Number(elongation.toFixed(2)),
+      perspectiveSkewEstimate: null,
+      perspectiveCorrected: false,
+      perspectiveCorrectionAvailable: false
+    };
+  }
+
+  function rotateCanvasContext(ctx, degrees) {
+    const src = ctx.canvas;
+    const radians = degrees * Math.PI / 180;
+    const sin = Math.abs(Math.sin(radians));
+    const cos = Math.abs(Math.cos(radians));
+    const out = document.createElement("canvas");
+    out.width = Math.max(1, Math.ceil(src.width * cos + src.height * sin));
+    out.height = Math.max(1, Math.ceil(src.width * sin + src.height * cos));
+    const outCtx = out.getContext("2d", { willReadFrequently: true });
+    outCtx.fillStyle = "#ffffff";
+    outCtx.fillRect(0, 0, out.width, out.height);
+    outCtx.translate(out.width / 2, out.height / 2);
+    outCtx.rotate(radians);
+    outCtx.drawImage(src, -src.width / 2, -src.height / 2);
+    return outCtx;
+  }
+
+  function autoLevelFrameContext(ctx) {
+    const orientation = detectStripOrientation(ctx);
+    const diagnostics = {
+      detectedAngle: orientation?.detectedAngle ?? null,
+      correctedAngle: orientation?.angleFromVertical != null ? 0 : null,
+      angleFromVertical: orientation?.angleFromVertical ?? null,
+      rotationCorrected: false,
+      perspectiveCorrected: false,
+      stripDetectionConfidence: orientation?.stripDetectionConfidence ?? 0,
+      correctionConfidence: orientation?.correctionConfidence ?? 0,
+      detectedStripBounds: orientation?.detectedStripBounds || null,
+      detectedPadCenters: [],
+      padSpacingConsistency: null,
+      perspectiveSkewEstimate: orientation?.perspectiveSkewEstimate ?? null,
+      perspectiveCorrectionAvailable: false,
+      warning: orientation?.warning || ""
+    };
+
+    if (!orientation || orientation.angleFromVertical == null) {
+      return { ctx, diagnostics };
+    }
+
+    const correctionDegrees = -orientation.angleFromVertical;
+    if (Math.abs(correctionDegrees) > 2 && orientation.correctionConfidence >= 0.34) {
+      try {
+        const correctedCtx = rotateCanvasContext(ctx, correctionDegrees);
+        const correctedOrientation = detectStripOrientation(correctedCtx);
+        diagnostics.rotationCorrected = true;
+        diagnostics.correctedAngle = correctedOrientation?.angleFromVertical ?? 0;
+        diagnostics.correctedCanvas = {
+          width: correctedCtx.canvas.width,
+          height: correctedCtx.canvas.height
+        };
+        diagnostics.correctionConfidence = Number(Math.min(
+          orientation.correctionConfidence,
+          correctedOrientation?.correctionConfidence ?? orientation.correctionConfidence
+        ).toFixed(2));
+        return { ctx: correctedCtx, diagnostics };
+      } catch {
+        diagnostics.warning = "Strip auto-leveling failed. Try placing the strip straighter in the frame.";
+        return { ctx, diagnostics };
+      }
+    }
+
+    if (Math.abs(correctionDegrees) > 2) {
+      diagnostics.warning = "Strip angle was difficult to detect. Try placing the strip straighter in the frame.";
+    }
+    return { ctx, diagnostics };
+  }
   // Robust pad sampling: scan several vertical lanes for colored pad segments, then grid-median each segment.
   function samplePadsEasyTest(ctx) {
     const w = ctx.canvas.width;
@@ -1185,6 +1388,13 @@ export function initPoolTestScanner(root) {
     if (!candidates.length) return {};
 
     const { x, top7 } = candidates[0];
+    const padCenters = top7.map(seg => ({ x, y: Math.round((seg[0] + seg[1]) / 2) }));
+    const spacings = [];
+    for (let i = 1; i < padCenters.length; i++) spacings.push(padCenters[i].y - padCenters[i - 1].y);
+    const avgSpacing = spacings.length ? spacings.reduce((sum, v) => sum + v, 0) / spacings.length : 0;
+    const spacingVariance = spacings.length && avgSpacing
+      ? spacings.reduce((sum, v) => sum + Math.abs(v - avgSpacing), 0) / (spacings.length * avgSpacing)
+      : null;
 
     const padColors = {};
     const padW = Math.max(20, Math.floor(w * 0.34));
@@ -1238,6 +1448,17 @@ export function initPoolTestScanner(root) {
       const key = EASYTEST_CFG.pads[i].key; // top->bottom mapping
       padColors[key] = { r: mr, g: mg, b: mb, __var: (vr + vg + vb) / 3 };
     }
+
+    Object.defineProperty(padColors, "__samplingDiagnostics", {
+      enumerable: false,
+      value: {
+        laneX: x,
+        detectedPadCenters: padCenters,
+        padSpacingConsistency: spacingVariance == null ? null : Number(Math.max(0, 1 - spacingVariance).toFixed(2)),
+        padSpacingVariance: spacingVariance == null ? null : Number(spacingVariance.toFixed(3)),
+        detectedSegments: top7.map(([start, end]) => ({ start, end }))
+      }
+    });
 
     return padColors;
   }
@@ -1624,6 +1845,20 @@ export function initPoolTestScanner(root) {
     }
 
     const warningItems = Array.from(new Set([...(vals.__warnings || []), ...(quality?.warnings || [])]));
+    const correctionDetails = quality?.details || {};
+    const correctionBlock = `
+      <div class="scan-debug-correction">
+        <span class="muted hint">Original angle: ${correctionDetails.angleFromVertical == null ? "-" : `${Number(correctionDetails.angleFromVertical).toFixed(1)}° from vertical`}</span>
+        <span class="muted hint">Corrected angle: ${correctionDetails.correctedAngle == null ? "-" : `${Number(correctionDetails.correctedAngle).toFixed(1)}°`}</span>
+        <span class="muted hint">Rotation corrected: ${correctionDetails.rotationCorrected ? "yes" : "no"}</span>
+        <span class="muted hint">Perspective corrected: ${correctionDetails.perspectiveCorrected ? "yes" : "no"}</span>
+        <span class="muted hint">Strip detection: ${Math.round(Number(correctionDetails.stripDetectionConfidence || 0) * 100)}%</span>
+        <span class="muted hint">Correction confidence: ${Math.round(Number(correctionDetails.correctionConfidence || 0) * 100)}%</span>
+        <span class="muted hint">Pad spacing: ${correctionDetails.padSpacingConsistency == null ? "-" : `${Math.round(Number(correctionDetails.padSpacingConsistency) * 100)}%`}</span>
+        <span class="muted hint">Bounds: ${correctionDetails.detectedStripBounds ? escapeHtml(`${correctionDetails.detectedStripBounds.x},${correctionDetails.detectedStripBounds.y} ${correctionDetails.detectedStripBounds.w}x${correctionDetails.detectedStripBounds.h}`) : "-"}</span>
+        <span class="muted hint">Pad centers: ${Array.isArray(correctionDetails.detectedPadCenters) && correctionDetails.detectedPadCenters.length ? escapeHtml(correctionDetails.detectedPadCenters.map(p => `(${p.x},${p.y})`).join(" ")) : "-"}</span>
+      </div>
+    `;
     const padRows = EASYTEST_CFG.pads.map(pad => vals.__padDebug[pad.key]).filter(Boolean).map(debug => {
       const distances = debug.distances
         .map(item => `${escapeHtml(item.value)}: ${item.deltaE}`)
@@ -1651,6 +1886,7 @@ export function initPoolTestScanner(root) {
         <span class="muted hint">Exposure: ${Number(quality?.details?.exposure || 0).toFixed(1)}</span>
         <span class="muted hint">Pad variance: ${Number(quality?.details?.averagePadVariance || 0).toFixed(1)}</span>
       </div>
+      ${correctionBlock}
       ${warningItems.length ? `<ul class="scan-debug-warnings">${warningItems.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
       <div class="scan-debug-table-wrap">
         <table class="scan-debug-table">
@@ -1930,12 +2166,25 @@ export function initPoolTestScanner(root) {
 
   function averageFrameSamples(frameContexts) {
     const frames = frameContexts.length ? frameContexts : [];
-    const sampled = frames.map(frameCtx => ({
-      ctx: frameCtx,
-      padColors: samplePadsEasyTest(frameCtx),
-      avgRgb: sampleStripe(frameCtx),
-      neutral: sampleNeutralReference(frameCtx)
-    }));
+    const sampled = frames.map(frameCtx => {
+      const leveled = autoLevelFrameContext(frameCtx);
+      const padColors = samplePadsEasyTest(leveled.ctx);
+      const samplingDiagnostics = padColors.__samplingDiagnostics || null;
+      return {
+        ctx: leveled.ctx,
+        originalCtx: frameCtx,
+        padColors,
+        avgRgb: sampleStripe(leveled.ctx),
+        neutral: sampleNeutralReference(leveled.ctx),
+        correction: {
+          ...leveled.diagnostics,
+          detectedPadCenters: samplingDiagnostics?.detectedPadCenters || [],
+          padSpacingConsistency: samplingDiagnostics?.padSpacingConsistency ?? null,
+          padSpacingVariance: samplingDiagnostics?.padSpacingVariance ?? null,
+          detectedSegments: samplingDiagnostics?.detectedSegments || []
+        }
+      };
+    });
     const complete = sampled.filter(frame => Object.keys(frame.padColors || {}).filter(k => k !== "__avg").length === 7);
     const source = complete.length ? complete : sampled;
     const padColors = {};
@@ -1956,12 +2205,22 @@ export function initPoolTestScanner(root) {
       };
     });
 
+    const correctionSource = source[source.length - 1]?.correction || sampled[sampled.length - 1]?.correction || null;
+    const rotationCount = source.filter(frame => frame.correction?.rotationCorrected).length;
+    const lowCorrectionConfidence = source.some(frame => (frame.correction?.correctionConfidence ?? 1) < 0.34);
+
     return {
       ctx: source[source.length - 1]?.ctx || frames[frames.length - 1],
       padColors,
       avgRgb: averageRgbList(source.map(frame => frame.avgRgb)) || { r: 0, g: 0, b: 0 },
       neutralReference: averageRgbList(source.map(frame => frame.neutral).filter(Boolean)),
-      frameCount: source.length
+      frameCount: source.length,
+      correctionDiagnostics: correctionSource ? {
+        ...correctionSource,
+        rotationCorrected: rotationCount > 0,
+        correctedFrameCount: rotationCount,
+        lowCorrectionConfidence
+      } : null
     };
   }
 
@@ -2021,8 +2280,9 @@ export function initPoolTestScanner(root) {
     }
 
     const neutralReference = frameSample.neutralReference;
-    const scanQuality = evaluateScanQuality(frameSample.ctx || ctx, padColors, avgRgb, neutralReference);
+    const scanQuality = evaluateScanQuality(frameSample.ctx || ctx, padColors, avgRgb, neutralReference, frameSample.correctionDiagnostics);
     scanQuality.details.frameCount = frameSample.frameCount || 1;
+    scanQuality.correction = frameSample.correctionDiagnostics || null;
     const vals = rgbToChemistryEasyTest(padColors, scanQuality, neutralReference);
     lastVals = vals;
     const sanity = runSanityCheck(vals);
@@ -2031,9 +2291,11 @@ export function initPoolTestScanner(root) {
     renderSanityCheck(sanity);
     renderRecs(vals);
     renderScanDiagnostics(vals);
-    const statusPrefix = scanQuality.score < 55
+    let statusPrefix = scanQuality.score < 55
       ? "Low scan quality. Move to indirect daylight and rescan."
       : "EasyTest scan";
+    if (scanQuality.correction?.rotationCorrected && scanQuality.score >= 55) statusPrefix = "EasyTest scan | Strip was auto-leveled.";
+    else if ((scanQuality.correction?.correctionConfidence ?? 1) < 0.34) statusPrefix = "Low correction confidence. Try placing the strip straighter in the frame.";
     setStatus(`${statusPrefix} | Avg RGB ≈ (${avgRgb.r | 0}, ${avgRgb.g | 0}, ${avgRgb.b | 0}) | quality ${scanQuality.score}/100${imgHash ? ` | id=${imgHash}` : ""}`);
 
     els.canvas && (els.canvas.hidden = true);
