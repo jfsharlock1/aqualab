@@ -1184,3 +1184,28 @@ body {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.sampling-overlay {
+  margin: 10px 0 12px;
+  padding: 10px;
+  border: 1px solid rgba(125,154,176,0.22);
+  border-radius: 10px;
+  background: rgba(15,23,42,0.55);
+}
+
+.sampling-overlay figcaption {
+  margin-bottom: 8px;
+  color: var(--fg-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.sampling-overlay img {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  border-radius: 8px;
+  border: 1px solid rgba(125,154,176,0.26);
+  background: #fff;
+}

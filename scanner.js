@@ -1334,61 +1334,215 @@ export function initPoolTestScanner(root) {
     }
     return { ctx, diagnostics };
   }
-  // Robust pad sampling: scan several vertical lanes for colored pad segments, then grid-median each segment.
+  function medianNumber(vals) {
+    const a = vals.filter(Number.isFinite).slice().sort((p, q) => p - q);
+    return a.length ? a[Math.floor(a.length / 2)] : null;
+  }
+
+  function buildSamplingDebugOverlay(ctx, diagnostics) {
+    if (!ctx?.canvas || !diagnostics) return null;
+    const src = ctx.canvas;
+    const maxW = 520;
+    const scale = Math.min(1, maxW / Math.max(1, src.width));
+    const out = document.createElement("canvas");
+    out.width = Math.max(1, Math.round(src.width * scale));
+    out.height = Math.max(1, Math.round(src.height * scale));
+    const octx = out.getContext("2d");
+    octx.drawImage(src, 0, 0, out.width, out.height);
+
+    octx.lineWidth = Math.max(1, 2 * scale);
+    octx.font = `${Math.max(10, Math.round(14 * scale))}px system-ui, sans-serif`;
+    octx.textBaseline = "top";
+
+    const palette = ["#38bdf8", "#f472b6", "#fb7185", "#84cc16", "#facc15", "#2dd4bf", "#fb923c"];
+    (diagnostics.detectedSegments || []).forEach((seg, index) => {
+      const color = palette[index % palette.length];
+      const x = (seg.x1 ?? 0) * scale;
+      const y = (seg.start ?? 0) * scale;
+      const w = Math.max(1, ((seg.x2 ?? seg.x1 ?? 0) - (seg.x1 ?? 0)) * scale);
+      const h = Math.max(1, ((seg.end ?? seg.start ?? 0) - (seg.start ?? 0)) * scale);
+      octx.strokeStyle = color;
+      octx.strokeRect(x, y, w, h);
+      octx.fillStyle = color;
+      octx.fillText(String(index + 1), x + 3, y + 3);
+    });
+
+    Object.entries(diagnostics.sampledPixels || {}).forEach(([key, points], index) => {
+      const color = palette[index % palette.length];
+      octx.fillStyle = color;
+      (points || []).forEach(point => {
+        const x = Math.round(point.x * scale);
+        const y = Math.round(point.y * scale);
+        octx.fillRect(x - 1, y - 1, 3, 3);
+      });
+      const center = diagnostics.detectedPadCenters?.[index];
+      if (center) {
+        octx.strokeStyle = color;
+        octx.beginPath();
+        octx.arc(center.x * scale, center.y * scale, Math.max(4, 8 * scale), 0, Math.PI * 2);
+        octx.stroke();
+        octx.fillText(key, center.x * scale + 8, center.y * scale - 8);
+      }
+    });
+
+    try { return out.toDataURL("image/png"); } catch { return null; }
+  }
+
+  // Robust pad sampling: find plausible pad-width color blobs, then sample only their inner pixels.
   function samplePadsEasyTest(ctx) {
     const w = ctx.canvas.width;
     const h = ctx.canvas.height;
-
     const img = ctx.getImageData(0, 0, w, h).data;
 
     function getPixel(x, y) {
-      const i = (y * w + x) * 4;
+      const xx = clampNumber(Math.round(x), 0, w - 1);
+      const yy = clampNumber(Math.round(y), 0, h - 1);
+      const i = (yy * w + xx) * 4;
       const r = img[i], g = img[i + 1], b = img[i + 2];
       const v = Math.max(r, g, b);
       const sat = v === 0 ? 0 : (v - Math.min(r, g, b)) / v;
-      return { r, g, b, v, sat };
+      const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      return { r, g, b, v, sat, luma };
     }
 
-    function detectSegmentsAtX(x) {
-      const colored = [];
-      for (let y = 0; y < h; y++) {
-        const p = getPixel(x, y);
-        colored[y] = (p.v < 245 && p.sat > 0.08);
-      }
-
-      const segments = [];
-      let inSeg = false, start = 0;
-      for (let y = 0; y < h; y++) {
-        if (colored[y] && !inSeg) { inSeg = true; start = y; }
-        if (!colored[y] && inSeg) {
-          const end = y - 1;
-          inSeg = false;
-          if (end - start > 25) segments.push([start, end]);
+    function estimatePaperLab() {
+      const samples = [];
+      const step = Math.max(3, Math.floor(Math.min(w, h) / 95));
+      for (let y = 0; y < h; y += step) {
+        for (let x = 0; x < w; x += step) {
+          const p = getPixel(x, y);
+          if (p.v > 120 && p.v < 252 && p.sat < 0.16) {
+            samples.push({ r: p.r, g: p.g, b: p.b, luma: p.luma });
+          }
         }
       }
-      if (inSeg) segments.push([start, h - 1]);
-
-      segments.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
-      const top7 = segments.slice(0, 7).sort((a, b) => a[0] - b[0]);
-      if (top7.length !== 7) return null;
-
-      const totalHeight = top7.reduce((sum, seg) => sum + (seg[1] - seg[0]), 0);
-      const span = top7[6][1] - top7[0][0];
-      const centerPenalty = Math.abs(x - w * 0.5) / w;
-      const score = totalHeight + span * 0.2 - centerPenalty * 80;
-      return { x, top7, score };
+      if (samples.length < 25) return null;
+      samples.sort((a, b) => b.luma - a.luma);
+      const bright = samples.slice(0, Math.max(25, Math.floor(samples.length * 0.35)));
+      return rgbToLab({
+        r: medianNumber(bright.map(p => p.r)),
+        g: medianNumber(bright.map(p => p.g)),
+        b: medianNumber(bright.map(p => p.b))
+      });
     }
 
-    const laneFractions = [0.32, 0.38, 0.44, 0.5, 0.56, 0.62, 0.68];
-    const candidates = laneFractions
-      .map(frac => detectSegmentsAtX(clampNumber(Math.floor(w * frac), 0, w - 1)))
-      .filter(Boolean)
-      .sort((a, b) => b.score - a.score);
+    const paperLab = estimatePaperLab();
 
-    if (!candidates.length) return {};
+    function candidateEvidence(p) {
+      const lab = rgbToLab({ r: p.r, g: p.g, b: p.b });
+      const paperDeltaE = paperLab ? deltaE2000(lab, paperLab) : 0;
+      return { lab, paperDeltaE };
+    }
 
-    const { x, top7 } = candidates[0];
-    const padCenters = top7.map(seg => ({ x, y: Math.round((seg[0] + seg[1]) / 2) }));
+    function isCandidatePixel(p) {
+      if (p.v < 42 || p.v > 248) return false;
+      const evidence = candidateEvidence(p);
+      if (paperLab && evidence.paperDeltaE < 7.5) return false;
+      if (evidence.paperDeltaE >= 10) return true;
+      if (p.sat > 0.18) return true;
+      return p.sat > 0.115 && p.luma < 210;
+    }
+
+    const xStep = Math.max(1, Math.floor(w / 260));
+    const yStep = Math.max(1, Math.floor(h / 900));
+    const minRunW = Math.max(10, Math.floor(w * 0.025));
+    const maxRunW = Math.max(minRunW + 4, Math.floor(w * 0.18));
+    const minSegH = Math.max(10, Math.floor(h * 0.012));
+    const maxSegH = Math.max(minSegH + 8, Math.floor(h * 0.12));
+    const rows = [];
+
+    for (let y = 0; y < h; y += yStep) {
+      const runs = [];
+      let inRun = false;
+      let startX = 0;
+      let satSum = 0;
+      let count = 0;
+
+      for (let x = 0; x < w; x += xStep) {
+        const p = getPixel(x, y);
+        const candidate = isCandidatePixel(p);
+        if (candidate && !inRun) {
+          inRun = true;
+          startX = x;
+          satSum = 0;
+          count = 0;
+        }
+        if (candidate && inRun) {
+          satSum += p.sat;
+          count++;
+        }
+        if ((!candidate || x + xStep >= w) && inRun) {
+          const endX = candidate && x + xStep >= w ? x : x - xStep;
+          const runW = endX - startX + xStep;
+          if (runW >= minRunW && runW <= maxRunW) {
+            runs.push({ x1: startX, x2: endX, width: runW, centerX: (startX + endX) / 2, score: runW * (count ? satSum / count : 0) });
+          }
+          inRun = false;
+        }
+      }
+
+      if (!runs.length) continue;
+      runs.sort((a, b) => {
+        const centerA = Math.abs(a.centerX - w * 0.5) / w;
+        const centerB = Math.abs(b.centerX - w * 0.5) / w;
+        return (b.score - centerB * 8) - (a.score - centerA * 8);
+      });
+      rows.push({ y, ...runs[0] });
+    }
+
+    const segments = [];
+    let active = null;
+    const maxGap = yStep * 3;
+    rows.forEach(row => {
+      if (!active || row.y - active.lastY > maxGap || Math.abs(row.centerX - active.centerXs[active.centerXs.length - 1]) > maxRunW) {
+        if (active) segments.push(active);
+        active = { start: row.y, end: row.y, lastY: row.y, centerXs: [row.centerX], widths: [row.width], x1s: [row.x1], x2s: [row.x2], rowCount: 1 };
+      } else {
+        active.end = row.y;
+        active.lastY = row.y;
+        active.centerXs.push(row.centerX);
+        active.widths.push(row.width);
+        active.x1s.push(row.x1);
+        active.x2s.push(row.x2);
+        active.rowCount++;
+      }
+    });
+    if (active) segments.push(active);
+
+    const plausible = segments
+      .map(seg => ({
+        start: seg.start,
+        end: seg.end,
+        height: seg.end - seg.start + yStep,
+        centerX: medianNumber(seg.centerXs),
+        width: medianNumber(seg.widths),
+        x1: medianNumber(seg.x1s),
+        x2: medianNumber(seg.x2s),
+        rowCount: seg.rowCount
+      }))
+      .filter(seg => seg.height >= minSegH && seg.height <= maxSegH && seg.width >= minRunW && seg.width <= maxRunW)
+      .sort((a, b) => a.start - b.start);
+
+    if (plausible.length < 7) {
+      const empty = {};
+      Object.defineProperty(empty, "__samplingDiagnostics", {
+        enumerable: false,
+        value: {
+          detectionMethod: "row-runs",
+          detectedPadCenters: [],
+          padSpacingConsistency: 0,
+          padSpacingVariance: null,
+          detectedSegments: plausible,
+          sampledPixels: {},
+          paperLab,
+          samplingWarning: `Only found ${plausible.length}/7 plausible pad blobs. The crop may include too much background or the pad colors may be washed out.`
+        }
+      });
+      return empty;
+    }
+
+    const top7 = plausible.slice(0, 7);
+    const padCenters = top7.map(seg => ({ x: Math.round(seg.centerX), y: Math.round((seg.start + seg.end) / 2) }));
     const spacings = [];
     for (let i = 1; i < padCenters.length; i++) spacings.push(padCenters[i].y - padCenters[i - 1].y);
     const avgSpacing = spacings.length ? spacings.reduce((sum, v) => sum + v, 0) / spacings.length : 0;
@@ -1397,9 +1551,7 @@ export function initPoolTestScanner(root) {
       : null;
 
     const padColors = {};
-    const padW = Math.max(20, Math.floor(w * 0.34));
-    const x1 = Math.max(0, x - Math.floor(padW / 2));
-    const x2 = Math.min(w, x1 + padW);
+    const sampledPixels = {};
 
     function median(vals) {
       const a = vals.slice().sort((p, q) => p - q);
@@ -1411,30 +1563,30 @@ export function initPoolTestScanner(root) {
     }
 
     for (let i = 0; i < 7; i++) {
-      const [s, e] = top7[i];
-      const y1 = Math.max(0, s + 6);
-      const y2 = Math.min(h, e - 6);
-      if (y2 <= y1) continue;
-
-      const imgData = ctx.getImageData(x1, y1, x2 - x1, y2 - y1);
-      const data = imgData.data;
-      const W = imgData.width;
-      const H = imgData.height;
+      const seg = top7[i];
+      const centerX = Math.round(seg.centerX);
+      const centerY = Math.round((seg.start + seg.end) / 2);
+      const sampleW = Math.max(8, Math.floor(seg.width * 0.42));
+      const sampleH = Math.max(8, Math.floor(seg.height * 0.42));
+      const x1 = clampNumber(centerX - Math.floor(sampleW / 2), 0, w - 1);
+      const y1 = clampNumber(centerY - Math.floor(sampleH / 2), 0, h - 1);
+      const x2 = clampNumber(centerX + Math.floor(sampleW / 2), 0, w - 1);
+      const y2 = clampNumber(centerY + Math.floor(sampleH / 2), 0, h - 1);
 
       const samples = [];
+      const points = [];
       const gx = 9, gy = 9;
 
       for (let yy = 0; yy < gy; yy++) {
-        const py = Math.floor((yy + 0.5) * (H / gy));
+        const py = Math.round(y1 + (yy + 0.5) * ((y2 - y1) / gy));
         for (let xx = 0; xx < gx; xx++) {
-          const px = Math.floor((xx + 0.5) * (W / gx));
-          const idx = (py * W + px) * 4;
-
-          const rr = data[idx] / whiteBalance.r;
-          const gg = data[idx + 1] / whiteBalance.g;
-          const bb = data[idx + 2] / whiteBalance.b;
-
+          const px = Math.round(x1 + (xx + 0.5) * ((x2 - x1) / gx));
+          const p = getPixel(px, py);
+          const rr = p.r / whiteBalance.r;
+          const gg = p.g / whiteBalance.g;
+          const bb = p.b / whiteBalance.b;
           samples.push([rr, gg, bb]);
+          points.push({ x: px, y: py, r: Math.round(p.r), g: Math.round(p.g), b: Math.round(p.b) });
         }
       }
 
@@ -1445,24 +1597,36 @@ export function initPoolTestScanner(root) {
       const mr = median(rs), mg = median(gs), mb = median(bs);
       const vr = mad(rs, mr), vg = mad(gs, mg), vb = mad(bs, mb);
 
-      const key = EASYTEST_CFG.pads[i].key; // top->bottom mapping
+      const key = EASYTEST_CFG.pads[i].key;
+      sampledPixels[key] = points;
       padColors[key] = { r: mr, g: mg, b: mb, __var: (vr + vg + vb) / 3 };
     }
 
+    const diagnostics = {
+      detectionMethod: "row-runs",
+      detectedPadCenters: padCenters,
+      padSpacingConsistency: spacingVariance == null ? null : Number(Math.max(0, 1 - spacingVariance).toFixed(2)),
+      padSpacingVariance: spacingVariance == null ? null : Number(spacingVariance.toFixed(3)),
+      detectedSegments: top7.map(seg => ({
+        start: Math.round(seg.start),
+        end: Math.round(seg.end),
+        x1: Math.round(seg.x1),
+        x2: Math.round(seg.x2),
+        width: Math.round(seg.width),
+        height: Math.round(seg.height)
+      })),
+      sampledPixels,
+      paperLab
+    };
+    diagnostics.overlayDataUrl = buildSamplingDebugOverlay(ctx, diagnostics);
+
     Object.defineProperty(padColors, "__samplingDiagnostics", {
       enumerable: false,
-      value: {
-        laneX: x,
-        detectedPadCenters: padCenters,
-        padSpacingConsistency: spacingVariance == null ? null : Number(Math.max(0, 1 - spacingVariance).toFixed(2)),
-        padSpacingVariance: spacingVariance == null ? null : Number(spacingVariance.toFixed(3)),
-        detectedSegments: top7.map(([start, end]) => ({ start, end }))
-      }
+      value: diagnostics
     });
 
     return padColors;
   }
-
   function setWBAt(x, y) {
     const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
     const size = 21;
@@ -1857,7 +2021,9 @@ export function initPoolTestScanner(root) {
         <span class="muted hint">Pad spacing: ${correctionDetails.padSpacingConsistency == null ? "-" : `${Math.round(Number(correctionDetails.padSpacingConsistency) * 100)}%`}</span>
         <span class="muted hint">Bounds: ${correctionDetails.detectedStripBounds ? escapeHtml(`${correctionDetails.detectedStripBounds.x},${correctionDetails.detectedStripBounds.y} ${correctionDetails.detectedStripBounds.w}x${correctionDetails.detectedStripBounds.h}`) : "-"}</span>
         <span class="muted hint">Pad centers: ${Array.isArray(correctionDetails.detectedPadCenters) && correctionDetails.detectedPadCenters.length ? escapeHtml(correctionDetails.detectedPadCenters.map(p => `(${p.x},${p.y})`).join(" ")) : "-"}</span>
+        <span class="muted hint">Paper LAB: ${correctionDetails.samplingPaperLab ? escapeHtml(`${Number(correctionDetails.samplingPaperLab.l).toFixed(1)}, ${Number(correctionDetails.samplingPaperLab.a).toFixed(1)}, ${Number(correctionDetails.samplingPaperLab.b).toFixed(1)}`) : "-"}</span>
       </div>
+      ${correctionDetails.samplingOverlayDataUrl ? `<figure class="sampling-overlay"><figcaption>Sampled pixels overlay</figcaption><img src="${escapeHtml(correctionDetails.samplingOverlayDataUrl)}" alt="Overlay showing detected pad boxes and sampled pixels"></figure>` : ""}
     `;
     const padRows = EASYTEST_CFG.pads.map(pad => vals.__padDebug[pad.key]).filter(Boolean).map(debug => {
       const distances = debug.distances
@@ -2181,7 +2347,11 @@ export function initPoolTestScanner(root) {
           detectedPadCenters: samplingDiagnostics?.detectedPadCenters || [],
           padSpacingConsistency: samplingDiagnostics?.padSpacingConsistency ?? null,
           padSpacingVariance: samplingDiagnostics?.padSpacingVariance ?? null,
-          detectedSegments: samplingDiagnostics?.detectedSegments || []
+          detectedSegments: samplingDiagnostics?.detectedSegments || [],
+          sampledPixels: samplingDiagnostics?.sampledPixels || {},
+          samplingPaperLab: samplingDiagnostics?.paperLab || null,
+          samplingOverlayDataUrl: samplingDiagnostics?.overlayDataUrl || null,
+          samplingWarning: samplingDiagnostics?.samplingWarning || ""
         }
       };
     });
