@@ -181,12 +181,16 @@
           <div class="preview-actions">
             <button type="button" class="btn-ghost" data-pt="btnAutoCrop">Auto-Crop Box</button>
             <button type="button" data-pt="btnUseCrop">Use Crop</button>
+            <button type="button" class="btn-ghost" data-pt="btnManualPads">Manual Pads</button>
+            <button type="button" class="btn-ghost" data-pt="btnResetManualPads" hidden>Reset Pads</button>
+            <button type="button" data-pt="btnUseManualPads" hidden>Use Manual Pads</button>
             <button type="button" class="btn-ghost" data-pt="btnCancelCrop">Cancel</button>
           </div>
         </div>
 
         <div data-pt="previewStage" class="preview-stage">
           <canvas data-pt="previewCanvas" class="preview-canvas"></canvas>
+          <div data-pt="manualPadLayer" class="manual-pad-layer" hidden></div>
 
           <div data-pt="cropBox" class="cropbox">
             <div data-pt="cropHandle" class="crophandle"></div>
@@ -194,7 +198,7 @@
         </div>
 
         <div data-pt="previewTip" class="preview-tip">
-          Tip: Make the box tall and skinny. Include all pads.
+          Tip: Make the box tall and skinny. Include all pads. Or tap Manual Pads and select pads top-to-bottom.
         </div>
       </div>
 
@@ -356,7 +360,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev22";
+    import { initPoolTestScanner } from "./scanner.js?v=dev24";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>

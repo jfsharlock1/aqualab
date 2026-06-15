@@ -390,6 +390,10 @@ export function initPoolTestScanner(root) {
     cropHandle: root.querySelector('[data-pt="cropHandle"]'),
     btnAutoCrop: root.querySelector('[data-pt="btnAutoCrop"]'),
     btnUseCrop: root.querySelector('[data-pt="btnUseCrop"]'),
+    btnManualPads: root.querySelector('[data-pt="btnManualPads"]'),
+    btnResetManualPads: root.querySelector('[data-pt="btnResetManualPads"]'),
+    btnUseManualPads: root.querySelector('[data-pt="btnUseManualPads"]'),
+    manualPadLayer: root.querySelector('[data-pt="manualPadLayer"]'),
     btnCancelCrop: root.querySelector('[data-pt="btnCancelCrop"]')
   };
 
@@ -756,12 +760,16 @@ export function initPoolTestScanner(root) {
 
   let previewImg = null;   // Image()
   let previewFit = null;   // {scale, dx, dy, iw, ih, cw, ch}
+  let manualPadMode = false;
+  let manualPadMarkers = [];
 
   function showPreview(img) {
     previewImg = img;
     if (!els.previewWrap || !els.previewCanvas || !els.previewStage || !els.cropBox) return;
 
     els.previewWrap.style.display = "block";
+
+    resetManualPadSelection(false);
 
     // Default crop box (tall/skinny)
     els.cropBox.style.left = "30%";
@@ -781,6 +789,7 @@ export function initPoolTestScanner(root) {
     if (els.previewWrap) els.previewWrap.style.display = "none";
     previewImg = null;
     previewFit = null;
+    resetManualPadSelection(false);
   }
 
   function drawPreviewCanvas() {
@@ -810,6 +819,80 @@ export function initPoolTestScanner(root) {
     previewFit = { scale, dx, dy, iw, ih, cw, ch };
   }
 
+  function previewPointToImagePixels(clientX, clientY) {
+    if (!previewFit || !els.previewStage) return null;
+    const rect = els.previewStage.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const { scale, dx, dy, iw, ih } = previewFit;
+    const imgX = (x - dx) / scale;
+    const imgY = (y - dy) / scale;
+    if (imgX < 0 || imgY < 0 || imgX > iw || imgY > ih) return null;
+    return { imageX: imgX, imageY: imgY, stageX: x, stageY: y };
+  }
+
+  function setManualPadButtons() {
+    const active = manualPadMode;
+    if (els.btnResetManualPads) els.btnResetManualPads.hidden = !active;
+    if (els.btnUseManualPads) {
+      els.btnUseManualPads.hidden = !active;
+      els.btnUseManualPads.disabled = manualPadMarkers.length !== EASYTEST_CFG.pads.length;
+    }
+    if (els.btnManualPads) els.btnManualPads.textContent = active ? "Manual Pads On" : "Manual Pads";
+    if (els.cropBox) els.cropBox.style.display = active ? "none" : "";
+    if (els.manualPadLayer) els.manualPadLayer.hidden = !active;
+  }
+
+  function resetManualPadSelection(keepMode = manualPadMode) {
+    manualPadMarkers = [];
+    manualPadMode = !!keepMode;
+    if (els.manualPadLayer) els.manualPadLayer.innerHTML = "";
+    setManualPadButtons();
+  }
+
+  function renderManualPadMarkers() {
+    if (!els.manualPadLayer || !previewFit) return;
+    els.manualPadLayer.innerHTML = manualPadMarkers.map((marker, index) => {
+      const pad = EASYTEST_CFG.pads[index];
+      const left = marker.stageX;
+      const top = marker.stageY;
+      return `<button type="button" class="manual-pad-marker" style="left:${left}px; top:${top}px" aria-label="${escapeHtml(pad?.label || `Pad ${index + 1}`)}"><span>${index + 1}</span></button>`;
+    }).join("");
+    setManualPadButtons();
+  }
+
+  function nextManualPadLabel() {
+    const pad = EASYTEST_CFG.pads[manualPadMarkers.length];
+    return pad ? `${pad.label} (${manualPadMarkers.length + 1}/7)` : "all pads";
+  }
+
+  function toggleManualPadMode() {
+    if (!previewImg) return;
+    manualPadMode = !manualPadMode;
+    if (manualPadMode) {
+      manualPadMarkers = [];
+      setStatus(`Manual pad mode: tap ${nextManualPadLabel()}, then continue top-to-bottom.`);
+    } else {
+      manualPadMarkers = [];
+      setStatus("Manual pad mode off. Adjust the crop box or re-enable manual pads.");
+    }
+    renderManualPadMarkers();
+    setManualPadButtons();
+  }
+
+  function addManualPadMarker(ev) {
+    if (!manualPadMode || !previewImg || manualPadMarkers.length >= EASYTEST_CFG.pads.length) return;
+    const point = previewPointToImagePixels(ev.clientX, ev.clientY);
+    if (!point) {
+      setStatus("Tap directly on the photo area for manual pad selection.");
+      return;
+    }
+    manualPadMarkers.push(point);
+    renderManualPadMarkers();
+    setStatus(manualPadMarkers.length === EASYTEST_CFG.pads.length
+      ? "Manual pad markers complete. Click Use Manual Pads."
+      : `Tap ${nextManualPadLabel()}.`);
+  }
   function getCropRectInImagePixels() {
     if (!previewFit || !els.cropBox || !els.previewStage) return null;
 
@@ -848,6 +931,139 @@ export function initPoolTestScanner(root) {
     };
   }
 
+  function medianFromSorted(vals) {
+    const a = vals.slice().sort((p, q) => p - q);
+    return a[Math.floor(a.length / 2)] ?? 0;
+  }
+
+  function sampleManualPadRegion(ctx, marker) {
+    const size = 15;
+    const half = Math.floor(size / 2);
+    const cx = Math.round(marker.imageX);
+    const cy = Math.round(marker.imageY);
+    const sx = clampNumber(cx - half, 0, Math.max(0, ctx.canvas.width - size));
+    const sy = clampNumber(cy - half, 0, Math.max(0, ctx.canvas.height - size));
+    const sw = Math.min(size, ctx.canvas.width - sx);
+    const sh = Math.min(size, ctx.canvas.height - sy);
+    const imgData = ctx.getImageData(sx, sy, sw, sh).data;
+    const rs = [], gs = [], bs = [];
+    const points = [];
+
+    for (let y = 0; y < sh; y++) {
+      for (let x = 0; x < sw; x++) {
+        const idx = (y * sw + x) * 4;
+        const r = imgData[idx];
+        const g = imgData[idx + 1];
+        const b = imgData[idx + 2];
+        rs.push(r / whiteBalance.r);
+        gs.push(g / whiteBalance.g);
+        bs.push(b / whiteBalance.b);
+        points.push({ x: sx + x, y: sy + y, r, g, b });
+      }
+    }
+
+    const mr = medianFromSorted(rs);
+    const mg = medianFromSorted(gs);
+    const mb = medianFromSorted(bs);
+    const vr = medianFromSorted(rs.map(v => Math.abs(v - mr)));
+    const vg = medianFromSorted(gs.map(v => Math.abs(v - mg)));
+    const vb = medianFromSorted(bs.map(v => Math.abs(v - mb)));
+
+    return {
+      r: mr,
+      g: mg,
+      b: mb,
+      __var: (vr + vg + vb) / 3,
+      __manualSample: {
+        x: sx,
+        y: sy,
+        w: sw,
+        h: sh,
+        centerX: cx,
+        centerY: cy,
+        points
+      }
+    };
+  }
+
+  function buildManualSamplingOverlay(ctx, padColors) {
+    const diagnostics = {
+      detectedSegments: EASYTEST_CFG.pads.map(pad => {
+        const sample = padColors[pad.key]?.__manualSample;
+        return sample ? { start: sample.y, end: sample.y + sample.h, x1: sample.x, x2: sample.x + sample.w } : null;
+      }).filter(Boolean),
+      detectedPadCenters: EASYTEST_CFG.pads.map(pad => {
+        const sample = padColors[pad.key]?.__manualSample;
+        return sample ? { x: sample.centerX, y: sample.centerY } : null;
+      }).filter(Boolean),
+      sampledPixels: Object.fromEntries(EASYTEST_CFG.pads.map(pad => [pad.key, padColors[pad.key]?.__manualSample?.points || []]))
+    };
+    return buildSamplingDebugOverlay(ctx, diagnostics);
+  }
+
+  function analyzeFromManualPads() {
+    if (!previewImg || manualPadMarkers.length !== EASYTEST_CFG.pads.length) {
+      setStatus("Select all 7 manual pad markers first.");
+      return null;
+    }
+
+    const iw = previewImg.naturalWidth || previewImg.width;
+    const ih = previewImg.naturalHeight || previewImg.height;
+    const off = document.createElement("canvas");
+    off.width = iw;
+    off.height = ih;
+    const ctx = off.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(previewImg, 0, 0, iw, ih);
+
+    const padColors = {};
+    EASYTEST_CFG.pads.forEach((pad, index) => {
+      padColors[pad.key] = sampleManualPadRegion(ctx, manualPadMarkers[index]);
+    });
+
+    const avgRgb = averageRgbList(Object.values(padColors)) || { r: 0, g: 0, b: 0 };
+    padColors.__avg = avgRgb;
+    Object.defineProperty(padColors, "__samplingDiagnostics", {
+      enumerable: false,
+      value: {
+        detectionMethod: "manual-markers",
+        manualSelection: true,
+        detectedPadCenters: manualPadMarkers.map(marker => ({ x: Math.round(marker.imageX), y: Math.round(marker.imageY) })),
+        padSpacingConsistency: null,
+        sampledPixels: Object.fromEntries(EASYTEST_CFG.pads.map(pad => [pad.key, padColors[pad.key]?.__manualSample?.points || []])),
+        overlayDataUrl: buildManualSamplingOverlay(ctx, padColors)
+      }
+    });
+
+    const neutralReference = sampleNeutralReference(ctx);
+    const scanQuality = evaluateScanQuality(ctx, padColors, avgRgb, neutralReference, null);
+    if ((scanQuality.details.whiteBalanceSpread || 0) > 0.55) {
+      scanQuality.score = Math.min(100, scanQuality.score + 18);
+      scanQuality.warnings = scanQuality.warnings.filter(warning => !/White balance looks unstable/i.test(warning));
+      scanQuality.label = scanQuality.score >= 82 ? "High" : scanQuality.score >= 62 ? "Medium" : "Low";
+    }
+    scanQuality.details.manualSelection = true;
+    scanQuality.details.frameCount = 1;
+    scanQuality.details.detectedPadCenters = padColors.__samplingDiagnostics.detectedPadCenters;
+    scanQuality.details.samplingOverlayDataUrl = padColors.__samplingDiagnostics.overlayDataUrl;
+    scanQuality.details.manualSampleRegion = "15x15 median RGB centered on each marker";
+    scanQuality.warnings = scanQuality.warnings.filter(warning => !/Pad spacing|strip angle|Strip is strongly tilted|Could not determine strip angle/i.test(warning));
+
+    const vals = rgbToChemistryEasyTest(padColors, scanQuality, neutralReference);
+    vals.__manualPadSelection = true;
+    vals.__scanQuality.details.manualSelection = true;
+    vals.__scanQuality.details.samplingOverlayDataUrl = padColors.__samplingDiagnostics.overlayDataUrl;
+    vals.__scanQuality.details.detectedPadCenters = padColors.__samplingDiagnostics.detectedPadCenters;
+    lastVals = vals;
+    const sanity = runSanityCheck(vals);
+
+    renderBars(vals);
+    renderSanityCheck(sanity);
+    renderRecs(vals);
+    renderScanDiagnostics(vals);
+    setStatus(`Manual pad scan | 15x15 median samples | quality ${scanQuality.score}/100`);
+    hidePreview();
+    return vals;
+  }
   function analyzeFromPreviewCrop() {
     const r = getCropRectInImagePixels();
     if (!r || !previewImg) {
@@ -2832,6 +3048,22 @@ export function initPoolTestScanner(root) {
   els.btnUseCrop?.addEventListener("click", () => {
     const vals = analyzeFromPreviewCrop();
     if (vals) recordReading(vals);
+  });
+
+  els.btnManualPads?.addEventListener("click", toggleManualPadMode);
+  els.btnResetManualPads?.addEventListener("click", () => {
+    resetManualPadSelection(true);
+    setStatus(`Manual pad mode: tap ${nextManualPadLabel()}, then continue top-to-bottom.`);
+  });
+  els.btnUseManualPads?.addEventListener("click", () => {
+    const vals = analyzeFromManualPads();
+    if (vals) recordReading(vals);
+  });
+  els.previewStage?.addEventListener("click", (ev) => {
+    if (!manualPadMode) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    addManualPadMarker(ev);
   });
 
   els.btnCancelCrop?.addEventListener("click", () => {

@@ -1209,3 +1209,30 @@ body {
   border: 1px solid rgba(125,154,176,0.26);
   background: #fff;
 }
+
+.manual-pad-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.manual-pad-marker {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 2px solid #facc15;
+  background: rgba(15,23,42,0.72);
+  color: #fef3c7;
+  font-weight: 800;
+  font-size: 0.78rem;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.38), 0 0 18px rgba(250,204,21,0.34);
+  pointer-events: none;
+}
+
+.manual-pad-marker span {
+  display: block;
+  line-height: 24px;
+}
