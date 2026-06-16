@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=15" />
+  <link rel="stylesheet" href="pooltest.css?v=16" />
 </head>
 
 <body>
@@ -183,6 +183,7 @@
             <button type="button" data-pt="btnUseCrop">Use Crop</button>
             <button type="button" class="btn-ghost" data-pt="btnManualPads">Manual Pads</button>
             <button type="button" class="btn-ghost" data-pt="btnResetManualPads" hidden>Reset Pads</button>
+            <button type="button" class="btn-ghost" data-pt="btnUndoManualPad" hidden>Undo Last Pad</button>
             <button type="button" data-pt="btnUseManualPads" hidden>Use Manual Pads</button>
             <button type="button" class="btn-ghost" data-pt="btnCancelCrop">Cancel</button>
           </div>
@@ -360,7 +361,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev25";
+    import { initPoolTestScanner } from "./scanner.js?v=dev26";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>

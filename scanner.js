@@ -392,6 +392,7 @@ export function initPoolTestScanner(root) {
     btnUseCrop: root.querySelector('[data-pt="btnUseCrop"]'),
     btnManualPads: root.querySelector('[data-pt="btnManualPads"]'),
     btnResetManualPads: root.querySelector('[data-pt="btnResetManualPads"]'),
+    btnUndoManualPad: root.querySelector('[data-pt="btnUndoManualPad"]'),
     btnUseManualPads: root.querySelector('[data-pt="btnUseManualPads"]'),
     manualPadLayer: root.querySelector('[data-pt="manualPadLayer"]'),
     btnCancelCrop: root.querySelector('[data-pt="btnCancelCrop"]')
@@ -834,6 +835,10 @@ export function initPoolTestScanner(root) {
   function setManualPadButtons() {
     const active = manualPadMode;
     if (els.btnResetManualPads) els.btnResetManualPads.hidden = !active;
+    if (els.btnUndoManualPad) {
+      els.btnUndoManualPad.hidden = !active;
+      els.btnUndoManualPad.disabled = !active || manualPadMarkers.length === 0;
+    }
     if (els.btnUseManualPads) {
       els.btnUseManualPads.hidden = !active;
       els.btnUseManualPads.disabled = manualPadMarkers.length !== EASYTEST_CFG.pads.length;
@@ -856,7 +861,7 @@ export function initPoolTestScanner(root) {
       const pad = EASYTEST_CFG.pads[index];
       const left = marker.stageX;
       const top = marker.stageY;
-      return `<button type="button" class="manual-pad-marker" style="left:${left}px; top:${top}px" aria-label="${escapeHtml(pad?.label || `Pad ${index + 1}`)}"><span>${index + 1}</span></button>`;
+      return `<button type="button" class="manual-pad-marker" data-index="${index}" style="left:${left}px; top:${top}px" aria-label="Remove ${escapeHtml(pad?.label || `Pad ${index + 1}`)} marker"><span>${index + 1}</span></button>`;
     }).join("");
     setManualPadButtons();
   }
@@ -890,8 +895,17 @@ export function initPoolTestScanner(root) {
     manualPadMarkers.push(point);
     renderManualPadMarkers();
     setStatus(manualPadMarkers.length === EASYTEST_CFG.pads.length
-      ? "Manual pad markers complete. Click Use Manual Pads."
+      ? "Manual pad markers complete. Click Use Manual Pads. Tap a marker or use Undo Last Pad to adjust."
       : `Tap ${nextManualPadLabel()}.`);
+  }
+
+  function removeManualPadMarker(index = manualPadMarkers.length - 1) {
+    if (!manualPadMode || !manualPadMarkers.length) return;
+    const removeIndex = Math.max(0, Math.min(manualPadMarkers.length - 1, Number(index)));
+    const pad = EASYTEST_CFG.pads[removeIndex];
+    manualPadMarkers.splice(removeIndex, 1);
+    renderManualPadMarkers();
+    setStatus(`${pad?.label || "Pad"} marker removed. Tap ${nextManualPadLabel()}.`);
   }
   function getCropRectInImagePixels() {
     if (!previewFit || !els.cropBox || !els.previewStage) return null;
@@ -1993,8 +2007,19 @@ export function initPoolTestScanner(root) {
     const result = {
       __scanQuality: scanQuality || { score: 0, label: "Low", warnings: ["No scan quality data available."] },
       __padDebug: {},
-      __warnings: []
+      __warnings: [],
+      __padRanges: {}
     };
+
+    function swatchIndexForValue(pad, value) {
+      return pad?.swatches?.findIndex(swatch => String(swatch.value) === String(value)) ?? -1;
+    }
+
+    function formatPadRange(a, b) {
+      const min = Math.min(Number(a), Number(b));
+      const max = Math.max(Number(a), Number(b));
+      return Number.isFinite(min) && Number.isFinite(max) ? `${min}-${max}` : `${a}-${b}`;
+    }
 
     function valueFromPad(key, fallback) {
       const rgb = padColors[key];
@@ -2007,12 +2032,36 @@ export function initPoolTestScanner(root) {
         const distanceScore = clamp01(1 - pick.bestD / 18);
         const separationScore = clamp01(separation / 8);
         const qualityScore = clamp01((scanQuality?.score ?? 0) / 100);
-        const varianceScore = 1 / (1 + (rgb.__var || 0) / 14);
+        const variance = rgb.__var || 0;
+        const varianceScore = 1 / (1 + variance / 14);
         const manualSelection = !!scanQuality?.details?.manualSelection;
         const colorQualityScore = clamp01(scanQuality?.details?.colorConfidence ?? qualityScore);
-        const confidence = manualSelection
-          ? clamp01(separationScore * 0.52 + varianceScore * 0.28 + colorQualityScore * 0.20)
+        const bestIndex = swatchIndexForValue(pad, pick.best?.value);
+        const secondIndex = swatchIndexForValue(pad, pick.second?.value);
+        const adjacentMatch = bestIndex >= 0 && secondIndex >= 0 && Math.abs(bestIndex - secondIndex) === 1;
+        const smallGap = separation < 2.2;
+        const verySmallGap = separation < 0.85;
+        const sampleQualityPoor = variance > 18 || colorQualityScore < 0.55;
+        const farFromChart = pick.bestD > (manualSelection ? 18 : 16);
+        const usableAmbiguous = manualSelection && smallGap && adjacentMatch && !sampleQualityPoor && !farFromChart;
+        const severeAmbiguity = smallGap && !adjacentMatch;
+        const trueLowConfidence = sampleQualityPoor || farFromChart || (manualSelection ? severeAmbiguity && verySmallGap : false);
+        let confidence = manualSelection
+          ? clamp01(distanceScore * 0.28 + varianceScore * 0.28 + colorQualityScore * 0.34 + Math.min(separationScore, 0.75) * 0.10)
           : clamp01(distanceScore * 0.45 + separationScore * 0.30 + qualityScore * 0.15 + varianceScore * 0.10);
+        if (usableAmbiguous) confidence = Math.max(confidence, Math.min(0.78, colorQualityScore * 0.58 + varianceScore * 0.42));
+        if (trueLowConfidence) confidence = Math.min(confidence, 0.49);
+        const topMatches = pick.distances.slice(0, 3).map(item => ({
+          value: item.value,
+          deltaE: Number(item.deltaE.toFixed(2)),
+          deltaE76: Number(item.deltaE76.toFixed(2))
+        }));
+        const reasonCode = usableAmbiguous
+          ? "AMBIGUOUS_ADJACENT_MATCH"
+          : (smallGap ? "LOW_DELTA_E_SEPARATION" : null);
+        const ambiguityStatus = usableAmbiguous
+          ? `Ambiguous between ${formatPadRange(pick.best.value, pick.second.value)}`
+          : (reasonCode === "LOW_DELTA_E_SEPARATION" ? "Ambiguous non-adjacent match" : "Best match clear");
         const debug = {
           key,
           label: pad.label,
@@ -2035,9 +2084,17 @@ export function initPoolTestScanner(root) {
           bestDeltaE: Number(pick.bestD.toFixed(2)),
           secondValue: pick.second ? pick.second.value : null,
           secondDeltaE: Number((pick.secondD || Infinity).toFixed(2)),
+          thirdValue: topMatches[2]?.value ?? null,
+          thirdDeltaE: topMatches[2]?.deltaE ?? null,
+          deltaEGap: Number(separation.toFixed(2)),
           confidence: Number(confidence.toFixed(2)),
           confidenceLabel: confidenceLabel(confidence),
-          variance: Number((rgb.__var || 0).toFixed(2)),
+          status: ambiguityStatus,
+          reasonCode,
+          usableAmbiguous,
+          trueLowConfidence,
+          adjacentMatch,
+          variance: Number(variance.toFixed(2)),
           confidenceInputs: manualSelection
             ? {
                 deltaESeparationScore: Number(separationScore.toFixed(2)),
@@ -2045,6 +2102,7 @@ export function initPoolTestScanner(root) {
                 colorQualityScore: Number(colorQualityScore.toFixed(2))
               }
             : null,
+          topMatches,
           distances: pick.distances.map(item => ({
             value: item.value,
             deltaE: Number(item.deltaE.toFixed(2)),
@@ -2060,7 +2118,11 @@ export function initPoolTestScanner(root) {
           variance: rgb.__var ?? 0,
           separation,
           confidence,
-          confidenceLabel: debug.confidenceLabel
+          confidenceLabel: debug.confidenceLabel,
+          usableAmbiguous,
+          trueLowConfidence,
+          adjacentMatch,
+          reasonCode
         };
       }
       return { value: fallback(), bestD: Infinity, secondValue: null, secondD: Infinity, variance: 999 };
@@ -2070,10 +2132,7 @@ export function initPoolTestScanner(root) {
       const cfg = PAD_STABILITY[key];
       if (!cfg) return { value: pick.value, range: null, confidence: pick.confidence ?? 1 };
 
-      const ambiguous = (
-        pick.secondValue != null &&
-        ((pick.secondD - pick.bestD) < 2.2 || (pick.confidence ?? 0) < 0.58)
-      ) || (pick.variance > 10);
+      const ambiguous = !!pick.usableAmbiguous || (!pick.trueLowConfidence && pick.secondValue != null && (pick.secondD - pick.bestD) < 2.2) || (pick.variance > 18);
 
       let value = pick.value;
       let range = null;
@@ -2152,11 +2211,23 @@ export function initPoolTestScanner(root) {
     result.__cyaConfidence = cyaStab.confidence;
 
     Object.entries(result.__padDebug).forEach(([key, debug]) => {
-      if (debug.confidenceLabel === "Low") {
-        result.__warnings.push(`${debug.label} result has low confidence. Rescan under improved lighting.`);
+      if (debug.usableAmbiguous && debug.secondValue != null) {
+        const a = Math.min(Number(debug.bestValue), Number(debug.secondValue));
+        const b = Math.max(Number(debug.bestValue), Number(debug.secondValue));
+        if (Number.isFinite(a) && Number.isFinite(b)) result.__padRanges[key] = [a, b];
+      }
+      if (debug.trueLowConfidence) {
+        result.__warnings.push(`${debug.label} sample quality is low. Retest before dosing from this value.`);
       }
     });
-    if (scanQuality?.warnings?.length) result.__warnings.push(...scanQuality.warnings);
+    if (Object.values(result.__padDebug).some(debug => debug.usableAmbiguous)) {
+      result.__warnings.push("Manual scan complete. Some values are approximate.");
+    }
+    const scanWarnings = scanQuality?.warnings?.filter(warning => {
+      if (!scanQuality?.details?.manualSelection) return true;
+      return !/Pad spacing|strip angle|geometry|correction|detection|Retake the photo straight-on|neutral strip\/background/i.test(warning);
+    }) || [];
+    if (scanWarnings.length) result.__warnings.push(...scanWarnings);
 
     // Apply calibration offsets
     result.ph = Number((result.ph + (calOffsets.ph || 0)).toFixed(2));
@@ -2192,6 +2263,12 @@ export function initPoolTestScanner(root) {
     el.textContent = text;
   }
 
+  function resultRangeText(vals, key, value, unit = "") {
+    const range = vals?.__padRanges?.[key];
+    const text = Array.isArray(range) ? `${range[0]}-${range[1]}` : `${value}`;
+    return unit ? `${text} ${unit}` : text;
+  }
+
   function renderBars(vals) {
     els.barPh && (els.barPh.style.width = pct(vals.ph, 6.0, 9.0) + "%");
     els.barFCl && (els.barFCl.style.width = pct(vals.freeCl, 0, 10) + "%");
@@ -2201,31 +2278,34 @@ export function initPoolTestScanner(root) {
     els.barAlk && (els.barAlk.style.width = pct(vals.alk, 0, 360) + "%");
     els.barCya && (els.barCya.style.width = pct(vals.cya, 0, 240) + "%");
 
-    const phText = Array.isArray(vals.__phRange) ? `${vals.__phRange[0]}–${vals.__phRange[1]}` : `${vals.ph}`;
+    const phText = Array.isArray(vals.__phRange) ? `${vals.__phRange[0]}-${vals.__phRange[1]}` : resultRangeText(vals, "ph", vals.ph);
     if (vals.ph < 7.2) tag(els.tagPh, "warn", `Low (${phText})`);
     else if (vals.ph > 7.8) tag(els.tagPh, "warn", `High (${phText})`);
     else tag(els.tagPh, "ok", `Good (${phText})`);
 
-    if (vals.freeCl < 1) tag(els.tagFCl, "warn", `Low (${vals.freeCl} ppm)`);
-    else if (vals.freeCl > 3) tag(els.tagFCl, "warn", `High (${vals.freeCl} ppm)`);
-    else tag(els.tagFCl, "ok", `Good (${vals.freeCl} ppm)`);
+    const freeClText = resultRangeText(vals, "freeCl", vals.freeCl, "ppm");
+    if (vals.freeCl < 1) tag(els.tagFCl, "warn", `Low (${freeClText})`);
+    else if (vals.freeCl > 3) tag(els.tagFCl, "warn", `High (${freeClText})`);
+    else tag(els.tagFCl, "ok", `Good (${freeClText})`);
 
-    tag(els.tagTCl, "ok", `${vals.totalCl} ppm`);
+    tag(els.tagTCl, "ok", resultRangeText(vals, "totalCl", vals.totalCl, "ppm"));
 
-    if (vals.bromine < 2) tag(els.tagBr, "warn", `Low (${vals.bromine} ppm)`);
-    else if (vals.bromine > 6) tag(els.tagBr, "warn", `High (${vals.bromine} ppm)`);
-    else tag(els.tagBr, "ok", `Good (${vals.bromine} ppm)`);
+    const bromineText = resultRangeText(vals, "bromine", vals.bromine, "ppm");
+    if (vals.bromine < 2) tag(els.tagBr, "warn", `Low (${bromineText})`);
+    else if (vals.bromine > 6) tag(els.tagBr, "warn", `High (${bromineText})`);
+    else tag(els.tagBr, "ok", `Good (${bromineText})`);
 
-    if (vals.hardness < 150) tag(els.tagHard, "warn", `Low (${vals.hardness} ppm)`);
-    else if (vals.hardness > 300) tag(els.tagHard, "warn", `High (${vals.hardness} ppm)`);
-    else tag(els.tagHard, "ok", `Good (${vals.hardness} ppm)`);
+    const hardnessText = resultRangeText(vals, "hardness", vals.hardness, "ppm");
+    if (vals.hardness < 150) tag(els.tagHard, "warn", `Low (${hardnessText})`);
+    else if (vals.hardness > 300) tag(els.tagHard, "warn", `High (${hardnessText})`);
+    else tag(els.tagHard, "ok", `Good (${hardnessText})`);
 
-    const alkText = Array.isArray(vals.__alkRange) ? `${vals.__alkRange[0]}–${vals.__alkRange[1]} ppm` : `${vals.alk} ppm`;
+    const alkText = Array.isArray(vals.__alkRange) ? `${vals.__alkRange[0]}-${vals.__alkRange[1]} ppm` : resultRangeText(vals, "alk", vals.alk, "ppm");
     if (vals.alk < 80) tag(els.tagAlk, "warn", `Low (${alkText})`);
     else if (vals.alk > 120) tag(els.tagAlk, "warn", `High (${alkText})`);
     else tag(els.tagAlk, "ok", `Good (${alkText})`);
 
-    const cyaText = Array.isArray(vals.__cyaRange) ? `${vals.__cyaRange[0]}–${vals.__cyaRange[1]} ppm` : `${vals.cya} ppm`;
+    const cyaText = Array.isArray(vals.__cyaRange) ? `${vals.__cyaRange[0]}-${vals.__cyaRange[1]} ppm` : resultRangeText(vals, "cya", vals.cya, "ppm");
     if (vals.cya < 30) tag(els.tagCya, "warn", `Low (${cyaText})`);
     else if (vals.cya > 100) tag(els.tagCya, "warn", `High (${cyaText})`);
     else tag(els.tagCya, "ok", `Good (${cyaText})`);
@@ -2273,9 +2353,10 @@ export function initPoolTestScanner(root) {
       ${correctionDetails.samplingOverlayDataUrl ? `<figure class="sampling-overlay"><figcaption>${correctionDetails.manualSelection ? "Manual pad markers and sampled pixels" : "Sampled pixels overlay"}</figcaption><img src="${escapeHtml(correctionDetails.samplingOverlayDataUrl)}" alt="Overlay showing marked pad boxes and sampled pixels"></figure>` : ""}
     `;
     const padRows = EASYTEST_CFG.pads.map(pad => vals.__padDebug[pad.key]).filter(Boolean).map(debug => {
-      const distances = debug.distances
-        .map(item => `${escapeHtml(item.value)}: ${item.deltaE}`)
-        .join(", ");
+      const topMatches = (debug.topMatches || debug.distances?.slice(0, 3) || [])
+        .map((item, index) => `${index + 1}. ${item.value}: ${item.deltaE}`)
+        .join(" | ");
+      const status = debug.status || (debug.reasonCode === "LOW_DELTA_E_SEPARATION" ? "Ambiguous" : "Best match clear");
       return `
         <tr>
           <td>${escapeHtml(debug.label)}</td>
@@ -2288,7 +2369,7 @@ export function initPoolTestScanner(root) {
           <td>${escapeHtml(debug.bestValue)} (${escapeHtml(debug.bestDeltaE)})</td>
           <td>${escapeHtml(debug.secondValue ?? "-")} (${escapeHtml(debug.secondDeltaE ?? "-")})</td>
           <td>${escapeHtml(debug.confidenceLabel)} (${Math.round(debug.confidence * 100)}%)</td>
-          <td>${escapeHtml(distances)}</td>
+          <td>${escapeHtml(topMatches)}<br><span class="muted hint">Gap: ${escapeHtml(debug.deltaEGap ?? "-")} | ${escapeHtml(status)}</span></td>
         </tr>
       `;
     }).join("");
@@ -2312,7 +2393,7 @@ export function initPoolTestScanner(root) {
               <th>Best Delta-E</th>
               <th>Second</th>
               <th>Confidence</th>
-              <th>All distances</th>
+              <th>Top Delta-E matches</th>
             </tr>
           </thead>
           <tbody>${padRows}</tbody>
@@ -2495,12 +2576,19 @@ export function initPoolTestScanner(root) {
     if (!els.recs) return;
     const recs = [];
     const sanity = vals.__sanityCheck || lastSanityCheck || runSanityCheck(vals);
+    const hasTrueLowPads = Object.values(vals.__padDebug || {}).some(debug => debug.trueLowConfidence);
     const sanityMessages = (sanity?.checks || [])
-      .filter(check => check.severity !== "Info" || check.adjustedConfidence === "Low")
+      .filter(check => {
+        if (check.reasonCodes?.includes("AMBIGUOUS_ADJACENT_MATCH") && check.adjustedConfidence !== "Low") return false;
+        return severityClass(check.severity) === "bad" || check.adjustedConfidence === "Low";
+      })
       .map(check => `${check.message} ${check.recommendedAction}`);
-    const warnings = Array.from(new Set([...(vals.__warnings || []), ...chemistrySanityWarnings(vals), ...sanityMessages]));
+    const chemistryWarnings = hasTrueLowPads ? chemistrySanityWarnings(vals) : chemistrySanityWarnings(vals).filter(message => !/low confidence/i.test(message));
+    const warnings = Array.from(new Set([...(vals.__warnings || []), ...chemistryWarnings, ...sanityMessages]));
 
-    warnings.forEach(warning => recs.push(`Scan warning: ${warning}`));
+    warnings.forEach(warning => {
+      recs.push(warning.startsWith("Manual scan complete") ? warning : `Scan warning: ${warning}`);
+    });
 
     if (!poolGallons) {
       recs.push("Enter your pool size above (or manual gallons) so the app can calculate real chemical amounts.");
@@ -2531,7 +2619,7 @@ export function initPoolTestScanner(root) {
       const deltaCl = Math.max(0, targets.freeCl - vals.freeCl);
       const ozCl = deltaCl * 10.7 * factor10k;
       const dose = formatWeightOz(ozCl);
-      recs.push(`Free chlorine is low (${vals.freeCl} ppm). Target is about ${targets.freeCl} ppm. ${dose ? `Add about ${dose} of 12% liquid chlorine, then circulate and retest after 30–60 minutes.` : `Add liquid chlorine per the dosing chart on your product label.`}`);
+      recs.push(`Free chlorine is low (${vals.freeCl} ppm). Target is about ${targets.freeCl} ppm. ${dose && highConfidence("freeCl") ? `Add about ${dose} of 12% liquid chlorine, then circulate and retest after 30-60 minutes.` : `Confirm free chlorine before dosing from this reading.`}`);
     } else if (vals.freeCl > 3) {
       recs.push(`Free chlorine is high (${vals.freeCl} ppm). Keep the pump running and avoid adding more chlorine so it can drift down.`);
     } else recs.push(`Free chlorine is in a normal range (${vals.freeCl} ppm).`);
@@ -2541,7 +2629,7 @@ export function initPoolTestScanner(root) {
       const lbsBicarb = (deltaAlk / 10) * 1.5 * factor10k;
       const ozBicarb = lbsBicarb * 16;
       const dose = formatWeightOz(ozBicarb);
-      recs.push(`Total alkalinity is low (${vals.alk} ppm). Target is ~${targets.alk} ppm. ${dose ? `Add about ${dose} of alkalinity increaser (baking soda) in portions with the pump running.` : `Use an alkalinity increaser according to the package chart for your pool gallons.`}`);
+      recs.push(`Total alkalinity is low (${vals.alk} ppm). Target is ~${targets.alk} ppm. ${dose && highConfidence("alk") ? `Add about ${dose} of alkalinity increaser (baking soda) in portions with the pump running.` : `Confirm alkalinity before making a large adjustment.`}`);
     } else if (vals.alk > 120) recs.push(`Total alkalinity is high (${vals.alk} ppm). Usually lowered gradually with pH reducer and/or partial water replacement.`);
     else recs.push(`Total alkalinity is in range (${vals.alk} ppm).`);
 
@@ -3086,6 +3174,7 @@ export function initPoolTestScanner(root) {
     resetManualPadSelection(true);
     setStatus(`Manual pad mode: tap ${nextManualPadLabel()}, then continue top-to-bottom.`);
   });
+  els.btnUndoManualPad?.addEventListener("click", () => removeManualPadMarker());
   els.btnUseManualPads?.addEventListener("click", () => {
     const vals = analyzeFromManualPads();
     if (vals) recordReading(vals);
@@ -3094,6 +3183,11 @@ export function initPoolTestScanner(root) {
     if (!manualPadMode) return;
     ev.preventDefault();
     ev.stopPropagation();
+    const markerButton = ev.target.closest?.(".manual-pad-marker");
+    if (markerButton) {
+      removeManualPadMarker(markerButton.dataset.index);
+      return;
+    }
     addManualPadMarker(ev);
   });
 

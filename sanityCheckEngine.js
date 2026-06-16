@@ -206,10 +206,16 @@ function buildMessage(check, context) {
       action: "Move to indirect daylight, avoid glare, and rescan."
     };
   }
+  if (check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")) {
+    return {
+      message: `${check.parameter} is between nearby chart colors, so this result is approximate.`,
+      action: "Use the displayed range for cautious guidance and avoid large exact-dose changes from this value alone."
+    };
+  }
   if (check.reasonCodes.includes("LOW_DELTA_E_SEPARATION")) {
     return {
-      message: `${check.parameter} is close to another chart color, so the match is ambiguous.`,
-      action: "Rescan with neutral lighting or confirm before making a large chemical adjustment."
+      message: `${check.parameter} is close to a non-adjacent chart color, so the match is uncertain.`,
+      action: "Retest or confirm before making a large chemical adjustment."
     };
   }
   return {
@@ -233,7 +239,15 @@ function evaluatePadEvidence(vals, key, check, scanQuality) {
     const best = toNumber(debug.bestDeltaE);
     const second = toNumber(debug.secondDeltaE);
     const variance = toNumber(debug.variance);
-    if (best != null && second != null && second - best < 2.2) {
+    if (debug.usableAmbiguous || debug.reasonCode === "AMBIGUOUS_ADJACENT_MATCH") {
+      applyAdjustment(check, {
+        code: "AMBIGUOUS_ADJACENT_MATCH",
+        penalty: 0.04,
+        severity: "Info",
+        status: "Approximate range",
+        note: `Best Delta-E ${best}; second-best Delta-E ${second}; gap ${debug.deltaEGap ?? Math.round((second - best) * 100) / 100}.`
+      });
+    } else if (best != null && second != null && second - best < 2.2) {
       applyAdjustment(check, {
         code: "LOW_DELTA_E_SEPARATION",
         penalty: 0.16,
@@ -252,7 +266,9 @@ function evaluatePadEvidence(vals, key, check, scanQuality) {
       });
     }
   }
-  if ((scanQuality?.score ?? 100) < 62) {
+  const manualSelection = !!scanQuality?.details?.manualSelection;
+  const colorConfidence = Number(scanQuality?.details?.colorConfidence ?? 1);
+  if ((scanQuality?.score ?? 100) < 62 && (!manualSelection || colorConfidence < 0.55)) {
     applyAdjustment(check, {
       code: "LOW_IMAGE_QUALITY",
       penalty: 0.18,
@@ -450,7 +466,7 @@ function sortedFindings(checks) {
 }
 
 function groupedLowConfidenceFinding(checks) {
-  const low = checks.filter(check => check.adjustedConfidence === "Low" && check.key !== "waterAppearance");
+  const low = checks.filter(check => check.adjustedConfidence === "Low" && check.key !== "waterAppearance" && !check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH"));
   if (low.length < 3) return null;
   return {
     parameter: "Scan Confidence",
@@ -472,15 +488,29 @@ function groupedLowConfidenceFinding(checks) {
 }
 
 function buildSummaryState(score, scoreConfidence, findings, scanQuality) {
-  if ((scanQuality?.score ?? 100) < 40) return "Unknown / Failed Scan";
-  if (scoreConfidence === "Low") return "Retest Recommended / Low Confidence";
+  const manualSelection = !!scanQuality?.details?.manualSelection;
+  const colorConfidence = Number(scanQuality?.details?.colorConfidence ?? 0);
+  const geometryConfidence = Number(scanQuality?.details?.geometryConfidence ?? 0);
+  const trueLowFindings = findings.filter(check => check.adjustedConfidence === "Low" && !check.reasonCodes?.includes("AMBIGUOUS_ADJACENT_MATCH"));
+  if ((scanQuality?.score ?? 100) < 40 && (!manualSelection || colorConfidence < 0.55)) return "Unknown / Failed Scan";
+  if (scoreConfidence === "Low" && !(manualSelection && geometryConfidence >= 0.99 && colorConfidence >= 0.75 && trueLowFindings.length === 0)) return "Retest Recommended / Low Confidence";
   const needsAttention = findings.some(check => severityRank(check.severity) >= severityRank("Warning")) || score < 80;
   if (needsAttention) return scoreConfidence === "High" ? "Needs Attention / High Confidence" : "Needs Attention / Medium Confidence";
   return scoreConfidence === "High" ? "Healthy / High Confidence" : "Healthy / Medium Confidence";
 }
 
-function summaryCopy(summaryState, score, context) {
+function summaryCopy(summaryState, score, context, scanQuality = null) {
   const appearance = APPEARANCE_LABELS[context?.waterAppearance] || "Not provided";
+  const manualSelection = !!scanQuality?.details?.manualSelection;
+  const colorConfidence = Number(scanQuality?.details?.colorConfidence ?? 0);
+  const geometryConfidence = Number(scanQuality?.details?.geometryConfidence ?? 0);
+  if (manualSelection && geometryConfidence >= 0.99 && colorConfidence >= 0.75 && summaryState !== "Unknown / Failed Scan" && summaryState !== "Retest Recommended / Low Confidence") {
+    return {
+      summary: "Manual scan complete. Some values are approximate.",
+      nextAction: "Use any displayed ranges cautiously and retest before large chemical changes.",
+      retestTiming: "Normal schedule, or sooner if water appearance changes"
+    };
+  }
   if (summaryState === "Unknown / Failed Scan") {
     return {
       summary: "Scan quality was too low to make a reliable pool health call.",
@@ -546,11 +576,17 @@ export function runStripSanityCheck(vals, context = {}) {
   const avgConfidence = checks.length
     ? checks.reduce((sum, check) => sum + check.adjustedScore, 0) / checks.length
     : 0.5;
-  const scoreConfidence = confidenceLabel(avgConfidence);
+  const manualSelection = !!scanQuality?.details?.manualSelection;
+  const colorConfidence = Number(scanQuality?.details?.colorConfidence ?? 0);
+  const geometryConfidence = Number(scanQuality?.details?.geometryConfidence ?? 0);
+  const trueLowCount = checks.filter(check => check.adjustedConfidence === "Low" && !check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")).length;
+  const ambiguousCount = checks.filter(check => check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")).length;
+  let scoreConfidence = confidenceLabel(avgConfidence);
+  if (manualSelection && geometryConfidence >= 0.99 && colorConfidence >= 0.75 && trueLowCount === 0 && scoreConfidence === "Low") scoreConfidence = ambiguousCount > 2 ? "Medium" : "High";
   const reasonCodes = Array.from(new Set(checks.flatMap(check => check.reasonCodes)));
   const asksForContext = reasonCodes.includes("UNLIKELY_HISTORY_JUMP") && !recentActions.length;
   const summaryState = buildSummaryState(Math.round(health.score), scoreConfidence, allFindings, scanQuality);
-  const summary = summaryCopy(summaryState, Math.round(health.score), context);
+  const summary = summaryCopy(summaryState, Math.round(health.score), context, scanQuality);
 
   return {
     source: "strip",
