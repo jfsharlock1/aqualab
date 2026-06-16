@@ -1219,11 +1219,11 @@ body {
 
 .manual-pad-marker {
   position: absolute;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   transform: translate(-50%, -50%);
   border-radius: 999px;
-  border: 2px solid #facc15;
+  border: 3px solid #facc15;
   background: rgba(15,23,42,0.72);
   color: #fef3c7;
   font-weight: 800;
@@ -1234,5 +1234,5 @@ body {
 
 .manual-pad-marker span {
   display: block;
-  line-height: 24px;
+  line-height: 28px;
 }

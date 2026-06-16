@@ -1036,17 +1036,34 @@ export function initPoolTestScanner(root) {
 
     const neutralReference = sampleNeutralReference(ctx);
     const scanQuality = evaluateScanQuality(ctx, padColors, avgRgb, neutralReference, null);
+    const manualAvgVariance = Object.values(padColors)
+      .filter(value => value && typeof value === "object" && Number.isFinite(value.__var))
+      .reduce((sum, value, _, arr) => sum + value.__var / arr.length, 0);
     if ((scanQuality.details.whiteBalanceSpread || 0) > 0.55) {
       scanQuality.score = Math.min(100, scanQuality.score + 18);
       scanQuality.warnings = scanQuality.warnings.filter(warning => !/White balance looks unstable/i.test(warning));
-      scanQuality.label = scanQuality.score >= 82 ? "High" : scanQuality.score >= 62 ? "Medium" : "Low";
     }
+    if (!neutralReference && manualAvgVariance <= 10) {
+      scanQuality.score = Math.min(100, scanQuality.score + 12);
+      scanQuality.warnings = scanQuality.warnings.filter(warning => !/neutral strip\/background pixels/i.test(warning));
+    }
+    scanQuality.warnings = scanQuality.warnings.filter(warning => !/Pad spacing|strip angle|Strip is strongly tilted|Could not determine strip angle|low contrast|shadows/i.test(warning));
+    const exposure = Number(scanQuality.details.exposure || 0);
+    const exposureScore = exposure < 70 ? clamp01(exposure / 70) : exposure > 225 ? clamp01((255 - exposure) / 30) : 1;
+    const glareScore = clamp01(1 - Number(scanQuality.details.glareRatio || 0) / 0.04);
+    const backgroundScore = neutralReference ? clamp01(1 - Number(scanQuality.details.neutralSaturation || 0) / 0.12) : (manualAvgVariance <= 10 ? 0.85 : 0.45);
+    const colorQualityScore = clamp01(exposureScore * 0.45 + glareScore * 0.35 + backgroundScore * 0.20);
+    scanQuality.score = Math.round(colorQualityScore * 100);
+    scanQuality.label = scanQuality.score >= 82 ? "High" : scanQuality.score >= 62 ? "Medium" : "Low";
     scanQuality.details.manualSelection = true;
     scanQuality.details.frameCount = 1;
     scanQuality.details.detectedPadCenters = padColors.__samplingDiagnostics.detectedPadCenters;
     scanQuality.details.samplingOverlayDataUrl = padColors.__samplingDiagnostics.overlayDataUrl;
     scanQuality.details.manualSampleRegion = "15x15 median RGB centered on each marker";
-    scanQuality.warnings = scanQuality.warnings.filter(warning => !/Pad spacing|strip angle|Strip is strongly tilted|Could not determine strip angle/i.test(warning));
+    scanQuality.details.geometryConfidence = 1;
+    scanQuality.details.colorConfidence = Number(colorQualityScore.toFixed(2));
+    scanQuality.details.manualAverageSampleVariance = Number(manualAvgVariance.toFixed(2));
+    scanQuality.details.manualConfidenceInputs = "Delta-E separation, 15x15 sample variance, exposure, glare, background contamination";
 
     const vals = rgbToChemistryEasyTest(padColors, scanQuality, neutralReference);
     vals.__manualPadSelection = true;
@@ -1991,7 +2008,11 @@ export function initPoolTestScanner(root) {
         const separationScore = clamp01(separation / 8);
         const qualityScore = clamp01((scanQuality?.score ?? 0) / 100);
         const varianceScore = 1 / (1 + (rgb.__var || 0) / 14);
-        const confidence = clamp01(distanceScore * 0.45 + separationScore * 0.30 + qualityScore * 0.15 + varianceScore * 0.10);
+        const manualSelection = !!scanQuality?.details?.manualSelection;
+        const colorQualityScore = clamp01(scanQuality?.details?.colorConfidence ?? qualityScore);
+        const confidence = manualSelection
+          ? clamp01(separationScore * 0.52 + varianceScore * 0.28 + colorQualityScore * 0.20)
+          : clamp01(distanceScore * 0.45 + separationScore * 0.30 + qualityScore * 0.15 + varianceScore * 0.10);
         const debug = {
           key,
           label: pad.label,
@@ -2017,6 +2038,13 @@ export function initPoolTestScanner(root) {
           confidence: Number(confidence.toFixed(2)),
           confidenceLabel: confidenceLabel(confidence),
           variance: Number((rgb.__var || 0).toFixed(2)),
+          confidenceInputs: manualSelection
+            ? {
+                deltaESeparationScore: Number(separationScore.toFixed(2)),
+                sampleVarianceScore: Number(varianceScore.toFixed(2)),
+                colorQualityScore: Number(colorQualityScore.toFixed(2))
+              }
+            : null,
           distances: pick.distances.map(item => ({
             value: item.value,
             deltaE: Number(item.deltaE.toFixed(2)),
@@ -2238,8 +2266,11 @@ export function initPoolTestScanner(root) {
         <span class="muted hint">Bounds: ${correctionDetails.detectedStripBounds ? escapeHtml(`${correctionDetails.detectedStripBounds.x},${correctionDetails.detectedStripBounds.y} ${correctionDetails.detectedStripBounds.w}x${correctionDetails.detectedStripBounds.h}`) : "-"}</span>
         <span class="muted hint">Pad centers: ${Array.isArray(correctionDetails.detectedPadCenters) && correctionDetails.detectedPadCenters.length ? escapeHtml(correctionDetails.detectedPadCenters.map(p => `(${p.x},${p.y})`).join(" ")) : "-"}</span>
         <span class="muted hint">Paper LAB: ${correctionDetails.samplingPaperLab ? escapeHtml(`${Number(correctionDetails.samplingPaperLab.l).toFixed(1)}, ${Number(correctionDetails.samplingPaperLab.a).toFixed(1)}, ${Number(correctionDetails.samplingPaperLab.b).toFixed(1)}`) : "-"}</span>
+        <span class="muted hint">Geometry Confidence: ${correctionDetails.geometryConfidence == null ? "-" : `${Math.round(Number(correctionDetails.geometryConfidence) * 100)}%`}</span>
+        <span class="muted hint">Color Confidence: ${correctionDetails.colorConfidence == null ? "-" : `${Math.round(Number(correctionDetails.colorConfidence) * 100)}%`}</span>
+        <span class="muted hint">Sample mode: ${correctionDetails.manualSelection ? "manual 15x15 markers" : "automatic detection"}</span>
       </div>
-      ${correctionDetails.samplingOverlayDataUrl ? `<figure class="sampling-overlay"><figcaption>Sampled pixels overlay</figcaption><img src="${escapeHtml(correctionDetails.samplingOverlayDataUrl)}" alt="Overlay showing detected pad boxes and sampled pixels"></figure>` : ""}
+      ${correctionDetails.samplingOverlayDataUrl ? `<figure class="sampling-overlay"><figcaption>${correctionDetails.manualSelection ? "Manual pad markers and sampled pixels" : "Sampled pixels overlay"}</figcaption><img src="${escapeHtml(correctionDetails.samplingOverlayDataUrl)}" alt="Overlay showing marked pad boxes and sampled pixels"></figure>` : ""}
     `;
     const padRows = EASYTEST_CFG.pads.map(pad => vals.__padDebug[pad.key]).filter(Boolean).map(debug => {
       const distances = debug.distances
