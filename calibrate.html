@@ -41,6 +41,33 @@
         This helps demonstrate how we correct lighting differences and reduce measurement noise.
       </p>
 
+      <div class="calibration-source-panel">
+        <div class="field">
+          <label>Reference Color Source</label>
+          <div class="segmented-control" role="radiogroup" aria-label="Reference Color Source">
+            <label>
+              <input type="radio" name="calibrationSource" value="builtin" id="sourceBuiltin" checked>
+              <span>EasyTest 7-in-1 (Built In)</span>
+            </label>
+            <label>
+              <input type="radio" name="calibrationSource" value="manual" id="sourceManual">
+              <span>Manual / Custom Chart</span>
+            </label>
+          </div>
+          <small class="muted" id="sourceStatus">Built-in EasyTest 7-in-1 calibration loaded.</small>
+        </div>
+
+        <div class="row row-wrap" style="margin:10px 0;">
+          <button type="button" class="btn-ghost" id="chartChoose">Calibrate EasyTest Chart</button>
+          <button type="button" class="btn-ghost" id="chartReset">Reset EasyTest Chart Colors</button>
+          <button type="button" class="btn-ghost" id="chartExport">Export Reference Colors</button>
+          <input id="chartFileInput" type="file" accept="image/*" hidden>
+        </div>
+        <p class="muted hint" id="chartHint">
+          Built-in calibration is the default. Choose Manual / Custom Chart only for bottle-chart testing or future strip brands.
+        </p>
+      </div>
+
       <div class="row row-wrap" style="margin:10px 0;">
         <button type="button" class="btn" id="calTake">Take Photo</button>
         <button type="button" class="btn" id="calChoose">Choose Photo</button>
@@ -208,8 +235,85 @@
     const CAL_KEY = "pt_calibration_v1";
     const HISTORY_KEY = "pt_history_v2";
     const MAX_HISTORY = 365;
+    const EASYTEST_SWATCH_STORAGE_KEY = "pt_easytest_swatches_v1";
+    const EASYTEST_SOURCE_STORAGE_KEY = "pt_easytest_calibration_source_v1";
+    const EASYTEST_BUILT_IN_SOURCE = "builtin";
+    const EASYTEST_MANUAL_SOURCE = "manual";
+    const EASYTEST_SWATCHES = {
+      hardness: [
+        { value: 0, rgb: [1, 73, 149] },
+        { value: 100, rgb: [19, 106, 188] },
+        { value: 250, rgb: [48, 43, 153] },
+        { value: 500, rgb: [84, 20, 132] },
+        { value: 1000, rgb: [139, 7, 113] }
+      ],
+      freeCl: [
+        { value: 0, rgb: [254, 254, 254] },
+        { value: 0.5, rgb: [250, 235, 244] },
+        { value: 1, rgb: [245, 202, 233] },
+        { value: 3, rgb: [242, 167, 217] },
+        { value: 5, rgb: [219, 100, 183] },
+        { value: 10, rgb: [147, 8, 107] }
+      ],
+      bromine: [
+        { value: 0, rgb: [254, 254, 254] },
+        { value: 1, rgb: [235, 219, 241] },
+        { value: 2, rgb: [223, 195, 232] },
+        { value: 6, rgb: [205, 160, 217] },
+        { value: 10, rgb: [181, 125, 200] },
+        { value: 20, rgb: [122, 53, 158] }
+      ],
+      totalCl: [
+        { value: 0, rgb: [254, 244, 129] },
+        { value: 0.5, rgb: [254, 228, 71] },
+        { value: 1, rgb: [220, 226, 89] },
+        { value: 3, rgb: [162, 207, 73] },
+        { value: 5, rgb: [93, 184, 57] },
+        { value: 10, rgb: [27, 154, 64] }
+      ],
+      cya: [
+        { value: 0, rgb: [253, 160, 59] },
+        { value: 40, label: "30-50", rgb: [254, 171, 108] },
+        { value: 100, rgb: [253, 128, 126] },
+        { value: 150, rgb: [251, 79, 111] },
+        { value: 240, rgb: [241, 57, 103] }
+      ],
+      alk: [
+        { value: 0, rgb: [227, 240, 187] },
+        { value: 40, rgb: [181, 230, 199] },
+        { value: 80, rgb: [162, 224, 204] },
+        { value: 120, rgb: [99, 201, 237] },
+        { value: 180, rgb: [70, 186, 242] },
+        { value: 240, rgb: [45, 148, 223] }
+      ],
+      ph: [
+        { value: 6.2, rgb: [254, 213, 1] },
+        { value: 6.8, rgb: [254, 173, 2] },
+        { value: 7.2, rgb: [254, 144, 2] },
+        { value: 7.8, rgb: [252, 91, 1] },
+        { value: 8.4, rgb: [252, 42, 29] },
+        { value: 9.0, rgb: [232, 25, 23] }
+      ]
+    };
+    const EASYTEST_PADS = [
+      { key: "hardness", label: "Total Hardness" },
+      { key: "freeCl", label: "Free Chlorine" },
+      { key: "bromine", label: "Bromine" },
+      { key: "totalCl", label: "Total Chlorine" },
+      { key: "cya", label: "Cyanuric Acid" },
+      { key: "alk", label: "Total Alkalinity" },
+      { key: "ph", label: "pH" }
+    ];
 
     const els = {
+      sourceBuiltin: document.getElementById("sourceBuiltin"),
+      sourceManual: document.getElementById("sourceManual"),
+      sourceStatus: document.getElementById("sourceStatus"),
+      chartChoose: document.getElementById("chartChoose"),
+      chartReset: document.getElementById("chartReset"),
+      chartExport: document.getElementById("chartExport"),
+      chartFileInput: document.getElementById("chartFileInput"),
+      chartHint: document.getElementById("chartHint"),
       take: document.getElementById("calTake"),
       choose: document.getElementById("calChoose"),
       takeInput: document.getElementById("calTakeInput"),
@@ -285,6 +389,183 @@
         g: clampNumber(g, 0.45, 2.25),
         b: clampNumber(b, 0.45, 2.25)
       };
+    }
+
+    function swatchText(swatch) {
+      return swatch?.label || `${swatch?.value ?? ""}`;
+    }
+
+    function cloneSwatches(swatches) {
+      return Object.fromEntries(Object.entries(swatches || {}).map(([key, list]) => [
+        key,
+        (Array.isArray(list) ? list : []).map(swatch => ({
+          value: swatch.value,
+          label: swatch.label,
+          rgb: Array.isArray(swatch.rgb) ? swatch.rgb.slice(0, 3).map(Number) : [0, 0, 0]
+        }))
+      ]));
+    }
+
+    function chartCalibrationOrder() {
+      return EASYTEST_PADS.flatMap(pad => (EASYTEST_SWATCHES[pad.key] || []).map((swatch, swatchIndex) => ({
+        padKey: pad.key,
+        padLabel: pad.label,
+        swatchIndex,
+        value: swatch.value,
+        label: swatchText(swatch)
+      })));
+    }
+
+    function loadReferenceSource() {
+      try {
+        return localStorage.getItem(EASYTEST_SOURCE_STORAGE_KEY) === EASYTEST_MANUAL_SOURCE
+          ? EASYTEST_MANUAL_SOURCE
+          : EASYTEST_BUILT_IN_SOURCE;
+      } catch {
+        return EASYTEST_BUILT_IN_SOURCE;
+      }
+    }
+
+    function saveReferenceSource(source) {
+      try { localStorage.setItem(EASYTEST_SOURCE_STORAGE_KEY, source); } catch {}
+    }
+
+    function hasManualSwatches() {
+      const saved = loadJson(EASYTEST_SWATCH_STORAGE_KEY, null);
+      return !!(saved?.swatches || saved);
+    }
+
+    function updateReferenceSourceUi() {
+      const source = loadReferenceSource();
+      const manual = source === EASYTEST_MANUAL_SOURCE;
+      if (els.sourceBuiltin) els.sourceBuiltin.checked = !manual;
+      if (els.sourceManual) els.sourceManual.checked = manual;
+      if (els.chartChoose) els.chartChoose.hidden = !manual;
+      if (els.chartReset) els.chartReset.hidden = !manual;
+      if (els.sourceStatus) {
+        els.sourceStatus.textContent = manual
+          ? (hasManualSwatches() ? "User-calibrated swatches loaded." : "Manual / Custom Chart selected. Upload a bottle chart to calibrate reference colors.")
+          : "Built-in EasyTest 7-in-1 calibration loaded.";
+      }
+      if (els.chartHint) {
+        els.chartHint.textContent = manual
+          ? "Upload a clear EasyTest bottle chart, then tap each requested swatch in order."
+          : "Built-in calibration is the default for EasyTest users. Manual chart tools are hidden until Manual / Custom Chart is selected.";
+      }
+    }
+
+    function setReferenceSource(source) {
+      saveReferenceSource(source === EASYTEST_MANUAL_SOURCE ? EASYTEST_MANUAL_SOURCE : EASYTEST_BUILT_IN_SOURCE);
+      updateReferenceSourceUi();
+      setStatus(source === EASYTEST_MANUAL_SOURCE
+        ? "Manual / Custom Chart selected. Upload a bottle chart to calibrate reference colors."
+        : "Built-in EasyTest 7-in-1 calibration loaded.");
+    }
+
+    function medianFromSorted(vals) {
+      if (!vals.length) return 0;
+      return vals[Math.floor(vals.length / 2)];
+    }
+
+    function sampleChartPatch(ctx2, x, y) {
+      const size = 15;
+      const half = Math.floor(size / 2);
+      const sx = clampNumber(Math.round(x - half), 0, Math.max(0, ctx2.canvas.width - size));
+      const sy = clampNumber(Math.round(y - half), 0, Math.max(0, ctx2.canvas.height - size));
+      const data = ctx2.getImageData(sx, sy, size, size).data;
+      const rs = [], gs = [], bs = [];
+      for (let i = 0; i < data.length; i += 4) {
+        rs.push(data[i]);
+        gs.push(data[i + 1]);
+        bs.push(data[i + 2]);
+      }
+      rs.sort((a, b) => a - b);
+      gs.sort((a, b) => a - b);
+      bs.sort((a, b) => a - b);
+      return {
+        r: medianFromSorted(rs),
+        g: medianFromSorted(gs),
+        b: medianFromSorted(bs)
+      };
+    }
+
+    function nextChartCalibrationLabel() {
+      const item = chartCalibrationOrder()[chartCalibrationSamples.length];
+      return item ? `${item.padLabel} ${item.label} (${chartCalibrationSamples.length + 1}/${chartCalibrationOrder().length})` : "all chart colors";
+    }
+
+    function finishChartCalibration() {
+      const order = chartCalibrationOrder();
+      if (chartCalibrationSamples.length !== order.length) return;
+      const swatches = cloneSwatches(EASYTEST_SWATCHES);
+      order.forEach((item, index) => {
+        const sample = chartCalibrationSamples[index];
+        swatches[item.padKey][item.swatchIndex] = {
+          value: item.value,
+          label: item.label === `${item.value}` ? undefined : item.label,
+          rgb: [sample.rgb.r, sample.rgb.g, sample.rgb.b]
+        };
+      });
+      saveJson(EASYTEST_SWATCH_STORAGE_KEY, {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        source: "user-calibrated bottle chart",
+        swatches
+      });
+      saveReferenceSource(EASYTEST_MANUAL_SOURCE);
+      chartCalibrationMode = false;
+      chartCalibrationSamples = [];
+      updateReferenceSourceUi();
+      setStatus("EasyTest chart colors calibrated from bottle photo. Scan again to use the updated references.");
+    }
+
+    function addChartCalibrationSample(ev) {
+      if (!chartCalibrationMode || !ctx) return;
+      const rect = els.canvas.getBoundingClientRect();
+      const x = Math.round((ev.clientX - rect.left) * (els.canvas.width / rect.width));
+      const y = Math.round((ev.clientY - rect.top) * (els.canvas.height / rect.height));
+      const rgb = sampleChartPatch(ctx, x, y);
+      chartCalibrationSamples.push({ rgb });
+      if (chartCalibrationSamples.length === chartCalibrationOrder().length) {
+        finishChartCalibration();
+        return;
+      }
+      setStatus(`Chart calibration: tap ${nextChartCalibrationLabel()} on the bottle chart.`);
+    }
+
+    function resetReferenceColors() {
+      try { localStorage.removeItem(EASYTEST_SWATCH_STORAGE_KEY); } catch {}
+      saveReferenceSource(EASYTEST_BUILT_IN_SOURCE);
+      chartCalibrationMode = false;
+      chartCalibrationSamples = [];
+      updateReferenceSourceUi();
+      setStatus("Built-in EasyTest 7-in-1 calibration loaded. Manual chart colors cleared.");
+    }
+
+    function exportReferenceColors() {
+      const saved = loadJson(EASYTEST_SWATCH_STORAGE_KEY, null);
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        app: "AquaLab",
+        format: "aqualab-easytest-reference-colors-v1",
+        source: loadReferenceSource() === EASYTEST_MANUAL_SOURCE && saved ? "User Calibrated Swatches" : "Built-in EasyTest 7-in-1",
+        storageKey: EASYTEST_SWATCH_STORAGE_KEY,
+        swatches: saved?.swatches || saved || EASYTEST_SWATCHES
+      };
+      try {
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `aqualab-easytest-reference-colors-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setStatus("Exported EasyTest reference colors.");
+      } catch {
+        setStatus("Could not export reference colors from this browser.");
+      }
     }
 
     function whiteBalanceFromPatch(ctx, x, y) {
@@ -446,6 +727,7 @@
       const wb = existing.whiteBalance;
       els.wbTag.textContent = `WB: r=${wb.r.toFixed(3)} g=${wb.g.toFixed(3)} b=${wb.b.toFixed(3)}`;
     }
+    updateReferenceSourceUi();
 
     async function loadFileToImage(file) {
       let bmp = null;
@@ -477,13 +759,52 @@
     }
 
     let ctx = null;
+    let chartCalibrationMode = false;
+    let chartCalibrationSamples = [];
 
     async function handleFile(file) {
       setStatus("Loading photo…");
       const img = await loadFileToImage(file);
       ctx = drawImageFit(img);
+      chartCalibrationMode = false;
+      chartCalibrationSamples = [];
       setStatus("Tap a white/gray strip-body area to set white balance.");
     }
+
+    async function handleChartFile(file) {
+      setStatus("Loading EasyTest bottle chart photo...");
+      const img = await loadFileToImage(file);
+      ctx = drawImageFit(img);
+      chartCalibrationMode = true;
+      chartCalibrationSamples = [];
+      saveReferenceSource(EASYTEST_MANUAL_SOURCE);
+      updateReferenceSourceUi();
+      setStatus(`Chart calibration: tap ${nextChartCalibrationLabel()} on the bottle chart.`);
+    }
+
+    els.sourceBuiltin?.addEventListener("change", () => {
+      if (els.sourceBuiltin.checked) setReferenceSource(EASYTEST_BUILT_IN_SOURCE);
+    });
+    els.sourceManual?.addEventListener("change", () => {
+      if (els.sourceManual.checked) setReferenceSource(EASYTEST_MANUAL_SOURCE);
+    });
+    els.chartChoose?.addEventListener("click", () => {
+      saveReferenceSource(EASYTEST_MANUAL_SOURCE);
+      updateReferenceSourceUi();
+      els.chartFileInput?.click();
+    });
+    els.chartReset?.addEventListener("click", resetReferenceColors);
+    els.chartExport?.addEventListener("click", exportReferenceColors);
+    els.chartFileInput?.addEventListener("change", async (e) => {
+      const f = e.target.files?.[0]; if (!f) return;
+      try {
+        await handleChartFile(f);
+      } catch {
+        setStatus("Could not load that chart photo. Try a clear JPEG/PNG of the bottle chart.");
+      } finally {
+        e.target.value = "";
+      }
+    });
 
     els.take.addEventListener("click", () => els.takeInput.click());
     els.choose.addEventListener("click", () => els.fileInput.click());
@@ -499,6 +820,11 @@
 
     els.canvas.addEventListener("click", (ev) => {
       if (!ctx) return;
+
+      if (chartCalibrationMode) {
+        addChartCalibrationSample(ev);
+        return;
+      }
 
       const rect = els.canvas.getBoundingClientRect();
       const x = Math.round((ev.clientX - rect.left) * (els.canvas.width / rect.width));

@@ -158,13 +158,27 @@
         <div class="photo-controls" data-pt="photoControls">
           <button type="button" class="btn" data-pt="btnTakePhoto">Take Photo</button>
           <button type="button" class="btn" data-pt="btnChoosePhoto">Choose Photo</button>
-          <button type="button" class="btn-ghost" data-pt="btnCalibrateChart">Calibrate EasyTest Chart</button>
-          <button type="button" class="btn-ghost" data-pt="btnResetChartColors">Reset EasyTest Chart Colors</button>
-          <button type="button" class="btn-ghost" data-pt="btnExportReferenceColors">Export Reference Colors</button>
+          <a class="btn-ghost" href="./calibrate.html">Manage Calibration</a>
 
           <input data-pt="takeInput" type="file" accept="image/*" capture="environment" hidden />
           <input data-pt="fileInput" type="file" accept="image/*" hidden />
-          <input data-pt="chartInput" type="file" accept="image/*" hidden />
+        </div>
+      </div>
+
+      <div class="calibration-source-panel">
+        <div class="field">
+          <label>Calibration Source</label>
+          <div class="segmented-control" role="radiogroup" aria-label="Calibration Source">
+            <label>
+              <input type="radio" name="calibrationSource" value="builtin" data-pt="calibrationSource" checked>
+              <span>EasyTest 7-in-1 (Built In)</span>
+            </label>
+            <label>
+              <input type="radio" name="calibrationSource" value="manual" data-pt="calibrationSource">
+              <span>Manual / Custom Chart</span>
+            </label>
+          </div>
+          <small class="muted" data-pt="calibrationSourceStatus">Built-in EasyTest 7-in-1 calibration loaded</small>
         </div>
       </div>
 
@@ -365,7 +379,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev27";
+    import { initPoolTestScanner } from "./scanner.js?v=dev28";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>

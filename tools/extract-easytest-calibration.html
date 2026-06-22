@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EasyTest Calibration Extractor</title>
+  <style>
+    body { font: 14px/1.45 system-ui, sans-serif; max-width: 960px; margin: 24px auto; padding: 0 16px; }
+    textarea { width: 100%; min-height: 420px; font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    canvas { max-width: 100%; border: 1px solid #ccc; margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <h1>EasyTest 7-in-1 Calibration Extractor</h1>
+  <p>Load the master chart image. This samples 25 by 25 pixel windows at the center of each swatch.</p>
+  <input id="file" type="file" accept="image/*">
+  <canvas id="canvas"></canvas>
+  <textarea id="output" readonly placeholder="Calibration JSON appears here"></textarea>
+
+  <script>
+    const samplingWindow = 25;
+    const swatches = {
+      totalHardness: [[0, 403, 174], [100, 580, 174], [250, 789, 174], [500, 990, 174], [1000, 1184, 174]],
+      freeChlorine: [[0, 403, 293], [0.5, 568, 293], [1, 732, 293], [3, 890, 293], [5, 1050, 293], [10, 1195, 293]],
+      bromine: [[0, 403, 408], [1, 563, 408], [2, 731, 408], [6, 896, 408], [10, 1052, 408], [20, 1199, 408]],
+      totalChlorine: [[0, 402, 515], [0.5, 566, 515], [1, 727, 515], [3, 890, 515], [5, 1055, 515], [10, 1200, 515]],
+      cyanuricAcid: [[0, 401, 615], ["30-50", 568, 615], [100, 735, 615], [150, 958, 615], [240, 1155, 615]],
+      totalAlkalinity: [[0, 400, 715], [40, 561, 715], [80, 728, 715], [120, 895, 715], [180, 1062, 715], [240, 1200, 715]],
+      ph: [[6.2, 403, 811], [6.8, 564, 811], [7.2, 728, 811], [7.8, 889, 811], [8.4, 1054, 811], [9.0, 1198, 811]]
+    };
+
+    function rgbToLab(rgb) {
+      let [r, g, b] = rgb.map(v => v / 255);
+      const linear = c => c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      r = linear(r); g = linear(g); b = linear(b);
+      const x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047;
+      const y = r * 0.2126 + g * 0.7152 + b * 0.0722;
+      const z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
+      const f = t => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+      const fx = f(x), fy = f(y), fz = f(z);
+      return [
+        Number((116 * fy - 16).toFixed(2)),
+        Number((500 * (fx - fy)).toFixed(2)),
+        Number((200 * (fy - fz)).toFixed(2))
+      ];
+    }
+
+    function sample(ctx, x, y) {
+      const half = Math.floor(samplingWindow / 2);
+      const data = ctx.getImageData(x - half, y - half, samplingWindow, samplingWindow).data;
+      const rgb = [0, 0, 0];
+      for (let i = 0; i < data.length; i += 4) {
+        rgb[0] += data[i];
+        rgb[1] += data[i + 1];
+        rgb[2] += data[i + 2];
+      }
+      const count = data.length / 4;
+      return rgb.map(v => Math.round(v / count));
+    }
+
+    document.getElementById("file").addEventListener("change", event => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.getElementById("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+        ctx.strokeStyle = "#00ffff";
+        ctx.lineWidth = 2;
+
+        const profile = {};
+        Object.entries(swatches).forEach(([parameter, points]) => {
+          profile[parameter] = {};
+          points.forEach(([value, x, y]) => {
+            const rgb = sample(ctx, x, y);
+            profile[parameter][value] = { rgb, lab: rgbToLab(rgb) };
+            ctx.strokeRect(x - samplingWindow / 2, y - samplingWindow / 2, samplingWindow, samplingWindow);
+          });
+        });
+        document.getElementById("output").value = `const EasyTestCalibrationV1 = ${JSON.stringify(profile, null, 2)};`;
+      };
+      img.src = URL.createObjectURL(file);
+    });
+  </script>
+</body>
+</html>

@@ -200,6 +200,12 @@ function buildMessage(check, context) {
       action: "Consider oxidation/shock guidance if the reading is confident; retest first if the chlorine pads were low confidence."
     };
   }
+  if (check.key === "bromine" && check.reasonCodes.includes("POSSIBLE_FALSE_BROMINE_MATCH")) {
+    return {
+      message: "Bromine is very high while free chlorine is low or normal, so this may be a false bromine color match.",
+      action: "Confirm sanitizer with a fresh strip or a bromine-specific test before treating this as very high bromine."
+    };
+  }
   if (check.reasonCodes.includes("LOW_IMAGE_QUALITY")) {
     return {
       message: `${check.parameter} has reduced confidence because scan quality was low.`,
@@ -307,9 +313,9 @@ function evaluateHistory(vals, history, context, check) {
 }
 
 function evaluateChemistry(vals, check) {
-  if (check.key !== "combinedCl") return;
-  const cc = toNumber(check.measuredValue);
-  if (cc != null && cc > 0.5) {
+  if (check.key === "combinedCl") {
+    const cc = toNumber(check.measuredValue);
+    if (cc == null || cc <= 0.5) return;
     applyAdjustment(check, {
       code: "CHEMISTRY_RELATIONSHIP_WARNING",
       penalty: cc > 1 ? 0.08 : 0.03,
@@ -317,6 +323,21 @@ function evaluateChemistry(vals, check) {
       status: "Needs attention",
       note: `TC exceeds FC by ${cc.toFixed(2)} ppm.`
     });
+    return;
+  }
+
+  if (check.key === "bromine") {
+    const bromine = toNumber(vals?.bromine);
+    const freeCl = toNumber(vals?.freeCl);
+    if (bromine != null && bromine >= 10 && freeCl != null && freeCl <= 3) {
+      applyAdjustment(check, {
+        code: "POSSIBLE_FALSE_BROMINE_MATCH",
+        penalty: bromine >= 20 ? 0.24 : 0.16,
+        severity: "Caution",
+        status: "Possible false bromine match",
+        note: `Bromine ${bromine.toFixed(1)} ppm with free chlorine ${freeCl.toFixed(2)} ppm.`
+      });
+    }
   }
 }
 
