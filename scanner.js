@@ -22,11 +22,10 @@ import { runStripSanityCheck } from "./sanityCheckEngine.js";
 const EASYTEST_SWATCHES = {
   hardness: [
     { value: 0, rgb: [111, 146, 36] },
-    { value: 25, rgb: [130, 113, 34] },
-    { value: 50, rgb: [145, 96, 30] },
-    { value: 120, rgb: [154, 69, 5] },
+    { value: 100, rgb: [145, 96, 30] },
     { value: 250, rgb: [191, 53, 2] },
-    { value: 425, rgb: [212, 58, 1] }
+    { value: 500, rgb: [212, 58, 1] },
+    { value: 1000, rgb: [225, 75, 4] }
   ],
   totalCl: [
     { value: 0, rgb: [253, 247, 74] },
@@ -34,8 +33,7 @@ const EASYTEST_SWATCHES = {
     { value: 1, rgb: [206, 239, 78] },
     { value: 3, rgb: [166, 230, 80] },
     { value: 5, rgb: [92, 223, 88] },
-    { value: 10, rgb: [101, 216, 155] },
-    { value: 20, rgb: [59, 217, 132] }
+    { value: 10, rgb: [101, 216, 155] }
   ],
   freeCl: [
     { value: 0, rgb: [250, 250, 250] },
@@ -43,8 +41,7 @@ const EASYTEST_SWATCHES = {
     { value: 1, rgb: [233, 223, 231] },
     { value: 3, rgb: [236, 175, 227] },
     { value: 5, rgb: [226, 128, 213] },
-    { value: 10, rgb: [200, 58, 188] },
-    { value: 20, rgb: [177, 61, 167] }
+    { value: 10, rgb: [200, 58, 188] }
   ],
   bromine: [
     { value: 0, rgb: [248, 232, 236] },
@@ -52,8 +49,7 @@ const EASYTEST_SWATCHES = {
     { value: 2, rgb: [249, 212, 218] },
     { value: 6, rgb: [250, 183, 204] },
     { value: 10, rgb: [254, 115, 171] },
-    { value: 20, rgb: [252, 96, 170] },
-    { value: 40, rgb: [247, 90, 157] }
+    { value: 20, rgb: [252, 96, 170] }
   ],
   alk: [
     { value: 0, rgb: [254, 242, 94] },
@@ -61,24 +57,21 @@ const EASYTEST_SWATCHES = {
     { value: 80, rgb: [159, 222, 114] },
     { value: 120, rgb: [57, 204, 155] },
     { value: 180, rgb: [25, 196, 193] },
-    { value: 240, rgb: [0, 179, 203] },
-    { value: 360, rgb: [1, 154, 221] }
+    { value: 240, rgb: [0, 179, 203] }
   ],
   cya: [
     { value: 0, rgb: [204, 189, 152] },
-    { value: 40, rgb: [244, 212, 137] }, // chart says 30-50 -> use 40
+    { value: 40, label: "30-50", rgb: [244, 212, 137] },
     { value: 100, rgb: [231, 158, 95] },
     { value: 150, rgb: [231, 128, 109] },
     { value: 240, rgb: [214, 144, 180] }
   ],
   ph: [
-    { value: 6.0, rgb: [253, 216, 3] },
-    { value: 6.4, rgb: [254, 204, 1] },
+    { value: 6.2, rgb: [253, 216, 3] },
     { value: 6.8, rgb: [254, 176, 1] },
     { value: 7.2, rgb: [254, 167, 0] },
-    { value: 7.6, rgb: [254, 146, 1] },
-    { value: 8.2, rgb: [255, 69, 12] },
-    { value: 9.0, rgb: [253, 3, 98] }
+    { value: 7.8, rgb: [254, 116, 5] },
+    { value: 8.4, rgb: [255, 69, 12] }
   ]
 };
 
@@ -95,11 +88,29 @@ const EASYTEST_CFG = {
   ]
 };
 
-// Pads needing extra stabilization
+const EASYTEST_SWATCH_STORAGE_KEY = "pt_easytest_swatches_v1";
+
+function cloneSwatches(swatches) {
+  return Object.fromEntries(Object.entries(swatches || {}).map(([key, list]) => [
+    key,
+    (Array.isArray(list) ? list : []).map(swatch => ({
+      value: swatch.value,
+      label: swatch.label,
+      rgb: Array.isArray(swatch.rgb) ? swatch.rgb.slice(0, 3).map(Number) : [0, 0, 0]
+    }))
+  ]));
+}
+
+function swatchText(swatchOrValue) {
+  if (swatchOrValue && typeof swatchOrValue === "object") return swatchOrValue.label || `${swatchOrValue.value}`;
+  return `${swatchOrValue}`;
+}
+
+// Pads needing extra stabilization. Snap-to-history is disabled while chart calibration is being tuned.
 const PAD_STABILITY = {
-  alk: { snap: 40, ambiguousRatio: 0.72, enableRange: true },
-  cya: { snap: 20, ambiguousRatio: 0.75, enableRange: true },
-  ph: { snap: 0.2, ambiguousRatio: 0.78, enableRange: true }
+  alk: { snap: 40, ambiguousRatio: 0.72, enableRange: true, allowSnap: false },
+  cya: { snap: 20, ambiguousRatio: 0.75, enableRange: true, allowSnap: false },
+  ph: { snap: 0.2, ambiguousRatio: 0.78, enableRange: true, allowSnap: false }
 };
 
 // ================================================================
@@ -266,6 +277,7 @@ function chooseNearestTwoSwatchesLab(rgb, swatches, neutral = null) {
     secondD: ranked[1]?.deltaE ?? Infinity,
     distances: ranked.map(item => ({
       value: item.swatch.value,
+      label: item.swatch.label || `${item.swatch.value}`,
       deltaE: item.deltaE,
       deltaE76: item.deltaE76
     }))
@@ -274,13 +286,13 @@ function chooseNearestTwoSwatchesLab(rgb, swatches, neutral = null) {
 
 function rgbToChemistryFallback(avgRgb) {
   const { r, g, b } = avgRgb;
-  const ph = Math.min(9.0, Math.max(6.0, 6.0 + (r - b) / 40));
+  const ph = Math.min(8.4, Math.max(6.2, 6.2 + (r - b) / 40));
   const freeCl = Math.min(10, Math.max(0, (g - 80) / 25));
-  const totalCl = Math.min(20, Math.max(freeCl, freeCl + 0.5));
-  const bromine = Math.min(40, Math.max(0, totalCl * 2.25));
+  const totalCl = Math.min(10, Math.max(freeCl, freeCl + 0.5));
+  const bromine = Math.min(20, Math.max(0, totalCl * 2.25));
   const brightness = (r + g + b) / 3;
-  const hardness = Math.min(425, Math.max(0, (brightness - 60) * 3));
-  const alk = Math.min(360, Math.max(0, (r + g + b) / 4));
+  const hardness = Math.min(1000, Math.max(0, (brightness - 60) * 6));
+  const alk = Math.min(240, Math.max(0, (r + g + b) / 4));
   const cya = Math.min(240, Math.max(0, (b - 60) * 2));
   return {
     ph: Number(ph.toFixed(2)),
@@ -330,7 +342,11 @@ export function initPoolTestScanner(root) {
     fileInput: root.querySelector('[data-pt="fileInput"]'),
     btnTakePhoto: root.querySelector('[data-pt="btnTakePhoto"]'),
     btnChoosePhoto: root.querySelector('[data-pt="btnChoosePhoto"]'),
+    btnCalibrateChart: root.querySelector('[data-pt="btnCalibrateChart"]'),
+    btnResetChartColors: root.querySelector('[data-pt="btnResetChartColors"]'),
+    btnExportReferenceColors: root.querySelector('[data-pt="btnExportReferenceColors"]'),
     takeInput: root.querySelector('[data-pt="takeInput"]'),
+    chartInput: root.querySelector('[data-pt="chartInput"]'),
 
     liveControls: root.querySelector('[data-pt="liveControls"]'),
     cameraRow: root.querySelector('[data-pt="cameraRow"]'),
@@ -420,6 +436,49 @@ export function initPoolTestScanner(root) {
   let whiteBalance = { r: 1, g: 1, b: 1 };
   let calOffsets = { ph: 0, alk: 0, cya: 0, hardness: 0 };
   let latestScanDebug = null;
+  let activeSwatchSource = "default swatches";
+  let activeEasyTestSwatches = cloneSwatches(EASYTEST_SWATCHES);
+
+  function validateEasyTestSwatches(swatches) {
+    if (!swatches || typeof swatches !== "object") return null;
+    const cleaned = {};
+    for (const pad of EASYTEST_CFG.pads) {
+      const defaults = EASYTEST_SWATCHES[pad.key] || [];
+      const incoming = Array.isArray(swatches[pad.key]) ? swatches[pad.key] : [];
+      if (incoming.length !== defaults.length) return null;
+      cleaned[pad.key] = incoming.map((item, index) => {
+        const rgb = Array.isArray(item.rgb) ? item.rgb.slice(0, 3).map(Number) : [];
+        if (rgb.length !== 3 || rgb.some(v => !Number.isFinite(v))) return null;
+        return {
+          value: defaults[index].value,
+          label: defaults[index].label,
+          rgb: rgb.map(v => clampNumber(Math.round(v), 0, 255))
+        };
+      });
+      if (cleaned[pad.key].some(item => !item)) return null;
+    }
+    return cleaned;
+  }
+
+  function applyEasyTestSwatches(swatches, source) {
+    const next = validateEasyTestSwatches(swatches) || cloneSwatches(EASYTEST_SWATCHES);
+    activeEasyTestSwatches = next;
+    activeSwatchSource = source || "default swatches";
+    EASYTEST_CFG.pads.forEach(pad => {
+      pad.swatches = activeEasyTestSwatches[pad.key] || EASYTEST_SWATCHES[pad.key];
+    });
+  }
+
+  function loadEasyTestReferenceSwatches() {
+    const saved = loadJson(EASYTEST_SWATCH_STORAGE_KEY, null);
+    const swatches = validateEasyTestSwatches(saved?.swatches || saved);
+    if (swatches) {
+      applyEasyTestSwatches(swatches, "user-calibrated swatches");
+      return;
+    }
+    applyEasyTestSwatches(EASYTEST_SWATCHES, "default swatches");
+  }
+
 
   function clampNumber(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -458,9 +517,12 @@ export function initPoolTestScanner(root) {
       cya: Number(calOffsets.cya || 0),
       hardness: Number(calOffsets.hardness || 0)
     };
+    const swatchFingerprint = JSON.stringify(activeEasyTestSwatches, (key, value) => typeof value === "number" ? Number(value.toFixed ? value.toFixed(3) : value) : value);
     return [
       wb.r.toFixed(3), wb.g.toFixed(3), wb.b.toFixed(3),
-      offsets.ph.toFixed(2), offsets.alk, offsets.cya, offsets.hardness
+      offsets.ph.toFixed(2), offsets.alk, offsets.cya, offsets.hardness,
+      activeSwatchSource,
+      swatchFingerprint
     ].join(":");
   }
 
@@ -559,6 +621,41 @@ export function initPoolTestScanner(root) {
     setStatus("Scan cache cleared (results + fingerprints).");
   }
 
+  function exportJsonPayload(payload, filenamePrefix, successMessage) {
+    try {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `${filenamePrefix}-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setStatus(successMessage);
+    } catch {
+      setStatus("Could not export JSON from this browser.");
+    }
+  }
+
+  function resetEasyTestChartColors() {
+    try { localStorage.removeItem(EASYTEST_SWATCH_STORAGE_KEY); } catch {}
+    applyEasyTestSwatches(EASYTEST_SWATCHES, "default swatches");
+    clearScanCache();
+    setStatus("EasyTest chart colors reset to defaults. Scan cache cleared.");
+  }
+
+  function exportReferenceColors() {
+    exportJsonPayload({
+      exportedAt: new Date().toISOString(),
+      app: "AquaLab",
+      format: "aqualab-easytest-reference-colors-v1",
+      source: activeSwatchSource,
+      storageKey: EASYTEST_SWATCH_STORAGE_KEY,
+      swatches: activeEasyTestSwatches
+    }, "aqualab-easytest-reference-colors", "Exported EasyTest reference colors.");
+  }
   function exportCalibrationDataset() {
     const fingerprints = loadJson(FP_KEY, []);
     const history = loadJson("pt_history_v2", []);
@@ -763,6 +860,23 @@ export function initPoolTestScanner(root) {
   let previewFit = null;   // {scale, dx, dy, iw, ih, cw, ch}
   let manualPadMode = false;
   let manualPadMarkers = [];
+  let chartCalibrationMode = false;
+  let chartCalibrationSamples = [];
+
+  function chartCalibrationOrder() {
+    return EASYTEST_CFG.pads.flatMap(pad => (EASYTEST_SWATCHES[pad.key] || []).map((swatch, swatchIndex) => ({
+      padKey: pad.key,
+      padLabel: pad.label,
+      swatchIndex,
+      value: swatch.value,
+      label: swatch.label || `${swatch.value}`
+    })));
+  }
+
+  function nextChartCalibrationLabel() {
+    const item = chartCalibrationOrder()[chartCalibrationSamples.length];
+    return item ? `${item.padLabel} ${item.label} (${chartCalibrationSamples.length + 1}/${chartCalibrationOrder().length})` : "all chart colors";
+  }
 
   function showPreview(img) {
     previewImg = img;
@@ -790,6 +904,8 @@ export function initPoolTestScanner(root) {
     if (els.previewWrap) els.previewWrap.style.display = "none";
     previewImg = null;
     previewFit = null;
+    chartCalibrationMode = false;
+    chartCalibrationSamples = [];
     resetManualPadSelection(false);
   }
 
@@ -950,6 +1066,17 @@ export function initPoolTestScanner(root) {
     return a[Math.floor(a.length / 2)] ?? 0;
   }
 
+  function fullPreviewImageContext() {
+    if (!previewImg) return null;
+    const iw = previewImg.naturalWidth || previewImg.width;
+    const ih = previewImg.naturalHeight || previewImg.height;
+    const off = document.createElement("canvas");
+    off.width = iw;
+    off.height = ih;
+    const ctx = off.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(previewImg, 0, 0, iw, ih);
+    return ctx;
+  }
   function sampleManualPadRegion(ctx, marker) {
     const size = 15;
     const half = Math.floor(size / 2);
@@ -1015,6 +1142,98 @@ export function initPoolTestScanner(root) {
     return buildSamplingDebugOverlay(ctx, diagnostics);
   }
 
+  function renderChartCalibrationMarkers() {
+    if (!els.manualPadLayer || !previewFit) return;
+    els.manualPadLayer.hidden = !chartCalibrationMode;
+    els.manualPadLayer.innerHTML = chartCalibrationSamples.map((sample, index) => {
+      const left = sample.stageX;
+      const top = sample.stageY;
+      return `<button type="button" class="manual-pad-marker" style="left:${left}px; top:${top}px" aria-label="Chart color ${index + 1}"><span>${index + 1}</span></button>`;
+    }).join("");
+  }
+
+  function beginChartCalibration() {
+    if (!previewImg) return;
+    chartCalibrationMode = true;
+    chartCalibrationSamples = [];
+    manualPadMode = false;
+    manualPadMarkers = [];
+    if (els.cropBox) els.cropBox.style.display = "none";
+    if (els.manualPadLayer) els.manualPadLayer.hidden = false;
+    renderChartCalibrationMarkers();
+    setManualPadButtons();
+    setStatus(`Chart calibration: tap ${nextChartCalibrationLabel()} on the bottle chart.`);
+  }
+
+  function finishChartCalibration() {
+    const order = chartCalibrationOrder();
+    if (chartCalibrationSamples.length !== order.length) return;
+    const swatches = cloneSwatches(EASYTEST_SWATCHES);
+    order.forEach((item, index) => {
+      const sample = chartCalibrationSamples[index];
+      swatches[item.padKey][item.swatchIndex] = {
+        value: item.value,
+        label: item.label === `${item.value}` ? undefined : item.label,
+        rgb: [sample.rgb.r, sample.rgb.g, sample.rgb.b]
+      };
+    });
+    saveJson(EASYTEST_SWATCH_STORAGE_KEY, {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      source: "user-calibrated bottle chart",
+      swatches
+    });
+    applyEasyTestSwatches(swatches, "user-calibrated swatches");
+    clearScanCache();
+    chartCalibrationMode = false;
+    chartCalibrationSamples = [];
+    hidePreview();
+    setStatus("EasyTest chart colors calibrated from bottle photo. Scan cache cleared.");
+  }
+
+  function addChartCalibrationSample(ev) {
+    if (!chartCalibrationMode || !previewImg) return;
+    const order = chartCalibrationOrder();
+    if (chartCalibrationSamples.length >= order.length) return;
+    const point = previewPointToImagePixels(ev.clientX, ev.clientY);
+    if (!point) {
+      setStatus("Tap directly on the bottle chart photo.");
+      return;
+    }
+    const ctx = fullPreviewImageContext();
+    if (!ctx) return;
+    const sampled = sampleManualPadRegion(ctx, point);
+    chartCalibrationSamples.push({
+      ...point,
+      rgb: {
+        r: Math.round(sampled.r),
+        g: Math.round(sampled.g),
+        b: Math.round(sampled.b)
+      },
+      variance: Number((sampled.__var || 0).toFixed(2))
+    });
+    renderChartCalibrationMarkers();
+    if (chartCalibrationSamples.length === order.length) {
+      finishChartCalibration();
+      return;
+    }
+    setStatus(`Chart calibration: tap ${nextChartCalibrationLabel()} on the bottle chart.`);
+  }
+
+  async function handleChartCalibrationFile(e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    try {
+      setStatus("Loading EasyTest bottle chart photo...");
+      const img = await loadFileToImageIOSReliable(f);
+      showPreview(img);
+      beginChartCalibration();
+    } catch {
+      setStatus("Could not load that chart photo. Try a clear JPEG/PNG of the bottle chart.");
+    } finally {
+      e.target.value = "";
+    }
+  }
   function analyzeFromManualPads() {
     if (!previewImg || manualPadMarkers.length !== EASYTEST_CFG.pads.length) {
       setStatus("Select all 7 manual pad markers first.");
@@ -2021,6 +2240,8 @@ export function initPoolTestScanner(root) {
       return Number.isFinite(min) && Number.isFinite(max) ? `${min}-${max}` : `${a}-${b}`;
     }
 
+    if (scanQuality?.details) scanQuality.details.swatchSource = activeSwatchSource;
+
     function valueFromPad(key, fallback) {
       const rgb = padColors[key];
       const pad = padByKey[key];
@@ -2053,6 +2274,7 @@ export function initPoolTestScanner(root) {
         if (trueLowConfidence) confidence = Math.min(confidence, 0.49);
         const topMatches = pick.distances.slice(0, 3).map(item => ({
           value: item.value,
+          label: item.label || `${item.value}`,
           deltaE: Number(item.deltaE.toFixed(2)),
           deltaE76: Number(item.deltaE76.toFixed(2))
         }));
@@ -2081,14 +2303,22 @@ export function initPoolTestScanner(root) {
             b: Number(pick.measuredLab.b.toFixed(1))
           },
           bestValue: pick.best.value,
+          bestLabel: swatchText(pick.best),
           bestDeltaE: Number(pick.bestD.toFixed(2)),
           secondValue: pick.second ? pick.second.value : null,
+          secondLabel: pick.second ? swatchText(pick.second) : null,
           secondDeltaE: Number((pick.secondD || Infinity).toFixed(2)),
           thirdValue: topMatches[2]?.value ?? null,
           thirdDeltaE: topMatches[2]?.deltaE ?? null,
           deltaEGap: Number(separation.toFixed(2)),
           confidence: Number(confidence.toFixed(2)),
           confidenceLabel: confidenceLabel(confidence),
+          displayedValue: pick.best.value,
+          rangeApplied: false,
+          snapApplied: false,
+          snapFrom: null,
+          snapTo: null,
+          previousValueForSnap: null,
           status: ambiguityStatus,
           reasonCode,
           usableAmbiguous,
@@ -2105,6 +2335,7 @@ export function initPoolTestScanner(root) {
           topMatches,
           distances: pick.distances.map(item => ({
             value: item.value,
+            label: item.label || `${item.value}`,
             deltaE: Number(item.deltaE.toFixed(2)),
             deltaE76: Number(item.deltaE76.toFixed(2))
           }))
@@ -2130,29 +2361,57 @@ export function initPoolTestScanner(root) {
 
     function stabilizedValue(key, pick, lastValue) {
       const cfg = PAD_STABILITY[key];
-      if (!cfg) return { value: pick.value, range: null, confidence: pick.confidence ?? 1 };
+      const debug = result.__padDebug[key];
+      if (!cfg) {
+        if (debug) {
+          debug.displayedValue = pick.value;
+          debug.rangeApplied = false;
+          debug.snapApplied = false;
+          debug.snapFrom = null;
+          debug.snapTo = null;
+        }
+        return { value: pick.value, range: null, confidence: pick.confidence ?? 1, snapApplied: false };
+      }
 
       const ambiguous = !!pick.usableAmbiguous || (!pick.trueLowConfidence && pick.secondValue != null && (pick.secondD - pick.bestD) < 2.2) || (pick.variance > 18);
 
       let value = pick.value;
       let range = null;
+      let snapApplied = false;
+      let snapFrom = null;
+      let snapTo = null;
 
       if (cfg.enableRange && ambiguous && pick.secondValue != null) {
         const a = Math.min(pick.value, pick.secondValue);
         const b = Math.max(pick.value, pick.secondValue);
         range = [a, b];
-        value = (key === "ph") ? Number(((a + b) / 2).toFixed(2)) : Math.round((a + b) / 2);
       }
 
-      if (typeof lastValue === "number" && isFinite(lastValue)) {
-        if (Math.abs(value - lastValue) <= cfg.snap) value = lastValue;
+      const strongGap = (pick.separation || 0) >= 4;
+      const highConfidence = (pick.confidence ?? 0) >= 0.78;
+      if (cfg.allowSnap && highConfidence && strongGap && typeof lastValue === "number" && isFinite(lastValue)) {
+        if (Math.abs(value - lastValue) <= cfg.snap) {
+          snapFrom = value;
+          value = lastValue;
+          snapTo = value;
+          snapApplied = true;
+        }
       }
 
       const dScore = 1 / (1 + pick.bestD / 12);
       const vScore = 1 / (1 + (pick.variance || 0) / 12);
       const confidence = Math.max(0, Math.min(1, Math.min(pick.confidence ?? 1, dScore * vScore)));
 
-      return { value, range, confidence };
+      if (debug) {
+        debug.displayedValue = value;
+        debug.rangeApplied = !!range;
+        debug.snapApplied = snapApplied;
+        debug.snapFrom = snapFrom;
+        debug.snapTo = snapTo;
+        debug.previousValueForSnap = typeof lastValue === "number" && isFinite(lastValue) ? lastValue : null;
+      }
+
+      return { value, range, confidence, snapApplied };
     }
 
     // pH (stabilized)
@@ -2211,7 +2470,7 @@ export function initPoolTestScanner(root) {
     result.__cyaConfidence = cyaStab.confidence;
 
     Object.entries(result.__padDebug).forEach(([key, debug]) => {
-      if (debug.usableAmbiguous && debug.secondValue != null) {
+      if ((debug.usableAmbiguous || debug.rangeApplied) && debug.secondValue != null) {
         const a = Math.min(Number(debug.bestValue), Number(debug.secondValue));
         const b = Math.max(Number(debug.bestValue), Number(debug.secondValue));
         if (Number.isFinite(a) && Number.isFinite(b)) result.__padRanges[key] = [a, b];
@@ -2264,21 +2523,24 @@ export function initPoolTestScanner(root) {
   }
 
   function resultRangeText(vals, key, value, unit = "") {
-    const range = vals?.__padRanges?.[key];
-    const text = Array.isArray(range) ? `${range[0]}-${range[1]}` : `${value}`;
-    return unit ? `${text} ${unit}` : text;
+    const legacyRange = key === "ph" ? vals?.__phRange : key === "alk" ? vals?.__alkRange : key === "cya" ? vals?.__cyaRange : null;
+    const range = vals?.__padRanges?.[key] || legacyRange;
+    const valueText = unit ? `${value} ${unit}` : `${value}`;
+    if (!Array.isArray(range)) return valueText;
+    const rangeText = unit ? `${range[0]}-${range[1]} ${unit}` : `${range[0]}-${range[1]}`;
+    return `${valueText}, possible ${rangeText}`;
   }
 
   function renderBars(vals) {
-    els.barPh && (els.barPh.style.width = pct(vals.ph, 6.0, 9.0) + "%");
+    els.barPh && (els.barPh.style.width = pct(vals.ph, 6.2, 8.4) + "%");
     els.barFCl && (els.barFCl.style.width = pct(vals.freeCl, 0, 10) + "%");
-    els.barTCl && (els.barTCl.style.width = pct(vals.totalCl, 0, 20) + "%");
-    els.barBr && (els.barBr.style.width = pct(vals.bromine, 0, 40) + "%");
-    els.barHard && (els.barHard.style.width = pct(vals.hardness, 0, 425) + "%");
-    els.barAlk && (els.barAlk.style.width = pct(vals.alk, 0, 360) + "%");
+    els.barTCl && (els.barTCl.style.width = pct(vals.totalCl, 0, 10) + "%");
+    els.barBr && (els.barBr.style.width = pct(vals.bromine, 0, 20) + "%");
+    els.barHard && (els.barHard.style.width = pct(vals.hardness, 0, 1000) + "%");
+    els.barAlk && (els.barAlk.style.width = pct(vals.alk, 0, 240) + "%");
     els.barCya && (els.barCya.style.width = pct(vals.cya, 0, 240) + "%");
 
-    const phText = Array.isArray(vals.__phRange) ? `${vals.__phRange[0]}-${vals.__phRange[1]}` : resultRangeText(vals, "ph", vals.ph);
+    const phText = resultRangeText(vals, "ph", vals.ph);
     if (vals.ph < 7.2) tag(els.tagPh, "warn", `Low (${phText})`);
     else if (vals.ph > 7.8) tag(els.tagPh, "warn", `High (${phText})`);
     else tag(els.tagPh, "ok", `Good (${phText})`);
@@ -2300,12 +2562,12 @@ export function initPoolTestScanner(root) {
     else if (vals.hardness > 300) tag(els.tagHard, "warn", `High (${hardnessText})`);
     else tag(els.tagHard, "ok", `Good (${hardnessText})`);
 
-    const alkText = Array.isArray(vals.__alkRange) ? `${vals.__alkRange[0]}-${vals.__alkRange[1]} ppm` : resultRangeText(vals, "alk", vals.alk, "ppm");
+    const alkText = resultRangeText(vals, "alk", vals.alk, "ppm");
     if (vals.alk < 80) tag(els.tagAlk, "warn", `Low (${alkText})`);
     else if (vals.alk > 120) tag(els.tagAlk, "warn", `High (${alkText})`);
     else tag(els.tagAlk, "ok", `Good (${alkText})`);
 
-    const cyaText = Array.isArray(vals.__cyaRange) ? `${vals.__cyaRange[0]}-${vals.__cyaRange[1]} ppm` : resultRangeText(vals, "cya", vals.cya, "ppm");
+    const cyaText = resultRangeText(vals, "cya", vals.cya, "ppm");
     if (vals.cya < 30) tag(els.tagCya, "warn", `Low (${cyaText})`);
     else if (vals.cya > 100) tag(els.tagCya, "warn", `High (${cyaText})`);
     else tag(els.tagCya, "ok", `Good (${cyaText})`);
@@ -2349,12 +2611,13 @@ export function initPoolTestScanner(root) {
         <span class="muted hint">Geometry Confidence: ${correctionDetails.geometryConfidence == null ? "-" : `${Math.round(Number(correctionDetails.geometryConfidence) * 100)}%`}</span>
         <span class="muted hint">Color Confidence: ${correctionDetails.colorConfidence == null ? "-" : `${Math.round(Number(correctionDetails.colorConfidence) * 100)}%`}</span>
         <span class="muted hint">Sample mode: ${correctionDetails.manualSelection ? "manual 15x15 markers" : "automatic detection"}</span>
+        <span class="muted hint">Reference colors: ${escapeHtml(correctionDetails.swatchSource || activeSwatchSource)}</span>
       </div>
       ${correctionDetails.samplingOverlayDataUrl ? `<figure class="sampling-overlay"><figcaption>${correctionDetails.manualSelection ? "Manual pad markers and sampled pixels" : "Sampled pixels overlay"}</figcaption><img src="${escapeHtml(correctionDetails.samplingOverlayDataUrl)}" alt="Overlay showing marked pad boxes and sampled pixels"></figure>` : ""}
     `;
     const padRows = EASYTEST_CFG.pads.map(pad => vals.__padDebug[pad.key]).filter(Boolean).map(debug => {
       const topMatches = (debug.topMatches || debug.distances?.slice(0, 3) || [])
-        .map((item, index) => `${index + 1}. ${item.value}: ${item.deltaE}`)
+        .map((item, index) => `${index + 1}. ${item.label || item.value}: ${item.deltaE}`)
         .join(" | ");
       const status = debug.status || (debug.reasonCode === "LOW_DELTA_E_SEPARATION" ? "Ambiguous" : "Best match clear");
       return `
@@ -2366,9 +2629,12 @@ export function initPoolTestScanner(root) {
           </td>
           <td>${escapeHtml(debug.measuredRgb.r)}, ${escapeHtml(debug.measuredRgb.g)}, ${escapeHtml(debug.measuredRgb.b)}</td>
           <td>${escapeHtml(debug.measuredLab.l)}, ${escapeHtml(debug.measuredLab.a)}, ${escapeHtml(debug.measuredLab.b)}</td>
-          <td>${escapeHtml(debug.bestValue)} (${escapeHtml(debug.bestDeltaE)})</td>
-          <td>${escapeHtml(debug.secondValue ?? "-")} (${escapeHtml(debug.secondDeltaE ?? "-")})</td>
+          <td>${escapeHtml(debug.displayedValue ?? debug.bestValue)}</td>
+          <td>${escapeHtml(debug.bestLabel || debug.bestValue)} (${escapeHtml(debug.bestDeltaE)})</td>
+          <td>${escapeHtml(debug.secondLabel ?? debug.secondValue ?? "-")} (${escapeHtml(debug.secondDeltaE ?? "-")})</td>
           <td>${escapeHtml(debug.confidenceLabel)} (${Math.round(debug.confidence * 100)}%)</td>
+          <td>${debug.rangeApplied ? "yes" : "no"}</td>
+          <td>${debug.snapApplied ? "yes" : "no"}<br><span class="muted hint">prev: ${escapeHtml(debug.previousValueForSnap ?? "-")} | ${escapeHtml(debug.snapFrom ?? "-")} -> ${escapeHtml(debug.snapTo ?? "-")}</span></td>
           <td>${escapeHtml(topMatches)}<br><span class="muted hint">Gap: ${escapeHtml(debug.deltaEGap ?? "-")} | ${escapeHtml(status)}</span></td>
         </tr>
       `;
@@ -2390,9 +2656,12 @@ export function initPoolTestScanner(root) {
               <th>Preview</th>
               <th>RGB</th>
               <th>LAB</th>
+              <th>Displayed</th>
               <th>Best Delta-E</th>
               <th>Second</th>
               <th>Confidence</th>
+              <th>Range</th>
+              <th>Snap</th>
               <th>Top Delta-E matches</th>
             </tr>
           </thead>
@@ -2964,7 +3233,7 @@ export function initPoolTestScanner(root) {
 
     upsertChart("alk", "ppm", els.chartAlk, [
       { label: "Total Alkalinity (ppm)", data: series.alk, tension: 0.3, pointRadius: 2 }
-    ], { plugins: { legend: { display: false } }, scales: { y: { suggestedMin: 0, suggestedMax: 360 } } });
+    ], { plugins: { legend: { display: false } }, scales: { y: { suggestedMin: 0, suggestedMax: 240 } } });
 
     upsertChart("cya", "ppm", els.chartCya, [
       { label: "Cyanuric Acid (ppm)", data: series.cya, tension: 0.3, pointRadius: 2 }
@@ -3136,6 +3405,9 @@ export function initPoolTestScanner(root) {
   // Phone-first buttons
   els.btnTakePhoto?.addEventListener("click", () => els.takeInput?.click());
   els.btnChoosePhoto?.addEventListener("click", () => els.fileInput?.click());
+  els.btnCalibrateChart?.addEventListener("click", () => els.chartInput?.click());
+  els.btnResetChartColors?.addEventListener("click", resetEasyTestChartColors);
+  els.btnExportReferenceColors?.addEventListener("click", exportReferenceColors);
 
   els.btnClearCache?.addEventListener("click", clearScanCache);
   els.btnExportDataset?.addEventListener("click", exportCalibrationDataset);
@@ -3163,6 +3435,7 @@ export function initPoolTestScanner(root) {
 
   els.fileInput?.addEventListener("change", handlePickedFile);
   els.takeInput?.addEventListener("change", handlePickedFile);
+  els.chartInput?.addEventListener("change", handleChartCalibrationFile);
 
   els.btnUseCrop?.addEventListener("click", () => {
     const vals = analyzeFromPreviewCrop();
@@ -3180,6 +3453,12 @@ export function initPoolTestScanner(root) {
     if (vals) recordReading(vals);
   });
   els.previewStage?.addEventListener("click", (ev) => {
+    if (chartCalibrationMode) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      addChartCalibrationSample(ev);
+      return;
+    }
     if (!manualPadMode) return;
     ev.preventDefault();
     ev.stopPropagation();
@@ -3247,6 +3526,7 @@ export function initPoolTestScanner(root) {
   // 16) Init
   // ================================================================
 
+  loadEasyTestReferenceSwatches();
   loadPoolSetup();
   applyPoolContextInputs();
   renderHistoryCharts();

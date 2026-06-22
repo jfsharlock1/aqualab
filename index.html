@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=16" />
+  <link rel="stylesheet" href="pooltest.css?v=17" />
 </head>
 
 <body>
@@ -158,9 +158,13 @@
         <div class="photo-controls" data-pt="photoControls">
           <button type="button" class="btn" data-pt="btnTakePhoto">Take Photo</button>
           <button type="button" class="btn" data-pt="btnChoosePhoto">Choose Photo</button>
+          <button type="button" class="btn-ghost" data-pt="btnCalibrateChart">Calibrate EasyTest Chart</button>
+          <button type="button" class="btn-ghost" data-pt="btnResetChartColors">Reset EasyTest Chart Colors</button>
+          <button type="button" class="btn-ghost" data-pt="btnExportReferenceColors">Export Reference Colors</button>
 
           <input data-pt="takeInput" type="file" accept="image/*" capture="environment" hidden />
           <input data-pt="fileInput" type="file" accept="image/*" hidden />
+          <input data-pt="chartInput" type="file" accept="image/*" hidden />
         </div>
       </div>
 
@@ -361,7 +365,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev26";
+    import { initPoolTestScanner } from "./scanner.js?v=dev27";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>
