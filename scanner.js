@@ -1230,17 +1230,22 @@ export function initPoolTestScanner(root) {
     ctx.drawImage(previewImg, 0, 0, iw, ih);
     return ctx;
   }
-  function sampleManualPadRegion(ctx, marker) {
-    const size = 15;
-    const half = Math.floor(size / 2);
+  function sampleManualPadRegion(ctx, marker, options = {}) {
+    const outerWidth = Math.max(6, Math.round(options.outerWidth ?? 40));
+    const outerHeight = Math.max(6, Math.round(options.outerHeight ?? 30));
+    const innerScale = clampNumber(Number(options.innerScale ?? 0.55), 0.2, 1);
+    const innerWidth = Math.max(3, Math.round(outerWidth * innerScale));
+    const innerHeight = Math.max(3, Math.round(outerHeight * innerScale));
     const cx = Math.round(marker.imageX);
     const cy = Math.round(marker.imageY);
-    const sx = clampNumber(cx - half, 0, Math.max(0, ctx.canvas.width - size));
-    const sy = clampNumber(cy - half, 0, Math.max(0, ctx.canvas.height - size));
-    const sw = Math.min(size, ctx.canvas.width - sx);
-    const sh = Math.min(size, ctx.canvas.height - sy);
+    const outerX = clampNumber(Math.round(cx - outerWidth / 2), 0, Math.max(0, ctx.canvas.width - outerWidth));
+    const outerY = clampNumber(Math.round(cy - outerHeight / 2), 0, Math.max(0, ctx.canvas.height - outerHeight));
+    const sx = clampNumber(Math.round(cx - innerWidth / 2), 0, Math.max(0, ctx.canvas.width - innerWidth));
+    const sy = clampNumber(Math.round(cy - innerHeight / 2), 0, Math.max(0, ctx.canvas.height - innerHeight));
+    const sw = Math.min(innerWidth, ctx.canvas.width - sx);
+    const sh = Math.min(innerHeight, ctx.canvas.height - sy);
     const imgData = ctx.getImageData(sx, sy, sw, sh).data;
-    const rs = [], gs = [], bs = [];
+    const samples = [];
     const points = [];
 
     for (let y = 0; y < sh; y++) {
@@ -1249,19 +1254,37 @@ export function initPoolTestScanner(root) {
         const r = imgData[idx];
         const g = imgData[idx + 1];
         const b = imgData[idx + 2];
-        rs.push(r / whiteBalance.r);
-        gs.push(g / whiteBalance.g);
-        bs.push(b / whiteBalance.b);
+        const sample = {
+          r: r / whiteBalance.r,
+          g: g / whiteBalance.g,
+          b: b / whiteBalance.b
+        };
+        samples.push(sample);
         points.push({ x: sx + x, y: sy + y, r, g, b });
       }
     }
 
-    const mr = medianFromSorted(rs);
-    const mg = medianFromSorted(gs);
-    const mb = medianFromSorted(bs);
-    const vr = medianFromSorted(rs.map(v => Math.abs(v - mr)));
-    const vg = medianFromSorted(gs.map(v => Math.abs(v - mg)));
-    const vb = medianFromSorted(bs.map(v => Math.abs(v - mb)));
+    const medianChannel = (items, channel) => medianFromSorted(items.map(sample => sample[channel]));
+    const firstMedian = {
+      r: medianChannel(samples, "r"),
+      g: medianChannel(samples, "g"),
+      b: medianChannel(samples, "b")
+    };
+    const rankedSamples = samples
+      .map(sample => ({
+        sample,
+        distance: Math.hypot(sample.r - firstMedian.r, sample.g - firstMedian.g, sample.b - firstMedian.b)
+      }))
+      .sort((a, b) => a.distance - b.distance);
+    const coreCount = Math.max(12, Math.ceil(rankedSamples.length * 0.78));
+    const coreSamples = rankedSamples.slice(0, coreCount).map(item => item.sample);
+
+    const mr = medianChannel(coreSamples, "r");
+    const mg = medianChannel(coreSamples, "g");
+    const mb = medianChannel(coreSamples, "b");
+    const vr = medianFromSorted(coreSamples.map(v => Math.abs(v.r - mr)));
+    const vg = medianFromSorted(coreSamples.map(v => Math.abs(v.g - mg)));
+    const vb = medianFromSorted(coreSamples.map(v => Math.abs(v.b - mb)));
 
     return {
       r: mr,
@@ -1273,6 +1296,12 @@ export function initPoolTestScanner(root) {
         y: sy,
         w: sw,
         h: sh,
+        outerX,
+        outerY,
+        outerW: Math.min(outerWidth, ctx.canvas.width - outerX),
+        outerH: Math.min(outerHeight, ctx.canvas.height - outerY),
+        innerScale,
+        corePixels: coreSamples.length,
         centerX: cx,
         centerY: cy,
         points
@@ -1284,7 +1313,7 @@ export function initPoolTestScanner(root) {
     const diagnostics = {
       detectedSegments: EASYTEST_CFG.pads.map(pad => {
         const sample = padColors[pad.key]?.__manualSample;
-        return sample ? { start: sample.y, end: sample.y + sample.h, x1: sample.x, x2: sample.x + sample.w } : null;
+        return sample ? { start: sample.outerY ?? sample.y, end: (sample.outerY ?? sample.y) + (sample.outerH ?? sample.h), x1: sample.outerX ?? sample.x, x2: (sample.outerX ?? sample.x) + (sample.outerW ?? sample.w) } : null;
       }).filter(Boolean),
       detectedPadCenters: EASYTEST_CFG.pads.map(pad => {
         const sample = padColors[pad.key]?.__manualSample;
@@ -1362,7 +1391,7 @@ export function initPoolTestScanner(root) {
     }
     const ctx = fullPreviewImageContext();
     if (!ctx) return;
-    const sampled = sampleManualPadRegion(ctx, point);
+    const sampled = sampleManualPadRegion(ctx, point, { outerWidth: 15, outerHeight: 15, innerScale: 1 });
     chartCalibrationSamples.push({
       ...point,
       rgb: {
@@ -1457,7 +1486,7 @@ export function initPoolTestScanner(root) {
     scanQuality.details.frameCount = 1;
     scanQuality.details.detectedPadCenters = padColors.__samplingDiagnostics.detectedPadCenters;
     scanQuality.details.samplingOverlayDataUrl = padColors.__samplingDiagnostics.overlayDataUrl;
-    scanQuality.details.manualSampleRegion = "15x15 median RGB centered on each marker";
+    scanQuality.details.manualSampleRegion = "40x30 pad box with 55% inner-core median RGB centered on each marker";
     scanQuality.details.geometryConfidence = 1;
     scanQuality.details.colorConfidence = Number(colorQualityScore.toFixed(2));
     scanQuality.details.manualAverageSampleVariance = Number(manualAvgVariance.toFixed(2));
@@ -1475,7 +1504,7 @@ export function initPoolTestScanner(root) {
     renderSanityCheck(sanity);
     renderRecs(vals);
     renderScanDiagnostics(vals);
-    setStatus(`Manual pad scan | 15x15 median samples | quality ${scanQuality.score}/100`);
+    setStatus(`Manual pad scan | 40x30 inner-core samples | quality ${scanQuality.score}/100`);
     hidePreview();
     return vals;
   }
