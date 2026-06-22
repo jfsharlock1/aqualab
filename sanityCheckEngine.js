@@ -212,6 +212,12 @@ function buildMessage(check, context) {
       action: "Move to indirect daylight, avoid glare, and rescan."
     };
   }
+  if (check.reasonCodes.includes("LOW_SAMPLE_QUALITY")) {
+    return {
+      message: `${check.parameter} pad sample quality is low.`,
+      action: "Reposition the marker near the center of the pad or retest before dosing from this result."
+    };
+  }
   if (check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")) {
     return {
       message: `${check.parameter} is between nearby chart colors, so this result is approximate.`,
@@ -252,6 +258,14 @@ function evaluatePadEvidence(vals, key, check, scanQuality) {
         severity: "Info",
         status: "Approximate range",
         note: `Best Delta-E ${best}; second-best Delta-E ${second}; gap ${debug.deltaEGap ?? Math.round((second - best) * 100) / 100}.`
+      });
+    } else if (debug.reasonCode === "LOW_SAMPLE_QUALITY" || debug.sampleQuality === "Low") {
+      applyAdjustment(check, {
+        code: "LOW_SAMPLE_QUALITY",
+        penalty: 0.22,
+        severity: "Caution",
+        status: "Approximate",
+        note: `Sample quality low; LAB variance ${debug.sampleLabVariance ?? "-"}; rejected ${debug.sampleRejectedPct ?? "-"}%.`
       });
     } else if (best != null && second != null && second - best < 2.2) {
       applyAdjustment(check, {

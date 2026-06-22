@@ -1288,3 +1288,18 @@ body {
   display: block;
   line-height: 28px;
 }
+
+.manual-pad-sample-box {
+  position: absolute;
+  border: 2px solid rgba(250,204,21,0.9);
+  background: rgba(250,204,21,0.08);
+  box-shadow: 0 0 0 1px rgba(15,23,42,0.65);
+  pointer-events: none;
+}
+
+.manual-pad-sample-box span {
+  position: absolute;
+  display: block;
+  border: 2px dashed rgba(14,165,233,0.95);
+  background: rgba(14,165,233,0.08);
+}

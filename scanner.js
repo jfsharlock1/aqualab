@@ -280,7 +280,9 @@ function chooseNearestTwoSwatchesLab(rgb, swatches, neutral = null) {
   if (!rgb || !swatches || !swatches.length) return null;
 
   const normalizedRgb = normalizeRgbObject(rgb, neutral);
-  const measuredLab = rgbToLab(normalizedRgb);
+  const measuredLab = !neutral && rgb.__lab && ["l", "a", "b"].every(key => Number.isFinite(Number(rgb.__lab[key])))
+    ? { l: Number(rgb.__lab.l), a: Number(rgb.__lab.a), b: Number(rgb.__lab.b) }
+    : rgbToLab(normalizedRgb);
   const ranked = swatches
     .map(swatch => {
       const lab = swatchLab(swatch, neutral);
@@ -1126,11 +1128,23 @@ export function initPoolTestScanner(root) {
 
   function renderManualPadMarkers() {
     if (!els.manualPadLayer || !previewFit) return;
+    const markerYs = manualPadMarkers.map(marker => Number(marker.imageY)).filter(Number.isFinite);
+    const markerSpacings = markerYs.slice(1).map((y, index) => Math.abs(y - markerYs[index])).filter(value => value > 0);
+    const minMarkerSpacing = markerSpacings.length ? Math.min(...markerSpacings) : 42;
+    const outerW = 40 * previewFit.scale;
+    const outerH = clampNumber(Math.floor(minMarkerSpacing * 0.72), 16, 30) * previewFit.scale;
+    const innerW = outerW * 0.55;
+    const innerH = outerH * 0.55;
     els.manualPadLayer.innerHTML = manualPadMarkers.map((marker, index) => {
       const pad = EASYTEST_CFG.pads[index];
       const left = marker.stageX;
       const top = marker.stageY;
-      return `<button type="button" class="manual-pad-marker" data-index="${index}" style="left:${left}px; top:${top}px" aria-label="Remove ${escapeHtml(pad?.label || `Pad ${index + 1}`)} marker"><span>${index + 1}</span></button>`;
+      return `
+        <div class="manual-pad-sample-box" style="left:${left - outerW / 2}px; top:${top - outerH / 2}px; width:${outerW}px; height:${outerH}px">
+          <span style="left:${(outerW - innerW) / 2}px; top:${(outerH - innerH) / 2}px; width:${innerW}px; height:${innerH}px"></span>
+        </div>
+        <button type="button" class="manual-pad-marker" data-index="${index}" style="left:${left}px; top:${top}px" aria-label="Remove ${escapeHtml(pad?.label || `Pad ${index + 1}`)} marker"><span>${index + 1}</span></button>
+      `;
     }).join("");
     setManualPadButtons();
   }
@@ -1230,7 +1244,7 @@ export function initPoolTestScanner(root) {
     ctx.drawImage(previewImg, 0, 0, iw, ih);
     return ctx;
   }
-  function sampleManualPadRegion(ctx, marker, options = {}) {
+  function sampleManualPadRegionAt(ctx, marker, options = {}) {
     const outerWidth = Math.max(6, Math.round(options.outerWidth ?? 40));
     const outerHeight = Math.max(6, Math.round(options.outerHeight ?? 30));
     const innerScale = clampNumber(Number(options.innerScale ?? 0.55), 0.2, 1);
@@ -1245,8 +1259,14 @@ export function initPoolTestScanner(root) {
     const sw = Math.min(innerWidth, ctx.canvas.width - sx);
     const sh = Math.min(innerHeight, ctx.canvas.height - sy);
     const imgData = ctx.getImageData(sx, sy, sw, sh).data;
-    const samples = [];
+    const nearWhiteFriendly = !!options.nearWhiteFriendly;
+    const rawSamples = [];
+    const allSamples = [];
     const points = [];
+    let brightnessRejected = 0;
+    let shadowRejected = 0;
+    let whiteRejected = 0;
+    let lowSatPixels = 0;
 
     for (let y = 0; y < sh; y++) {
       for (let x = 0; x < sw; x++) {
@@ -1257,27 +1277,56 @@ export function initPoolTestScanner(root) {
         const sample = {
           r: r / whiteBalance.r,
           g: g / whiteBalance.g,
-          b: b / whiteBalance.b
+          b: b / whiteBalance.b,
+          rawR: r,
+          rawG: g,
+          rawB: b
         };
-        samples.push(sample);
-        points.push({ x: sx + x, y: sy + y, r, g, b });
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const saturation = max === 0 ? 0 : (max - min) / max;
+        const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        const lab = rgbToLab({ r: sample.r, g: sample.g, b: sample.b });
+        const chroma = Math.hypot(lab.a, lab.b);
+        if (saturation < 0.06) lowSatPixels++;
+        const shadow = luma < 22;
+        const whiteBacking = !nearWhiteFriendly && max > 244 && saturation < 0.08 && chroma < 8;
+        if (shadow) shadowRejected++;
+        if (whiteBacking) whiteRejected++;
+        const rawPoint = { x: sx + x, y: sy + y, r, g, b };
+        allSamples.push({ ...sample, lab, saturation, luma, chroma, x: rawPoint.x, y: rawPoint.y });
+        if (shadow || whiteBacking) {
+          brightnessRejected++;
+          continue;
+        }
+        rawSamples.push({ ...sample, lab, saturation, luma, chroma, x: sx + x, y: sy + y });
+        points.push(rawPoint);
       }
     }
 
+    const samples = rawSamples.length >= 12 ? rawSamples : allSamples;
     const medianChannel = (items, channel) => medianFromSorted(items.map(sample => sample[channel]));
+    const medianLabChannel = (items, channel) => medianFromSorted(items.map(sample => sample.lab[channel]));
     const firstMedian = {
       r: medianChannel(samples, "r"),
       g: medianChannel(samples, "g"),
-      b: medianChannel(samples, "b")
+      b: medianChannel(samples, "b"),
+      l: medianLabChannel(samples, "l"),
+      a: medianLabChannel(samples, "a"),
+      labB: medianLabChannel(samples, "b")
     };
     const rankedSamples = samples
       .map(sample => ({
         sample,
-        distance: Math.hypot(sample.r - firstMedian.r, sample.g - firstMedian.g, sample.b - firstMedian.b)
+        distance: Math.hypot(sample.lab.l - firstMedian.l, sample.lab.a - firstMedian.a, sample.lab.b - firstMedian.labB)
       }))
       .sort((a, b) => a.distance - b.distance);
+    const labDistances = rankedSamples.map(item => item.distance);
+    const medianDistance = medianFromSorted(labDistances);
+    const distanceLimit = Math.max(8, medianDistance * 2.4);
+    const distanceFiltered = rankedSamples.filter(item => item.distance <= distanceLimit);
     const coreCount = Math.max(12, Math.ceil(rankedSamples.length * 0.78));
-    const coreSamples = rankedSamples.slice(0, coreCount).map(item => item.sample);
+    const coreSamples = (distanceFiltered.length >= 12 ? distanceFiltered : rankedSamples).slice(0, coreCount).map(item => item.sample);
 
     const mr = medianChannel(coreSamples, "r");
     const mg = medianChannel(coreSamples, "g");
@@ -1285,12 +1334,42 @@ export function initPoolTestScanner(root) {
     const vr = medianFromSorted(coreSamples.map(v => Math.abs(v.r - mr)));
     const vg = medianFromSorted(coreSamples.map(v => Math.abs(v.g - mg)));
     const vb = medianFromSorted(coreSamples.map(v => Math.abs(v.b - mb)));
+    const lab = {
+      l: medianLabChannel(coreSamples, "l"),
+      a: medianLabChannel(coreSamples, "a"),
+      b: medianLabChannel(coreSamples, "b")
+    };
+    const averageLab = coreSamples.reduce((sum, sample) => ({
+      l: sum.l + sample.lab.l / coreSamples.length,
+      a: sum.a + sample.lab.a / coreSamples.length,
+      b: sum.b + sample.lab.b / coreSamples.length
+    }), { l: 0, a: 0, b: 0 });
+    const labVariance = medianFromSorted(coreSamples.map(sample => Math.hypot(sample.lab.l - lab.l, sample.lab.a - lab.a, sample.lab.b - lab.b)));
+    const rgbVariance = (vr + vg + vb) / 3;
+    const totalPixels = Math.max(1, sw * sh);
+    const rejectedPixels = Math.max(0, totalPixels - coreSamples.length);
+    const rejectedPct = rejectedPixels / totalPixels;
+    const whitePct = whiteRejected / totalPixels;
+    const shadowPct = shadowRejected / totalPixels;
+    const lowSatPct = lowSatPixels / totalPixels;
+    const possibleBackingContamination = whitePct > 0.08 || (!nearWhiteFriendly && lowSatPct > 0.35 && lab.l > 78);
+    const possibleEdgeContamination = labVariance > 7 || rejectedPct > 0.34 || rgbVariance > 16;
+    let sampleQuality = "High";
+    if (labVariance > 10 || rejectedPct > 0.45 || possibleBackingContamination) sampleQuality = "Low";
+    else if (labVariance > 6 || rejectedPct > 0.24 || rgbVariance > 12 || possibleEdgeContamination) sampleQuality = "Medium";
+    const qualityScore = sampleQuality === "High" ? 1 : sampleQuality === "Medium" ? 0.72 : 0.42;
+    const minCenterY = Number(options.minCenterY);
+    const maxCenterY = Number(options.maxCenterY);
+    const overlapPenalty = (Number.isFinite(minCenterY) && outerY < minCenterY ? (minCenterY - outerY) * 2 : 0)
+      + (Number.isFinite(maxCenterY) && outerY + outerHeight > maxCenterY ? (outerY + outerHeight - maxCenterY) * 2 : 0);
+    const score = labVariance * 1.7 + rejectedPct * 20 + whitePct * 18 + shadowPct * 12 + (possibleBackingContamination ? 10 : 0) + overlapPenalty;
 
     return {
       r: mr,
       g: mg,
       b: mb,
-      __var: (vr + vg + vb) / 3,
+      __lab: lab,
+      __var: rgbVariance,
       __manualSample: {
         x: sx,
         y: sy,
@@ -1304,9 +1383,55 @@ export function initPoolTestScanner(root) {
         corePixels: coreSamples.length,
         centerX: cx,
         centerY: cy,
-        points
+        selectedCenterX: cx,
+        selectedCenterY: cy,
+        totalPixels,
+        usedPixels: coreSamples.length,
+        rejectedPixels,
+        rejectedPct: Number((rejectedPct * 100).toFixed(1)),
+        labVariance: Number(labVariance.toFixed(2)),
+        averageLab: {
+          l: Number(averageLab.l.toFixed(2)),
+          a: Number(averageLab.a.toFixed(2)),
+          b: Number(averageLab.b.toFixed(2))
+        },
+        rgbVariance: Number(rgbVariance.toFixed(2)),
+        possibleEdgeContamination,
+        possibleBackingContamination,
+        whiteRejectedPct: Number((whitePct * 100).toFixed(1)),
+        shadowRejectedPct: Number((shadowPct * 100).toFixed(1)),
+        lowSaturationPct: Number((lowSatPct * 100).toFixed(1)),
+        sampleQuality,
+        qualityScore,
+        overlapPenalty: Number(overlapPenalty.toFixed(2)),
+        score: Number(score.toFixed(2)),
+        points: coreSamples.map(sample => ({ x: sample.x, y: sample.y, r: sample.rawR ?? Math.round(sample.r), g: sample.rawG ?? Math.round(sample.g), b: sample.rawB ?? Math.round(sample.b) })),
+        allCandidatePoints: points
       }
     };
+  }
+
+  function sampleManualPadRegion(ctx, marker, options = {}) {
+    const searchRadius = Math.max(0, Number(options.searchRadius ?? 10));
+    const step = Math.max(2, Number(options.searchStep ?? 4));
+    const offsets = [{ x: 0, y: 0 }];
+    for (let dy = -searchRadius; dy <= searchRadius; dy += step) {
+      for (let dx = -searchRadius; dx <= searchRadius; dx += step) {
+        if (dx === 0 && dy === 0) continue;
+        offsets.push({ x: dx, y: dy });
+      }
+    }
+    const candidates = offsets.map(offset => {
+      const shifted = { ...marker, imageX: marker.imageX + offset.x, imageY: marker.imageY + offset.y };
+      return sampleManualPadRegionAt(ctx, shifted, options);
+    });
+    const best = candidates.sort((a, b) => (a.__manualSample?.score ?? Infinity) - (b.__manualSample?.score ?? Infinity))[0] || sampleManualPadRegionAt(ctx, marker, options);
+    if (best.__manualSample) {
+      best.__manualSample.tapCenterX = Math.round(marker.imageX);
+      best.__manualSample.tapCenterY = Math.round(marker.imageY);
+      best.__manualSample.searchRadius = searchRadius;
+    }
+    return best;
   }
 
   function buildManualSamplingOverlay(ctx, padColors) {
@@ -1317,7 +1442,11 @@ export function initPoolTestScanner(root) {
       }).filter(Boolean),
       detectedPadCenters: EASYTEST_CFG.pads.map(pad => {
         const sample = padColors[pad.key]?.__manualSample;
-        return sample ? { x: sample.centerX, y: sample.centerY } : null;
+        return sample ? { x: sample.selectedCenterX ?? sample.centerX, y: sample.selectedCenterY ?? sample.centerY } : null;
+      }).filter(Boolean),
+      innerSegments: EASYTEST_CFG.pads.map(pad => {
+        const sample = padColors[pad.key]?.__manualSample;
+        return sample ? { start: sample.y, end: sample.y + sample.h, x1: sample.x, x2: sample.x + sample.w } : null;
       }).filter(Boolean),
       sampledPixels: Object.fromEntries(EASYTEST_CFG.pads.map(pad => [pad.key, padColors[pad.key]?.__manualSample?.points || []]))
     };
@@ -1391,7 +1520,7 @@ export function initPoolTestScanner(root) {
     }
     const ctx = fullPreviewImageContext();
     if (!ctx) return;
-    const sampled = sampleManualPadRegion(ctx, point, { outerWidth: 15, outerHeight: 15, innerScale: 1 });
+    const sampled = sampleManualPadRegion(ctx, point, { outerWidth: 15, outerHeight: 15, innerScale: 1, searchRadius: 0 });
     chartCalibrationSamples.push({
       ...point,
       rgb: {
@@ -1442,9 +1571,29 @@ export function initPoolTestScanner(root) {
     const ctx = off.getContext("2d", { willReadFrequently: true });
     ctx.drawImage(previewImg, 0, 0, iw, ih);
 
+    const markerYs = manualPadMarkers.map(marker => Number(marker.imageY)).filter(Number.isFinite);
+    const markerSpacings = markerYs.slice(1).map((y, index) => Math.abs(y - markerYs[index])).filter(value => value > 0);
+    const minMarkerSpacing = markerSpacings.length ? Math.min(...markerSpacings) : 42;
+    const outerHeight = clampNumber(Math.floor(minMarkerSpacing * 0.72), 16, 30);
+    const sampleOptions = {
+      outerWidth: 40,
+      outerHeight,
+      innerScale: 0.55,
+      searchRadius: 10,
+      searchStep: 4
+    };
     const padColors = {};
     EASYTEST_CFG.pads.forEach((pad, index) => {
-      padColors[pad.key] = sampleManualPadRegion(ctx, manualPadMarkers[index]);
+      const prevY = index > 0 ? Number(manualPadMarkers[index - 1]?.imageY) : null;
+      const curY = Number(manualPadMarkers[index]?.imageY);
+      const nextY = index < manualPadMarkers.length - 1 ? Number(manualPadMarkers[index + 1]?.imageY) : null;
+      padColors[pad.key] = sampleManualPadRegion(ctx, manualPadMarkers[index], {
+        ...sampleOptions,
+        padKey: pad.key,
+        nearWhiteFriendly: pad.key === "freeCl" || pad.key === "bromine",
+        minCenterY: Number.isFinite(prevY) && Number.isFinite(curY) ? (prevY + curY) / 2 : 0,
+        maxCenterY: Number.isFinite(nextY) && Number.isFinite(curY) ? (curY + nextY) / 2 : ih
+      });
     });
 
     const avgRgb = averageRgbList(Object.values(padColors)) || { r: 0, g: 0, b: 0 };
@@ -1466,6 +1615,11 @@ export function initPoolTestScanner(root) {
     const manualAvgVariance = Object.values(padColors)
       .filter(value => value && typeof value === "object" && Number.isFinite(value.__var))
       .reduce((sum, value, _, arr) => sum + value.__var / arr.length, 0);
+    const sampleQualities = Object.values(padColors)
+      .map(value => value?.__manualSample?.sampleQuality)
+      .filter(Boolean);
+    const lowSampleCount = sampleQualities.filter(value => value === "Low").length;
+    const mediumSampleCount = sampleQualities.filter(value => value === "Medium").length;
     if ((scanQuality.details.whiteBalanceSpread || 0) > 0.55) {
       scanQuality.score = Math.min(100, scanQuality.score + 18);
       scanQuality.warnings = scanQuality.warnings.filter(warning => !/White balance looks unstable/i.test(warning));
@@ -1480,17 +1634,20 @@ export function initPoolTestScanner(root) {
     const glareScore = clamp01(1 - Number(scanQuality.details.glareRatio || 0) / 0.04);
     const backgroundScore = neutralReference ? clamp01(1 - Number(scanQuality.details.neutralSaturation || 0) / 0.12) : (manualAvgVariance <= 10 ? 0.85 : 0.45);
     const colorQualityScore = clamp01(exposureScore * 0.45 + glareScore * 0.35 + backgroundScore * 0.20);
-    scanQuality.score = Math.round(colorQualityScore * 100);
+    const sampleQualityPenalty = lowSampleCount ? 0.28 : mediumSampleCount ? 0.12 : 0;
+    scanQuality.score = Math.round(clamp01(colorQualityScore - sampleQualityPenalty) * 100);
     scanQuality.label = scanQuality.score >= 82 ? "High" : scanQuality.score >= 62 ? "Medium" : "Low";
     scanQuality.details.manualSelection = true;
     scanQuality.details.frameCount = 1;
     scanQuality.details.detectedPadCenters = padColors.__samplingDiagnostics.detectedPadCenters;
     scanQuality.details.samplingOverlayDataUrl = padColors.__samplingDiagnostics.overlayDataUrl;
-    scanQuality.details.manualSampleRegion = "40x30 pad box with 55% inner-core median RGB centered on each marker";
+    scanQuality.details.manualSampleRegion = `40x${outerHeight} pad box with 55% inner-core median LAB; offset search +/-10px`;
     scanQuality.details.geometryConfidence = 1;
-    scanQuality.details.colorConfidence = Number(colorQualityScore.toFixed(2));
+    scanQuality.details.colorConfidence = Number(clamp01(colorQualityScore - sampleQualityPenalty).toFixed(2));
     scanQuality.details.manualAverageSampleVariance = Number(manualAvgVariance.toFixed(2));
-    scanQuality.details.manualConfidenceInputs = "Delta-E separation, 15x15 sample variance, exposure, glare, background contamination";
+    scanQuality.details.manualSampleQualityCounts = { high: sampleQualities.filter(value => value === "High").length, medium: mediumSampleCount, low: lowSampleCount };
+    scanQuality.details.manualConfidenceInputs = "Delta-E separation, median LAB variance, rejected pixels, exposure, glare, background contamination";
+    if (lowSampleCount) scanQuality.warnings.push("Pad sample quality is low. Reposition marker or retest before dosing.");
 
     const vals = rgbToChemistryEasyTest(padColors, scanQuality, neutralReference);
     vals.__manualPadSelection = true;
@@ -1504,7 +1661,7 @@ export function initPoolTestScanner(root) {
     renderSanityCheck(sanity);
     renderRecs(vals);
     renderScanDiagnostics(vals);
-    setStatus(`Manual pad scan | 40x30 inner-core samples | quality ${scanQuality.score}/100`);
+    setStatus(`Manual pad scan | 40x${outerHeight} inner-core LAB samples | quality ${scanQuality.score}/100`);
     hidePreview();
     return vals;
   }
@@ -2027,6 +2184,19 @@ export function initPoolTestScanner(root) {
       octx.fillText(String(index + 1), x + 3, y + 3);
     });
 
+    (diagnostics.innerSegments || []).forEach((seg, index) => {
+      const color = palette[index % palette.length];
+      const x = (seg.x1 ?? 0) * scale;
+      const y = (seg.start ?? 0) * scale;
+      const w = Math.max(1, ((seg.x2 ?? seg.x1 ?? 0) - (seg.x1 ?? 0)) * scale);
+      const h = Math.max(1, ((seg.end ?? seg.start ?? 0) - (seg.start ?? 0)) * scale);
+      octx.save();
+      octx.strokeStyle = color;
+      octx.setLineDash([Math.max(3, 5 * scale), Math.max(2, 3 * scale)]);
+      octx.strokeRect(x, y, w, h);
+      octx.restore();
+    });
+
     Object.entries(diagnostics.sampledPixels || {}).forEach(([key, points], index) => {
       const color = palette[index % palette.length];
       octx.fillStyle = color;
@@ -2440,7 +2610,9 @@ export function initPoolTestScanner(root) {
       const rgb = padColors[key];
       const pad = padByKey[key];
       if (rgb && pad && pad.swatches && pad.swatches.length) {
-        const pick = chooseNearestTwoSwatchesLab(rgb, pad.swatches, neutralReference);
+        const manualSelection = !!scanQuality?.details?.manualSelection;
+        const sampleMeta = rgb.__manualSample || null;
+        const pick = chooseNearestTwoSwatchesLab(rgb, pad.swatches, manualSelection ? null : neutralReference);
         if (!pick?.best) return { value: fallback(), bestD: Infinity, secondValue: null, secondD: Infinity, variance: 999, confidence: 0, confidenceLabel: "Low" };
 
         const separation = Math.max(0, pick.secondD - pick.bestD);
@@ -2449,15 +2621,15 @@ export function initPoolTestScanner(root) {
         const qualityScore = clamp01((scanQuality?.score ?? 0) / 100);
         const variance = rgb.__var || 0;
         const varianceScore = 1 / (1 + variance / 14);
-        const manualSelection = !!scanQuality?.details?.manualSelection;
         const colorQualityScore = clamp01(scanQuality?.details?.colorConfidence ?? qualityScore);
+        const sampleQualityScore = clamp01(sampleMeta?.qualityScore ?? 1);
         const bestIndex = swatchIndexForValue(pad, pick.best?.value);
         const secondIndex = swatchIndexForValue(pad, pick.second?.value);
         const adjacentMatch = bestIndex >= 0 && secondIndex >= 0 && Math.abs(bestIndex - secondIndex) === 1;
         const cfg = PAD_STABILITY[key];
         const smallGap = separation < 2.2;
         const verySmallGap = separation < 0.85;
-        const sampleQualityPoor = variance > 18 || colorQualityScore < 0.55;
+        const sampleQualityPoor = variance > 18 || colorQualityScore < 0.55 || sampleQualityScore < 0.5;
         const farFromChart = pick.bestD > (manualSelection ? 18 : 16);
         const usableAmbiguous = smallGap && adjacentMatch && !sampleQualityPoor && !farFromChart;
         const severeAmbiguity = smallGap && !adjacentMatch;
@@ -2466,6 +2638,7 @@ export function initPoolTestScanner(root) {
           ? clamp01(distanceScore * 0.28 + varianceScore * 0.28 + colorQualityScore * 0.34 + Math.min(separationScore, 0.75) * 0.10)
           : clamp01(distanceScore * 0.45 + separationScore * 0.30 + qualityScore * 0.15 + varianceScore * 0.10);
         if (usableAmbiguous) confidence = Math.min(0.74, Math.max(confidence * 0.86, colorQualityScore * 0.52 + varianceScore * 0.36));
+        if (manualSelection) confidence = Math.min(confidence, sampleQualityScore === 1 ? confidence : sampleQualityScore);
         if (trueLowConfidence) confidence = Math.min(confidence, 0.49);
         const approximateRange = !!cfg?.enableRange && usableAmbiguous;
         const topMatches = pick.distances.slice(0, 3).map(item => ({
@@ -2474,12 +2647,13 @@ export function initPoolTestScanner(root) {
           deltaE: Number(item.deltaE.toFixed(2)),
           deltaE76: Number(item.deltaE76.toFixed(2))
         }));
-        const reasonCode = usableAmbiguous
+        let reasonCode = usableAmbiguous
           ? "AMBIGUOUS_ADJACENT_MATCH"
           : (smallGap ? "LOW_DELTA_E_SEPARATION" : null);
+        if (manualSelection && sampleMeta?.sampleQuality === "Low") reasonCode = "LOW_SAMPLE_QUALITY";
         const ambiguityStatus = approximateRange
           ? `Approximate Range ${formatPadRange(pick.best.value, pick.second.value)}`
-          : (reasonCode === "LOW_DELTA_E_SEPARATION" ? "Ambiguous non-adjacent match" : "Best match clear");
+          : (reasonCode === "LOW_SAMPLE_QUALITY" ? "Low sample quality" : (reasonCode === "LOW_DELTA_E_SEPARATION" ? "Ambiguous non-adjacent match" : "Best match clear"));
         const debug = {
           key,
           label: pad.label,
@@ -2522,11 +2696,21 @@ export function initPoolTestScanner(root) {
           trueLowConfidence,
           adjacentMatch,
           variance: Number(variance.toFixed(2)),
+          sampleQuality: sampleMeta?.sampleQuality || null,
+          sampleQualityScore: sampleMeta?.qualityScore == null ? null : Number(sampleMeta.qualityScore.toFixed(2)),
+          samplePixelCount: sampleMeta?.usedPixels ?? null,
+          sampleRejectedPct: sampleMeta?.rejectedPct ?? null,
+          sampleLabVariance: sampleMeta?.labVariance ?? null,
+          sampleAverageLab: sampleMeta?.averageLab || null,
+          sampleRgbVariance: sampleMeta?.rgbVariance ?? null,
+          possibleEdgeContamination: !!sampleMeta?.possibleEdgeContamination,
+          possibleBackingContamination: !!sampleMeta?.possibleBackingContamination,
           confidenceInputs: manualSelection
             ? {
                 deltaESeparationScore: Number(separationScore.toFixed(2)),
                 sampleVarianceScore: Number(varianceScore.toFixed(2)),
-                colorQualityScore: Number(colorQualityScore.toFixed(2))
+                colorQualityScore: Number(colorQualityScore.toFixed(2)),
+                sampleQualityScore: Number(sampleQualityScore.toFixed(2))
               }
             : null,
           topMatches,
@@ -2551,6 +2735,7 @@ export function initPoolTestScanner(root) {
           usableAmbiguous,
           trueLowConfidence,
           adjacentMatch,
+          sampleQuality: sampleMeta?.sampleQuality || null,
           reasonCode
         };
       }
@@ -2683,6 +2868,9 @@ export function initPoolTestScanner(root) {
       }
       if (debug.trueLowConfidence) {
         result.__warnings.push(`${debug.label} sample quality is low. Retest before dosing from this value.`);
+      }
+      if (debug.sampleQuality === "Low") {
+        result.__warnings.push(`${debug.label} pad sample quality is low. Reposition marker or retest before dosing.`);
       }
     });
     if (Object.values(result.__padDebug).some(debug => debug.usableAmbiguous)) {
@@ -2824,7 +3012,7 @@ export function initPoolTestScanner(root) {
         <span class="muted hint">Paper LAB: ${correctionDetails.samplingPaperLab ? escapeHtml(`${Number(correctionDetails.samplingPaperLab.l).toFixed(1)}, ${Number(correctionDetails.samplingPaperLab.a).toFixed(1)}, ${Number(correctionDetails.samplingPaperLab.b).toFixed(1)}`) : "-"}</span>
         <span class="muted hint">Geometry Confidence: ${correctionDetails.geometryConfidence == null ? "-" : `${Math.round(Number(correctionDetails.geometryConfidence) * 100)}%`}</span>
         <span class="muted hint">Color Confidence: ${correctionDetails.colorConfidence == null ? "-" : `${Math.round(Number(correctionDetails.colorConfidence) * 100)}%`}</span>
-        <span class="muted hint">Sample mode: ${correctionDetails.manualSelection ? "manual 15x15 markers" : "automatic detection"}</span>
+        <span class="muted hint">Sample mode: ${correctionDetails.manualSelection ? "manual robust LAB regions" : "automatic detection"}</span>
         <span class="muted hint">Reference colors: ${escapeHtml(correctionDetails.swatchSource || activeSwatchSource)}</span>
       </div>
       ${correctionDetails.samplingOverlayDataUrl ? `<figure class="sampling-overlay"><figcaption>${correctionDetails.manualSelection ? "Manual pad markers and sampled pixels" : "Sampled pixels overlay"}</figcaption><img src="${escapeHtml(correctionDetails.samplingOverlayDataUrl)}" alt="Overlay showing marked pad boxes and sampled pixels"></figure>` : ""}
@@ -2843,6 +3031,9 @@ export function initPoolTestScanner(root) {
           </td>
           <td>${escapeHtml(debug.measuredRgb.r)}, ${escapeHtml(debug.measuredRgb.g)}, ${escapeHtml(debug.measuredRgb.b)}</td>
           <td>${escapeHtml(debug.measuredLab.l)}, ${escapeHtml(debug.measuredLab.a)}, ${escapeHtml(debug.measuredLab.b)}</td>
+          <td>${escapeHtml(debug.sampleQuality ?? "-")}<br><span class="muted hint">pixels: ${escapeHtml(debug.samplePixelCount ?? "-")} | rejected: ${escapeHtml(debug.sampleRejectedPct ?? "-")}%</span></td>
+          <td>${escapeHtml(debug.sampleLabVariance ?? "-")}<br><span class="muted hint">RGB: ${escapeHtml(debug.sampleRgbVariance ?? "-")} | avg LAB: ${debug.sampleAverageLab ? escapeHtml(`${debug.sampleAverageLab.l}, ${debug.sampleAverageLab.a}, ${debug.sampleAverageLab.b}`) : "-"}</span></td>
+          <td>${debug.possibleEdgeContamination ? "edge " : ""}${debug.possibleBackingContamination ? "backing" : ""}${!debug.possibleEdgeContamination && !debug.possibleBackingContamination ? "-" : ""}</td>
           <td>${escapeHtml(debug.displayedValue ?? debug.bestValue)}</td>
           <td>${escapeHtml(debug.bestLabel || debug.bestValue)} (${escapeHtml(debug.bestDeltaE)})</td>
           <td>${escapeHtml(debug.secondLabel ?? debug.secondValue ?? "-")} (${escapeHtml(debug.secondDeltaE ?? "-")})</td>
@@ -2870,6 +3061,9 @@ export function initPoolTestScanner(root) {
               <th>Preview</th>
               <th>RGB</th>
               <th>LAB</th>
+              <th>Sample Quality</th>
+              <th>LAB Variance</th>
+              <th>Contamination</th>
               <th>Displayed</th>
               <th>Best Delta-E</th>
               <th>Second</th>
