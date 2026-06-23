@@ -161,8 +161,8 @@ function buildMessage(check, context) {
   if (check.key === "freeCl" && check.reasonCodes.includes("CLOUDY_OR_GREEN_LOW_CHLORINE")) {
     if (check.adjustedConfidence === "Low") {
       return {
-        message: "Water appearance and chlorine may be pointing in different directions, but the chlorine reading is low confidence.",
-        action: "Retest immediately in indirect daylight before dosing heavily."
+        message: "Water appearance and chlorine may be pointing in different directions.",
+        action: "Use the chlorine reading cautiously and verify before large sanitizer adjustments."
       };
     }
     return {
@@ -172,8 +172,8 @@ function buildMessage(check, context) {
   }
   if (check.reasonCodes.includes("CLEAR_WATER_LOW_CONFIDENCE")) {
     return {
-      message: `${check.parameter} is low confidence, while the water appearance looks good.`,
-      action: "Retest before making a large chemical adjustment."
+      message: `${check.parameter} confidence is reduced, while the water appearance looks good.`,
+      action: "Use this reading cautiously and verify before large adjustments."
     };
   }
   if (check.reasonCodes.includes("WATER_APPEARANCE_DECLINING")) {
@@ -197,7 +197,7 @@ function buildMessage(check, context) {
   if (check.key === "combinedCl" && check.reasonCodes.includes("CHEMISTRY_RELATIONSHIP_WARNING")) {
     return {
       message: "Combined chlorine is elevated, which can mean chloramines are present.",
-      action: "Consider oxidation/shock guidance if the reading is confident; retest first if the chlorine pads were low confidence."
+      action: "Consider oxidation/shock guidance only if both chlorine pads look reliable; otherwise retest chlorine first."
     };
   }
   if (check.key === "bromine" && check.reasonCodes.includes("POSSIBLE_FALSE_BROMINE_MATCH")) {
@@ -215,7 +215,7 @@ function buildMessage(check, context) {
   if (check.reasonCodes.includes("LOW_SAMPLE_QUALITY")) {
     return {
       message: `${check.parameter} pad sample quality is low.`,
-      action: "Reposition the marker near the center of the pad or retest before dosing from this result."
+      action: "Reposition the marker near the center of the pad or use this result cautiously before large adjustments."
     };
   }
   if (check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")) {
@@ -227,7 +227,7 @@ function buildMessage(check, context) {
   if (check.reasonCodes.includes("LOW_DELTA_E_SEPARATION")) {
     return {
       message: `${check.parameter} is close to a non-adjacent chart color, so the match is uncertain.`,
-      action: "Retest or confirm before making a large chemical adjustment."
+      action: "Verify with a retest before large adjustments."
     };
   }
   return {
@@ -241,7 +241,7 @@ function finaliseCheck(check, context) {
   const content = buildMessage(check, context);
   check.message = content.message;
   check.recommendedAction = content.action;
-  if (check.adjustedConfidence === "Low" && check.status === "Plausible") check.status = "Low confidence";
+  if (check.adjustedConfidence === "Low" && check.status === "Plausible") check.status = "Use cautiously";
   return check;
 }
 
@@ -477,7 +477,7 @@ function evaluateContext(vals, context, history, checks) {
           code: "CLEAR_WATER_LOW_CONFIDENCE",
           penalty: 0,
           severity: "Caution",
-          status: "Retest before dosing",
+          status: "Verify reading",
           note: `${APPEARANCE_LABELS[appearance]} water lowers urgency, but does not make unsafe chemistry safe.`
         });
       }
@@ -535,8 +535,8 @@ function groupedLowConfidenceFinding(checks) {
     status: "Retest recommended",
     severity: "Caution",
     reasonCodes: ["LOW_IMAGE_QUALITY"],
-    message: "Several readings have low confidence due to scan conditions.",
-    recommendedAction: "Retest in indirect daylight before making large chemical adjustments.",
+    message: "Several readings have reduced confidence due to scan conditions.",
+    recommendedAction: "Use readings cautiously and verify before large adjustments.",
     notes: low.map(check => check.parameter),
     safetyImpact: 9
   };
@@ -562,7 +562,7 @@ function summaryCopy(summaryState, score, context, scanQuality = null) {
   if (manualSelection && geometryConfidence >= 0.99 && colorConfidence >= 0.75 && summaryState !== "Unknown / Failed Scan" && summaryState !== "Retest Recommended / Low Confidence") {
     return {
       summary: "Manual scan complete. Some values are approximate.",
-      nextAction: "Use any displayed ranges cautiously and retest before large chemical changes.",
+      nextAction: "Use displayed ranges cautiously and make only modest changes until verified.",
       retestTiming: "Normal schedule, or sooner if water appearance changes"
     };
   }
@@ -575,15 +575,15 @@ function summaryCopy(summaryState, score, context, scanQuality = null) {
   }
   if (summaryState === "Retest Recommended / Low Confidence") {
     return {
-      summary: `Pool health is estimated at ${score}/100, but result confidence is low. Retest recommended before dosing.`,
-      nextAction: "Retest before making large chemical adjustments.",
+      summary: `Pool health is estimated at ${score}/100, but some readings should be verified.`,
+      nextAction: "Use readings cautiously and verify before large adjustments.",
       retestTiming: "Now"
     };
   }
   if (summaryState.startsWith("Needs Attention")) {
     return {
       summary: `Pool health is ${score}/100 with ${appearance} water noted. One or more items need attention.`,
-      nextAction: TROUBLED_APPEARANCES.has(context?.waterAppearance) ? "Address sanitizer and filtration after confirming any low-confidence readings." : "Review the top findings before dosing.",
+      nextAction: TROUBLED_APPEARANCES.has(context?.waterAppearance) ? "Address sanitizer and filtration after verifying any uncertain readings." : "Review the top findings before making adjustments.",
       retestTiming: "After treatment or within 24 hours"
     };
   }

@@ -2050,7 +2050,7 @@ export function initPoolTestScanner(root) {
     scanQuality.details.manualAverageSampleVariance = Number(manualAvgVariance.toFixed(2));
     scanQuality.details.manualSampleQualityCounts = { high: sampleQualities.filter(value => value === "High").length, medium: mediumSampleCount, low: lowSampleCount };
     scanQuality.details.manualConfidenceInputs = "Delta-E separation, median LAB variance, rejected pixels, exposure, glare, background contamination";
-    if (lowSampleCount) scanQuality.warnings.push("Pad sample quality is low. Reposition marker or retest before dosing.");
+    if (lowSampleCount) scanQuality.warnings.push("Pad sample quality is low. Reposition marker or verify with a retest before large adjustments.");
 
     const vals = rgbToChemistryEasyTest(padColors, scanQuality, neutralReference);
     vals.__manualPadSelection = true;
@@ -3273,10 +3273,10 @@ export function initPoolTestScanner(root) {
         if (Number.isFinite(a) && Number.isFinite(b)) result.__padRanges[key] = [a, b];
       }
       if (debug.trueLowConfidence) {
-        result.__warnings.push(`${debug.label} sample quality is low. Retest before dosing from this value.`);
+        result.__warnings.push(`${debug.label} sample quality is low. Use this reading cautiously and verify before large adjustments.`);
       }
       if (debug.sampleQuality === "Low") {
-        result.__warnings.push(`${debug.label} pad sample quality is low. Reposition marker or retest before dosing.`);
+        result.__warnings.push(`${debug.label} pad sample quality is low. Reposition marker or retest before large adjustments.`);
       }
     });
     if (Object.values(result.__padDebug).some(debug => debug.usableAmbiguous)) {
@@ -3616,19 +3616,19 @@ export function initPoolTestScanner(root) {
     if (previous && Number.isFinite(Number(previous.cya)) && Number.isFinite(Number(vals.cya))) {
       const jump = Math.abs(Number(vals.cya) - Number(previous.cya));
       if (jump >= 70 && (vals.__cyaConfidence ?? 1) < 0.65) {
-        warnings.push("CYA result has low confidence and differs sharply from the previous scan. Rescan under improved lighting.");
+      warnings.push("CYA confidence is low and differs sharply from the previous scan. Use this reading cautiously.");
       }
     }
     if ((vals.__phConfidence ?? 1) < 0.55 && (vals.ph <= 6.4 || vals.ph >= 8.2)) {
-      warnings.push("pH result is extreme with low confidence. Confirm with a fresh strip or rescan in indirect daylight.");
+      warnings.push("pH confidence is low for an extreme reading. Verify with a retest before large adjustments.");
     }
     if ((vals.__freeClConfidence ?? 1) < 0.55 && (vals.__totalClConfidence ?? 1) < 0.55) {
-      warnings.push("Chlorine pads have low confidence. Confirm under better light before dosing.");
+      warnings.push("Chlorine pad confidence is low. Retest chlorine before large sanitizer adjustments.");
     }
     return warnings;
   }
 
-  function renderRecs(vals) {
+  function renderRecsLegacy(vals) {
     if (!els.recs) return;
     const recs = [];
     const sanity = vals.__sanityCheck || lastSanityCheck || runSanityCheck(vals);
@@ -3675,7 +3675,7 @@ export function initPoolTestScanner(root) {
       const deltaCl = Math.max(0, targets.freeCl - vals.freeCl);
       const ozCl = deltaCl * 10.7 * factor10k;
       const dose = formatWeightOz(ozCl);
-      recs.push(`Free chlorine is low (${vals.freeCl} ppm). Target is about ${targets.freeCl} ppm. ${dose && highConfidence("freeCl") ? `Add about ${dose} of 12% liquid chlorine, then circulate and retest after 30-60 minutes.` : `Confirm free chlorine before dosing from this reading.`}`);
+      recs.push(`Free chlorine is low (${vals.freeCl} ppm). Target is about ${targets.freeCl} ppm. ${dose && highConfidence("freeCl") ? `Add about ${dose} of 12% liquid chlorine, then circulate and retest after 30-60 minutes.` : `Use this free chlorine reading cautiously before large sanitizer adjustments.`}`);
     } else if (vals.freeCl > 3) {
       recs.push(`Free chlorine is high (${vals.freeCl} ppm). Keep the pump running and avoid adding more chlorine so it can drift down.`);
     } else recs.push(`Free chlorine is in a normal range (${vals.freeCl} ppm).`);
@@ -3705,6 +3705,175 @@ export function initPoolTestScanner(root) {
 
     recs.push("These amounts are rough rules of thumb per 10,000 gallons. Always follow product labels and retest between adjustments.");
     els.recs.innerHTML = recs.map(x => `<li>${x}</li>`).join("");
+  }
+
+  function renderRecs(vals) {
+    if (!els.recs) return;
+    const sanity = vals.__sanityCheck || lastSanityCheck || runSanityCheck(vals);
+    const scanNotes = [];
+    const observations = [];
+    const actions = [];
+    const targets = { ph: 7.5, freeCl: 2.5, hardness: 250, alk: 100, cya: 40 };
+    const checkFor = key => sanity?.checks?.find(check => check.key === key);
+    const confidenceFor = key => {
+      const direct = vals[`__${key}Confidence`];
+      if (Number.isFinite(Number(direct))) return clamp01(Number(direct));
+      const check = checkFor(key);
+      if (Number.isFinite(Number(check?.adjustedScore))) return clamp01(Number(check.adjustedScore));
+      return 0.7;
+    };
+    const noteForConfidence = conf => conf < 0.5 ? "low" : conf < 0.7 ? "moderate" : null;
+    const wording = (conf, high, normal, cautious, low) => {
+      if (conf > 0.85) return high;
+      if (conf >= 0.7) return normal;
+      if (conf >= 0.5) return cautious;
+      return low;
+    };
+    const doseText = (dose, text) => poolGallons && dose ? text : "Enter pool volume to calculate exact chemical amounts.";
+    const factor10k = poolGallons ? poolGallons / 10000 : null;
+    const fcConfidence = confidenceFor("freeCl");
+    const tcConfidence = confidenceFor("totalCl");
+    const combinedCl = Math.max(0, Number(vals.totalCl || 0) - Number(vals.freeCl || 0));
+    const combinedEstimated = fcConfidence < 0.7 || tcConfidence < 0.7;
+
+    [
+      ["ph", "pH"],
+      ["freeCl", "Free chlorine"],
+      ["totalCl", "Total chlorine"],
+      ["alk", "Alkalinity"],
+      ["cya", "CYA"],
+      ["hardness", "Hardness"]
+    ].forEach(([key, label]) => {
+      const note = noteForConfidence(confidenceFor(key));
+      if (note) scanNotes.push(`${label} confidence is ${note}. Use this reading cautiously.`);
+    });
+    Array.from(new Set([...(vals.__warnings || []), ...chemistrySanityWarnings(vals)]))
+      .filter(Boolean)
+      .forEach(warning => {
+        const clean = String(warning)
+          .replace(/old harsh dosing warning/gi, "Use this reading cautiously.")
+          .replace(/old harsh adjustment warning/gi, "Verify with a retest before large adjustments.");
+        scanNotes.push(clean);
+      });
+    if (combinedEstimated) scanNotes.push("Combined chlorine is estimated because one chlorine pad has moderate or low confidence.");
+    if (!poolGallons) scanNotes.push("Enter pool volume to calculate exact chemical amounts.");
+
+    if (vals.ph < 7.2) {
+      const deltaPh = Math.max(0, targets.ph - vals.ph);
+      const dose = factor10k ? formatWeightOz((deltaPh / 0.2) * 6 * factor10k) : null;
+      observations.push(`pH appears low (${vals.ph}).`);
+      actions.push(wording(
+        confidenceFor("ph"),
+        `Raise pH slightly toward 7.2-7.6. ${doseText(dose, `Add about ${dose} of pH increaser, split into smaller doses with circulation.`)}`,
+        "pH appears low. Consider a modest pH increase, then retest.",
+        "pH appears low. If the water otherwise looks normal, make a modest correction and retest.",
+        "pH reads low, but confidence is low. Verify with a retest before large adjustments."
+      ));
+    } else if (vals.ph > 7.8) {
+      const deltaPh = Math.max(0, vals.ph - targets.ph);
+      const dose = factor10k ? formatWeightOz((deltaPh / 0.2) * 12 * factor10k) : null;
+      observations.push(`pH appears high (${vals.ph}).`);
+      actions.push(wording(
+        confidenceFor("ph"),
+        `Lower pH gradually toward 7.2-7.6. ${doseText(dose, `Add about ${dose} of pH reducer in divided doses.`)}`,
+        "pH appears high. Consider a modest pH reduction, then retest.",
+        "pH appears high. Use this reading cautiously and make only a modest correction.",
+        "pH reads high, but confidence is low. Verify with a retest before large adjustments."
+      ));
+    } else {
+      observations.push(`pH appears good (${vals.ph}).`);
+      actions.push("pH is in range. No pH adjustment suggested right now.");
+    }
+
+    if (vals.freeCl < 1) {
+      const deltaCl = Math.max(0, targets.freeCl - vals.freeCl);
+      const dose = factor10k ? formatWeightOz(deltaCl * 10.7 * factor10k) : null;
+      observations.push(`Free chlorine appears low (${vals.freeCl} ppm).`);
+      actions.push(wording(
+        fcConfidence,
+        `Raise free chlorine toward 1-3 ppm. ${doseText(dose, `Add about ${dose} of 12% liquid chlorine, circulate, then retest after 30-60 minutes.`)}`,
+        "Free chlorine appears low. Add a modest amount of liquid chlorine and retest tonight.",
+        "Free chlorine appears low. Small corrective dosing may still be appropriate; retest after circulation.",
+        "Free chlorine reads low, but confidence is low. Retest chlorine first before making a large sanitizer adjustment."
+      ));
+    } else if (vals.freeCl > 3) {
+      observations.push(`Free chlorine appears high (${vals.freeCl} ppm).`);
+      actions.push("Avoid adding more chlorine right now; keep water circulating and let sanitizer drift down.");
+    } else {
+      observations.push(`Free chlorine appears good (${vals.freeCl} ppm).`);
+      actions.push("Sanitizer is in the expected range. No chlorine adjustment suggested right now.");
+    }
+
+    observations.push(`Total chlorine reads ${vals.totalCl} ppm.`);
+    if (combinedCl > 0.5) {
+      observations.push(`Combined chlorine ${combinedEstimated ? "may be" : "appears"} elevated (${combinedCl.toFixed(2)} ppm${combinedEstimated ? ", estimated" : ""}).`);
+      if (fcConfidence >= 0.7 && tcConfidence >= 0.7) actions.push("Combined chlorine appears elevated. Consider oxidation/shock guidance per product label, then retest.");
+      else actions.push("Combined chlorine may be elevated. Retest chlorine first if either chlorine pad confidence is low.");
+    } else {
+      observations.push(`Combined chlorine appears acceptable (${combinedCl.toFixed(2)} ppm${combinedEstimated ? ", estimated" : ""}).`);
+    }
+
+    if (vals.alk < 80) {
+      const deltaAlk = Math.max(0, targets.alk - vals.alk);
+      const dose = factor10k ? formatWeightOz((deltaAlk / 10) * 1.5 * 16 * factor10k) : null;
+      observations.push(`Total alkalinity appears low (${vals.alk} ppm).`);
+      actions.push(wording(
+        confidenceFor("alk"),
+        `Raise alkalinity toward 80-120 ppm. ${doseText(dose, `Add about ${dose} of alkalinity increaser in portions with the pump running.`)}`,
+        "Alkalinity appears low. Consider a modest alkalinity increase, then retest.",
+        "Alkalinity appears low. Use this reading cautiously and adjust gradually.",
+        "Alkalinity reads low, but confidence is low. Verify with a retest before large adjustments."
+      ));
+    } else if (vals.alk > 120) {
+      observations.push(`Total alkalinity appears high (${vals.alk} ppm).`);
+      actions.push("Lower alkalinity gradually only if it remains high on retest; pH control usually comes first.");
+    } else {
+      observations.push(`Total alkalinity appears good (${vals.alk} ppm).`);
+    }
+
+    const cyaConfidence = confidenceFor("cya");
+    if (vals.cya < 30) {
+      const deltaCya = Math.max(0, targets.cya - vals.cya);
+      const dose = factor10k ? formatWeightOz((deltaCya / 10) * 13 * factor10k) : null;
+      observations.push(`Cyanuric acid reads low (${vals.cya} ppm).`);
+      if (cyaConfidence < 0.6) actions.push("CYA reads low, but confidence is low. Retest before adjusting stabilizer.");
+      else actions.push(`CYA appears low. ${doseText(dose, `Add about ${dose} of stabilizer gradually per label directions, then retest tomorrow or the next day.`)}`);
+    } else if (vals.cya > 100) {
+      observations.push(`Cyanuric acid reads high (${vals.cya} ppm).`);
+      if (cyaConfidence < 0.6) actions.push("CYA reads high, but confidence is low. Retest before making stabilizer or drain/refill decisions.");
+      else actions.push("CYA appears high. Confirm with a dedicated CYA test before considering partial water replacement.");
+    } else {
+      observations.push(`Cyanuric acid appears acceptable (${vals.cya} ppm).`);
+      if (cyaConfidence < 0.6) actions.push("CYA reads acceptable, but confidence is low. Retest before adjusting stabilizer.");
+    }
+
+    if (vals.hardness < 150) {
+      observations.push(`Total hardness appears low (${vals.hardness} ppm).`);
+      actions.push("Hardness is low. Some pool surfaces may need calcium hardness increaser; adjust gradually if your pool type requires it.");
+    } else if (vals.hardness > 300) {
+      observations.push(`Total hardness appears high (${vals.hardness} ppm).`);
+      actions.push("Hardness is high. Watch for scale and avoid adding calcium unless a product label calls for it.");
+    } else {
+      observations.push(`Total hardness appears acceptable (${vals.hardness} ppm).`);
+    }
+
+    if (poolGallons) {
+      scanNotes.unshift(`Estimated pool volume: about ${poolGallons.toLocaleString()} gallons (~${factor10k.toFixed(2)} x 10,000 gal).`);
+      actions.push("Dose amounts are estimates. Follow product labels and retest between adjustments.");
+    }
+
+    const unique = arr => Array.from(new Set(arr.filter(Boolean)));
+    const renderSection = (title, items, fallback) => `
+      <section class="guidance-section">
+        <h4>${escapeHtml(title)}</h4>
+        <ul>${unique(items).length ? unique(items).map(item => `<li>${escapeHtml(item)}</li>`).join("") : `<li>${escapeHtml(fallback)}</li>`}</ul>
+      </section>
+    `;
+    els.recs.innerHTML = [
+      renderSection("Scan Quality Notes", scanNotes, "No scan quality issues noted."),
+      renderSection("Chemistry Observations", observations, "No chemistry observations yet."),
+      renderSection("Suggested Actions", actions, "No action suggested right now.")
+    ].join("");
   }
 
   // ================================================================
@@ -3836,7 +4005,7 @@ export function initPoolTestScanner(root) {
     if (padCount < 7) {
       lastVals = null;
       renderScanDiagnostics(null);
-      setStatus(`Low confidence: only detected ${padCount}/7 pads. Retake photo (bright light, straight-on, avoid glare, include all pads).`);
+      setStatus(`Scan quality issue: only detected ${padCount}/7 pads. Retake photo in bright indirect light, straight-on, avoiding glare.`);
       els.canvas && (els.canvas.hidden = true);
       return null;
     }
@@ -4186,7 +4355,7 @@ export function initPoolTestScanner(root) {
     updateHomeSummary(null);
 
     els.gallonsDisplay && (els.gallonsDisplay.textContent = "Pool volume: – (enter shape/size or manual gallons)");
-    els.recs && (els.recs.innerHTML = "<li>Local data cleared. Enter pool setup and scan a new strip.</li>");
+    els.recs && (els.recs.innerHTML = `<section class="guidance-section"><h4>Guidance & Suggested Actions</h4><ul><li>Local data cleared. Enter pool setup and scan a new strip.</li></ul></section>`);
     try {
       Object.keys(historyCharts).forEach(k => {
         historyCharts[k]?.destroy?.();
