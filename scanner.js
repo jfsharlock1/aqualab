@@ -363,6 +363,22 @@ export function initPoolTestScanner(root) {
     poolUsage: root.querySelector('[data-pt="poolUsage"]'),
     surfaceCondition: root.querySelector('[data-pt="surfaceCondition"]'),
     historyLog: root.querySelector('[data-pt="historyLog"]'),
+    homeStatusTitle: root.querySelector('[data-pt="homeStatusTitle"]'),
+    homeHealthBadge: root.querySelector('[data-pt="homeHealthBadge"]'),
+    homeLastSummary: root.querySelector('[data-pt="homeLastSummary"]'),
+    homeNextAction: root.querySelector('[data-pt="homeNextAction"]'),
+    homePh: root.querySelector('[data-pt="homePh"]'),
+    homePhStatus: root.querySelector('[data-pt="homePhStatus"]'),
+    homeFreeCl: root.querySelector('[data-pt="homeFreeCl"]'),
+    homeFreeClStatus: root.querySelector('[data-pt="homeFreeClStatus"]'),
+    homeTotalCl: root.querySelector('[data-pt="homeTotalCl"]'),
+    homeTotalClStatus: root.querySelector('[data-pt="homeTotalClStatus"]'),
+    homeAlk: root.querySelector('[data-pt="homeAlk"]'),
+    homeAlkStatus: root.querySelector('[data-pt="homeAlkStatus"]'),
+    homeCya: root.querySelector('[data-pt="homeCya"]'),
+    homeCyaStatus: root.querySelector('[data-pt="homeCyaStatus"]'),
+    homeHardness: root.querySelector('[data-pt="homeHardness"]'),
+    homeHardnessStatus: root.querySelector('[data-pt="homeHardnessStatus"]'),
 
     btnStart: root.querySelector('[data-pt="btnStart"]'),
     btnCapture: root.querySelector('[data-pt="btnCapture"]'),
@@ -385,7 +401,10 @@ export function initPoolTestScanner(root) {
 
     poolToggle: root.querySelector('[data-pt="poolToggle"]'),
     poolToggleGlobal: document.querySelector('[data-pt="poolToggleGlobal"]'),
+    engineerToggle: root.querySelector('[data-pt="engineerToggle"]'),
 
+    poolType: root.querySelector('[data-pt="poolType"]'),
+    sanitizerType: root.querySelector('[data-pt="sanitizerType"]'),
     shape: root.querySelector('[data-pt="shape"]'),
     rectFields: root.querySelector('[data-pt="rectFields"]'),
     roundFields: root.querySelector('[data-pt="roundFields"]'),
@@ -454,6 +473,75 @@ export function initPoolTestScanner(root) {
     .replace(/'/g, "&#039;");
 
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+  const ENGINEER_MODE_KEY = "pt_engineer_mode_v1";
+
+  function setAppView(view) {
+    const next = ["home", "scan", "history", "pool", "more"].includes(view) ? view : "home";
+    root.dataset.activeView = next;
+    document.querySelectorAll("[data-app-nav]").forEach(btn => {
+      btn.classList.toggle("active", btn.getAttribute("data-app-nav") === next);
+    });
+    try { localStorage.setItem("pt_active_view_v1", next); } catch {}
+  }
+
+  function applyEngineerMode(enabled) {
+    root.classList.toggle("engineer-mode", !!enabled);
+    if (els.engineerToggle) els.engineerToggle.checked = !!enabled;
+    try { localStorage.setItem(ENGINEER_MODE_KEY, enabled ? "1" : "0"); } catch {}
+  }
+
+  function readingStatus(key, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "Not tested";
+    if (key === "ph") return n < 7.2 ? "Low" : n > 7.8 ? "High" : "Good";
+    if (key === "freeCl") return n < 1 ? "Low" : n > 3 ? "High" : "Good";
+    if (key === "alk") return n < 80 ? "Low" : n > 120 ? "High" : "Good";
+    if (key === "cya") return n < 30 ? "Low" : n > 100 ? "High" : "Good";
+    if (key === "hardness") return n < 150 ? "Low" : n > 300 ? "High" : "Good";
+    return "Recorded";
+  }
+
+  function updateHomeSummary(vals = lastVals) {
+    const history = loadHistory();
+    const latest = vals || history[history.length - 1] || null;
+    const sanity = vals?.__sanityCheck || lastSanityCheck || null;
+    if (!latest) {
+      if (els.homeStatusTitle) els.homeStatusTitle.textContent = "Ready for a pool check";
+      if (els.homeHealthBadge) {
+        els.homeHealthBadge.className = "tag warn";
+        els.homeHealthBadge.textContent = "No recent test";
+      }
+      return;
+    }
+
+    const score = sanity?.score ?? latest.healthScore ?? null;
+    const summaryState = sanity?.summaryState || latest.summaryState || "Last reading saved";
+    if (els.homeStatusTitle) els.homeStatusTitle.textContent = summaryState;
+    if (els.homeHealthBadge) {
+      const ok = Number(score) >= 80;
+      els.homeHealthBadge.className = `tag ${ok ? "ok" : Number(score) >= 62 ? "warn" : "bad"}`;
+      els.homeHealthBadge.textContent = Number.isFinite(Number(score)) ? `Pool Health ${Math.round(score)}/100` : "Last test saved";
+    }
+    if (els.homeLastSummary) {
+      const when = latest.t ? new Date(latest.t).toLocaleString() : "Current scan";
+      els.homeLastSummary.textContent = `${when}`;
+    }
+    if (els.homeNextAction) {
+      els.homeNextAction.textContent = sanity?.summary?.nextAction || latest.nextAction || "Review results before dosing.";
+    }
+
+    const setReading = (valueEl, statusEl, key, value, unit = "") => {
+      if (valueEl) valueEl.textContent = value == null ? "-" : `${value}${unit}`;
+      if (statusEl) statusEl.textContent = readingStatus(key, value);
+    };
+    setReading(els.homePh, els.homePhStatus, "ph", latest.ph);
+    setReading(els.homeFreeCl, els.homeFreeClStatus, "freeCl", latest.freeCl, latest.freeCl == null ? "" : " ppm");
+    setReading(els.homeTotalCl, els.homeTotalClStatus, "totalCl", latest.totalCl, latest.totalCl == null ? "" : " ppm");
+    setReading(els.homeAlk, els.homeAlkStatus, "alk", latest.alk, latest.alk == null ? "" : " ppm");
+    setReading(els.homeCya, els.homeCyaStatus, "cya", latest.cya, latest.cya == null ? "" : " ppm");
+    setReading(els.homeHardness, els.homeHardnessStatus, "hardness", latest.hardness, latest.hardness == null ? "" : " ppm");
+  }
 
   // ================================================================
   // 4) Calibration + White balance
@@ -3442,6 +3530,7 @@ export function initPoolTestScanner(root) {
         renderSanityCheck(sanity);
         renderRecs(hit.vals);
         renderScanDiagnostics(hit.vals);
+        updateHomeSummary(hit.vals);
         setStatus(`EasyTest scan (cached) | id=${imgHash}`);
         els.canvas && (els.canvas.hidden = true);
         return hit.vals;
@@ -3474,6 +3563,7 @@ export function initPoolTestScanner(root) {
     renderSanityCheck(sanity);
     renderRecs(vals);
     renderScanDiagnostics(vals);
+    updateHomeSummary(vals);
     let statusPrefix = scanQuality.score < 55
       ? "Low scan quality. Move to indirect daylight and rescan."
       : "EasyTest scan";
@@ -3538,6 +3628,8 @@ export function initPoolTestScanner(root) {
     if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
     saveHistory(history);
     renderHistoryCharts(history);
+    renderHistoryLog(history);
+    updateHomeSummary(vals);
   }
 
   function renderHistoryLog(historyOpt) {
@@ -3547,17 +3639,19 @@ export function initPoolTestScanner(root) {
       els.historyLog.innerHTML = `<p class="muted hint">No saved readings yet.</p>`;
       return;
     }
-    const recent = history.slice(-5).reverse();
+    const recent = history.slice(-12).reverse();
     els.historyLog.innerHTML = `
-      <h3>Recent Saved Context</h3>
+      <h3>Recent Tests</h3>
       <div class="history-log-list">
         ${recent.map(item => `
           <article class="history-log-item">
-            <strong>${escapeHtml(new Date(item.t || Date.now()).toLocaleString())}</strong>
+            <div class="history-log-head">
+              <strong>${escapeHtml(new Date(item.t || Date.now()).toLocaleString())}</strong>
+              <span class="tag ${Number(item.sanityCheck?.score ?? 0) >= 80 ? "ok" : "warn"}">${escapeHtml(item.sanityCheck?.summaryState || "Saved")}</span>
+            </div>
+            <span>pH ${escapeHtml(item.ph ?? "-")} | FC ${escapeHtml(item.freeCl ?? "-")} ppm | TC ${escapeHtml(item.totalCl ?? "-")} ppm</span>
+            <span>Alk ${escapeHtml(item.alk ?? "-")} ppm | CYA ${escapeHtml(item.cya ?? "-")} ppm | Hardness ${escapeHtml(item.hardness ?? "-")} ppm</span>
             <span>${escapeHtml(poolContextLabel("waterAppearance", item.waterAppearance))}</span>
-            <span>Rain: ${escapeHtml(poolContextLabel("recentRain", item.recentRain))}</span>
-            <span>Usage: ${escapeHtml(poolContextLabel("poolUsage", item.poolUsage))}</span>
-            <span>Surface: ${escapeHtml(poolContextLabel("surfaceCondition", item.surfaceCondition))}</span>
           </article>
         `).join("")}
       </div>
@@ -3666,6 +3760,8 @@ export function initPoolTestScanner(root) {
 
   function savePoolSetup() {
     const conf = {
+      poolType: els.poolType?.value || "inGround",
+      sanitizerType: els.sanitizerType?.value || "chlorine",
       shape: els.shape?.value || "rect",
       rectLen: getNum(els.rectLen),
       rectWid: getNum(els.rectWid),
@@ -3693,6 +3789,8 @@ export function initPoolTestScanner(root) {
 
     try {
       const conf = JSON.parse(raw);
+      if (conf.poolType && els.poolType) els.poolType.value = conf.poolType;
+      if (conf.sanitizerType && els.sanitizerType) els.sanitizerType.value = conf.sanitizerType;
       if (conf.shape && els.shape) els.shape.value = conf.shape;
       if (els.rectLen && conf.rectLen != null) els.rectLen.value = conf.rectLen;
       if (els.rectWid && conf.rectWid != null) els.rectWid.value = conf.rectWid;
@@ -3812,6 +3910,10 @@ export function initPoolTestScanner(root) {
   });
 
   // Phone-first buttons
+  document.querySelectorAll("[data-app-nav]").forEach(btn => {
+    btn.addEventListener("click", () => setAppView(btn.getAttribute("data-app-nav")));
+  });
+  els.engineerToggle?.addEventListener("change", () => applyEngineerMode(els.engineerToggle.checked));
   els.btnTakePhoto?.addEventListener("click", () => els.takeInput?.click());
   els.btnChoosePhoto?.addEventListener("click", () => els.fileInput?.click());
   els.calibrationSourceInputs?.forEach(input => {
@@ -3923,7 +4025,8 @@ export function initPoolTestScanner(root) {
   });
 
   els.shape?.addEventListener("change", () => { updateShapeVisibility(); savePoolSetup(); });
-  [els.rectLen, els.rectWid, els.roundDia, els.ovalLen, els.ovalWid, els.depthShallow, els.depthDeep, els.gallonsManual]
+  [els.poolType, els.sanitizerType].forEach(el => el?.addEventListener("change", savePoolSetup));
+  [els.poolType, els.sanitizerType, els.rectLen, els.rectWid, els.roundDia, els.ovalLen, els.ovalWid, els.depthShallow, els.depthDeep, els.gallonsManual]
     .forEach(el => el?.addEventListener("input", savePoolSetup));
 
   els.btnCalcGallons?.addEventListener("click", calcGallons);
@@ -3949,8 +4052,11 @@ export function initPoolTestScanner(root) {
   loadEasyTestReferenceSwatches();
   loadPoolSetup();
   applyPoolContextInputs();
+  applyEngineerMode((() => { try { return localStorage.getItem(ENGINEER_MODE_KEY) === "1"; } catch { return false; } })());
+  setAppView((() => { try { return localStorage.getItem("pt_active_view_v1") || "home"; } catch { return "home"; } })());
   renderHistoryCharts();
   renderHistoryLog();
+  updateHomeSummary();
   listCameras();
   applyScannerMode();
 

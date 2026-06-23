@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=18" />
+  <link rel="stylesheet" href="pooltest.css?v=19" />
 </head>
 
 <body>
@@ -23,45 +23,83 @@
       <div class="logo"></div>
       <div class="titling">
         <h1>AquaLab</h1>
-        <div class="muted">Pool chemistry scanning and field sensing</div>
+        <div class="muted">Pool chemistry, simplified</div>
       </div>
     </div>
     <nav class="pt-nav">
-      <a href="./index.html" class="active" aria-current="page">Test Strip Scan</a>
-      <a href="./sensors.html">Sensor Array</a>
-      <a href="calibrate.html">Calibration Lab</a>
-      <button type="button" class="btn-ghost" data-pt="poolToggleGlobal">Pool Setup</button>
+      <button type="button" class="btn-ghost" data-app-nav="scan">Scan</button>
+      <button type="button" class="btn-ghost" data-app-nav="history">History</button>
+      <button type="button" class="btn-ghost" data-app-nav="pool">Pool</button>
+      <button type="button" class="btn-ghost" data-app-nav="more">More</button>
     </nav>
   </header>
 
-  <main class="container grid grid-2 pooltest app-workspace">
-    <section class="mode-hero full-width">
+  <main class="container grid grid-2 pooltest app-workspace mobile-app" data-active-view="home">
+    <section class="mode-hero full-width app-view home-screen" data-app-view="home">
       <div>
-        <span class="section-eyebrow">Test Strip Scan</span>
-        <h2>Capture, validate, and classify an EasyTest 7-in-1 strip.</h2>
+        <span class="section-eyebrow">AquaLab</span>
+        <h2 data-pt="homeStatusTitle">Ready for a pool check</h2>
         <p class="muted">
-          Start with a photo, crop the strip, review scan quality, then save results to this device.
+          Scan an EasyTest strip, review confidence, and see the next best action.
         </p>
       </div>
       <div class="mode-hero-actions">
-        <span data-pt="scanQuality" class="tag warn">Scan quality: not evaluated</span>
+        <span data-pt="homeHealthBadge" class="tag warn">No recent test</span>
+      </div>
+
+      <div class="home-actions">
+        <button type="button" data-app-nav="scan">Scan New Strip</button>
+        <button type="button" class="btn-ghost" data-app-nav="history">View History</button>
+      </div>
+
+      <div class="home-summary-card">
+        <span class="section-eyebrow">Last Test</span>
+        <h3 data-pt="homeLastSummary">No saved reading yet</h3>
+        <p class="muted" data-pt="homeNextAction">Scan a strip to get pool status and guidance.</p>
+      </div>
+
+      <div class="result-card-grid home-reading-grid">
+        <div class="reading-card"><span>pH</span><strong data-pt="homePh">-</strong><small data-pt="homePhStatus">Not tested</small></div>
+        <div class="reading-card"><span>Free Chlorine</span><strong data-pt="homeFreeCl">-</strong><small data-pt="homeFreeClStatus">Not tested</small></div>
+        <div class="reading-card"><span>Total Chlorine</span><strong data-pt="homeTotalCl">-</strong><small data-pt="homeTotalClStatus">Not tested</small></div>
+        <div class="reading-card"><span>Alkalinity</span><strong data-pt="homeAlk">-</strong><small data-pt="homeAlkStatus">Not tested</small></div>
+        <div class="reading-card"><span>CYA</span><strong data-pt="homeCya">-</strong><small data-pt="homeCyaStatus">Not tested</small></div>
+        <div class="reading-card"><span>Hardness</span><strong data-pt="homeHardness">-</strong><small data-pt="homeHardnessStatus">Not tested</small></div>
       </div>
     </section>
 
     <!-- Pool setup / gallons -->
-    <section class="card workflow-card pool-setup-card" data-pt="poolCard">
+    <section class="card workflow-card pool-setup-card app-view" data-app-view="pool" data-pt="poolCard">
       <div class="card-header-row">
         <div>
-          <span class="section-eyebrow">Setup</span>
-          <h2>Pool Volume</h2>
+          <span class="section-eyebrow">Pool</span>
+          <h2>Pool Settings</h2>
         </div>
-        <button type="button" class="card-toggle btn-ghost" data-pt="poolToggle">Hide</button>
+        <span class="tag ok">Set and forget</span>
       </div>
 
       <div class="card-body" data-pt="poolBody">
         <p class="muted hint">
           Enter pool shape and size so the app can estimate gallons and scale chemical recommendations.
         </p>
+
+        <div class="field">
+          <label>Pool type</label>
+          <select data-pt="poolType">
+            <option value="inGround">In-ground</option>
+            <option value="aboveGround">Above-ground</option>
+            <option value="spa">Spa / hot tub</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Sanitizer type</label>
+          <select data-pt="sanitizerType">
+            <option value="chlorine">Chlorine</option>
+            <option value="salt">Salt chlorine generator</option>
+            <option value="bromine">Bromine</option>
+          </select>
+        </div>
 
         <div class="field">
           <label>Pool shape</label>
@@ -127,13 +165,22 @@
     </section>
 
     <!-- Scanner -->
-    <section class="card workflow-card scan-card">
+    <section class="card workflow-card scan-card app-view" data-app-view="scan">
       <div class="card-header-row">
         <div>
-          <span class="section-eyebrow">Step 1</span>
-          <h2>Scan Strip</h2>
+          <span class="section-eyebrow">Scan</span>
+          <h2>New Test Strip Reading</h2>
         </div>
         <span class="tag ok">EasyTest 7-in-1</span>
+      </div>
+
+      <div class="scan-step-card">
+        <span class="section-eyebrow">Step 1</span>
+        <h3>Select Method</h3>
+        <div class="segmented-control">
+          <label><input type="radio" checked><span>Test Strip</span></label>
+          <label><input type="radio" disabled><span>Sensor Array Coming Soon</span></label>
+        </div>
       </div>
 
       <!-- Camera chooser (desktop/tablet) -->
@@ -162,23 +209,6 @@
 
           <input data-pt="takeInput" type="file" accept="image/*" capture="environment" hidden />
           <input data-pt="fileInput" type="file" accept="image/*" hidden />
-        </div>
-      </div>
-
-      <div class="calibration-source-panel">
-        <div class="field">
-          <label>Calibration Source</label>
-          <div class="segmented-control" role="radiogroup" aria-label="Calibration Source">
-            <label>
-              <input type="radio" name="calibrationSource" value="builtin" data-pt="calibrationSource" checked>
-              <span>EasyTest 7-in-1 (Built In)</span>
-            </label>
-            <label>
-              <input type="radio" name="calibrationSource" value="manual" data-pt="calibrationSource">
-              <span>Manual / Custom Chart</span>
-            </label>
-          </div>
-          <small class="muted" data-pt="calibrationSourceStatus">Built-in EasyTest 7-in-1 calibration loaded</small>
         </div>
       </div>
 
@@ -225,7 +255,7 @@
     </section>
 
     <!-- Results -->
-    <section class="card full-width result-panel">
+    <section class="card full-width result-panel app-view" data-app-view="scan">
       <div class="card-header-row">
         <div>
           <span class="section-eyebrow">Step 2</span>
@@ -234,7 +264,7 @@
         <button type="button" class="btn-ghost" data-pt="btnRecalc">Recalculate Tips</button>
       </div>
 
-      <div class="bars">
+      <div class="bars result-card-grid">
         <div class="row"><h3>pH</h3><span data-pt="tagPh" class="tag">–</span></div>
         <div class="bar"><span data-pt="barPh"></span></div>
 
@@ -325,7 +355,39 @@
       <ul data-pt="recs" class="muted"></ul>
     </section>
 
-    <section class="card full-width debug-card">
+    <section class="card full-width more-card app-view" data-app-view="more">
+      <span class="section-eyebrow">More</span>
+      <h2>Advanced Tools</h2>
+      <div class="more-list">
+        <a class="more-row" href="./calibrate.html"><strong>Calibration Lab</strong><span>Built-in EasyTest profile and manual custom chart</span></a>
+        <a class="more-row" href="./sensors.html"><strong>Sensor Array</strong><span>Advanced setup</span></a>
+        <div class="more-row">
+          <strong>Calibration Source</strong>
+          <div class="segmented-control" role="radiogroup" aria-label="Calibration Source">
+            <label>
+              <input type="radio" name="calibrationSource" value="builtin" data-pt="calibrationSource" checked>
+              <span>EasyTest Built In</span>
+            </label>
+            <label>
+              <input type="radio" name="calibrationSource" value="manual" data-pt="calibrationSource">
+              <span>Manual Chart</span>
+            </label>
+          </div>
+          <small class="muted" data-pt="calibrationSourceStatus">Built-in EasyTest 7-in-1 calibration loaded</small>
+        </div>
+        <label class="more-row engineer-toggle-row">
+          <strong>Engineer Mode</strong>
+          <span>Show LAB, Delta-E, sample quality, calibration diagnostics, and reason codes</span>
+          <input type="checkbox" data-pt="engineerToggle">
+        </label>
+        <div class="row row-wrap">
+          <button type="button" class="btn-ghost" data-pt="btnClearCache">Clear Scan Cache</button>
+          <button type="button" class="btn-ghost" data-pt="btnExportDataset">Export Data</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card full-width debug-card app-view engineer-only" data-app-view="more">
       <details class="scan-debug-panel">
         <summary>Advanced Scan Diagnostics</summary>
         <div data-pt="scanDebug">
@@ -339,7 +401,7 @@
     </section>
 
     <!-- History -->
-    <section class="card full-width history-card">
+    <section class="card full-width history-card app-view" data-app-view="history">
       <span class="section-eyebrow">Step 3</span>
       <h2>History</h2>
       <p class="muted hint">Each point is a reading saved in this browser using local storage.</p>
@@ -349,13 +411,6 @@
           Clear Saved Data (this device)
         </button>
 
-        <button type="button" class="btn-ghost" data-pt="btnClearCache">
-          Clear Scan Cache (debug)
-        </button>
-
-        <button type="button" class="btn-ghost" data-pt="btnExportDataset">
-          Export Calibration Dataset
-        </button>
       </div>
 
       <div class="history-grid">
@@ -369,6 +424,14 @@
     </section>
   </main>
 
+  <nav class="bottom-nav" aria-label="Main navigation">
+    <button type="button" data-app-nav="home" class="active">Home</button>
+    <button type="button" data-app-nav="scan">Scan</button>
+    <button type="button" data-app-nav="history">History</button>
+    <button type="button" data-app-nav="pool">Pool</button>
+    <button type="button" data-app-nav="more">More</button>
+  </nav>
+
   <footer class="pt-footer">
     <small class="muted">
       Student science project — dosing math uses standard pool-chem rules per 10,000 gallons.
@@ -379,7 +442,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev30";
+    import { initPoolTestScanner } from "./scanner.js?v=dev31";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>
