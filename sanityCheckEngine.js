@@ -112,6 +112,251 @@ function rawConfidenceScore(vals, key) {
   return 0.7;
 }
 
+function getPoolGallons(context = {}) {
+  const direct = toNumber(context.gallons);
+  if (direct != null && direct > 0) return direct;
+  const profile = context.poolContext || context.profile || context.poolProfile || {};
+  const nested = toNumber(profile.gallons || profile.poolGallons || profile.volumeGallons);
+  return nested != null && nested > 0 ? nested : null;
+}
+
+function formatDoseAmount(amount, unit = "oz") {
+  const n = toNumber(amount);
+  if (n == null || n <= 0) return null;
+  if (unit === "flOz") {
+    if (n >= 128) {
+      const gallons = n / 128;
+      return `${Number(gallons.toFixed(gallons >= 10 ? 1 : 2))} gal`;
+    }
+    return `${Number(n.toFixed(n >= 10 ? 0 : 1))} fl oz`;
+  }
+  if (n >= 16) {
+    const pounds = n / 16;
+    return `${Number(pounds.toFixed(pounds >= 10 ? 1 : 2))} lb`;
+  }
+  return `${Number(n.toFixed(n >= 10 ? 0 : 1))} oz`;
+}
+
+function confidenceTone(score, high, medium, cautious, low) {
+  const n = clamp(Number(score ?? 0.7), 0, 1);
+  if (n > 0.85) return high;
+  if (n >= 0.7) return medium;
+  if (n >= 0.5) return cautious;
+  return low;
+}
+
+function treatmentItem({ key, priority = "Medium", title, chemical, amountOz = null, amountUnit = "oz", amountText = null, reason, target, confidenceScore = 0.7, retest = "Retest in 4-24 hours", confidenceNote = "" }) {
+  const confidence = confidenceLabel(confidenceScore);
+  return {
+    key,
+    priority,
+    title,
+    chemical,
+    amountOz: amountOz == null ? null : Number(Number(amountOz).toFixed(2)),
+    amountText: amountText || (amountOz == null ? "Enter pool volume to calculate exact dosing." : formatDoseAmount(amountOz, amountUnit)),
+    reason,
+    target,
+    confidence,
+    confidenceScore: Number(clamp(confidenceScore, 0, 1).toFixed(2)),
+    confidenceNote,
+    retest
+  };
+}
+
+function buildTreatmentRecommendations(vals, context = {}, history = []) {
+  const treatments = [];
+  const gallons = getPoolGallons(context);
+  const factor10k = gallons ? gallons / 10000 : null;
+  const recentActions = Array.isArray(context.recentActions) ? context.recentActions : [];
+  const hasRecent = keys => recentActions.some(action => keys.includes(action));
+  const push = item => treatments.push(treatmentItem(item));
+
+  const ph = toNumber(vals.ph);
+  const phConfidence = rawConfidenceScore(vals, "ph");
+  if (ph != null && ph < 7.2) {
+    const correction = Math.min(0.4, Math.max(0, 7.2 - ph));
+    const oz = factor10k ? (correction / 0.2) * 6 * factor10k : null;
+    const recent = hasRecent(["phIncreaser", "phReducer", "alkalinityAdjustment"]);
+    push({
+      key: "phUp",
+      priority: ph < 6.8 ? "High" : "Medium",
+      title: "Raise pH",
+      chemical: "pH increaser / soda ash",
+      amountOz: oz,
+      reason: "pH is below the target range.",
+      target: "Raise pH toward 7.2-7.6",
+      confidenceScore: phConfidence,
+      confidenceNote: recent
+        ? "A pH product was reported recently. Retest before another large pH correction."
+        : confidenceTone(phConfidence, "", "", "Use a modest correction and retest.", "Reading suggests low pH, but confidence is low. Retest before a large pH adjustment."),
+      retest: "Retest in 4-24 hours"
+    });
+  } else if (ph != null && ph > 7.8) {
+    const correction = Math.min(0.4, Math.max(0, ph - 7.6));
+    const oz = factor10k ? (correction / 0.2) * 4 * factor10k : null;
+    const recent = hasRecent(["phReducer", "phIncreaser", "alkalinityAdjustment"]);
+    push({
+      key: "phDown",
+      priority: ph > 8.2 ? "High" : "Medium",
+      title: "Lower pH",
+      chemical: "pH reducer / dry acid",
+      amountOz: oz,
+      reason: "pH is above the target range.",
+      target: "Lower pH toward 7.2-7.6",
+      confidenceScore: phConfidence,
+      confidenceNote: recent
+        ? "A pH product was reported recently. Retest before another large pH correction."
+        : confidenceTone(phConfidence, "", "", "Use a modest correction and retest.", "Reading suggests high pH, but confidence is low. Retest before a large pH adjustment."),
+      retest: "Retest in 4-24 hours"
+    });
+  }
+
+  const freeCl = toNumber(vals.freeCl);
+  const cya = toNumber(vals.cya);
+  const fcConfidence = rawConfidenceScore(vals, "freeCl");
+  const chlorineTarget = cya == null || cya <= 50 ? 3 : cya <= 80 ? 5 : 7;
+  if (cya != null && cya > 80) {
+    treatments.push(treatmentItem({
+      key: "highCyaNote",
+      priority: "Medium",
+      title: "Stabilizer is high",
+      chemical: "No added stabilizer",
+      amountOz: null,
+      amountText: "No stabilizer dose recommended.",
+      reason: "High CYA requires a higher free chlorine target.",
+      target: `Target free chlorine: ${chlorineTarget} ppm`,
+      confidenceScore: rawConfidenceScore(vals, "cya"),
+      confidenceNote: "Consider partial drain/refill guidance if confirmed.",
+      retest: "Confirm CYA before water replacement decisions"
+    }));
+  }
+  if (freeCl != null && freeCl < chlorineTarget) {
+    const ppmIncrease = Math.max(0, chlorineTarget - freeCl);
+    const flOz = factor10k ? factor10k * (ppmIncrease / 10) * 128 : null;
+    const recent = hasRecent(["liquidChlorine", "shock", "chlorineTablets"]);
+    push({
+      key: "liquidChlorine",
+      priority: freeCl < 1 ? "High" : "Medium",
+      title: "Raise free chlorine",
+      chemical: "10% liquid chlorine",
+      amountOz: flOz,
+      amountUnit: "flOz",
+      reason: "Free chlorine is below the target for the current CYA level.",
+      target: `Target free chlorine: ${chlorineTarget} ppm`,
+      confidenceScore: fcConfidence,
+      confidenceNote: recent
+        ? "Chlorine or shock was reported recently. Retest before adding more unless water is cloudy or green."
+        : confidenceTone(fcConfidence, "", "", "Small corrective dosing may still be appropriate; retest after circulation.", "Reading suggests low chlorine, but confidence is low. Retest chlorine before a large sanitizer adjustment."),
+      retest: "Retest after 30-60 minutes of circulation"
+    });
+  }
+
+  const alk = toNumber(vals.alk);
+  const alkConfidence = rawConfidenceScore(vals, "alk");
+  if (alk != null && alk < 80) {
+    const ppmIncrease = Math.max(0, 100 - alk);
+    const oz = factor10k ? (ppmIncrease / 10) * 1.5 * 16 * factor10k : null;
+    push({
+      key: "alkUp",
+      priority: "Medium",
+      title: "Raise alkalinity",
+      chemical: "Alkalinity increaser / baking soda",
+      amountOz: oz,
+      reason: "Total alkalinity is below the target range.",
+      target: "Raise alkalinity toward 80-120 ppm",
+      confidenceScore: alkConfidence,
+      confidenceNote: confidenceTone(alkConfidence, "", "", "Use a gradual correction and retest.", "Reading suggests low alkalinity, but confidence is low. Retest before a large adjustment."),
+      retest: "Retest in 4-24 hours"
+    });
+  } else if (alk != null && alk > 140) {
+    push({
+      key: "alkHigh",
+      priority: "Medium",
+      title: "Lower alkalinity gradually",
+      chemical: "Acid plus aeration process",
+      amountOz: null,
+      amountText: "No single-dose correction recommended.",
+      reason: "Total alkalinity is above the normal range.",
+      target: "Lower alkalinity gradually; do not make one large correction.",
+      confidenceScore: alkConfidence,
+      confidenceNote: "Manage pH carefully and aerate between small acid additions.",
+      retest: "Retest after each small adjustment cycle"
+    });
+  }
+
+  const cyaConfidence = rawConfidenceScore(vals, "cya");
+  if (cya != null && cya < 30) {
+    const recent = hasRecent(["stabilizer", "chlorineTablets"]);
+    if (cyaConfidence < 0.6 || recent) {
+      push({
+        key: "cyaRetest",
+        priority: "Medium",
+        title: "Verify stabilizer",
+        chemical: "No stabilizer dose yet",
+        amountOz: null,
+        amountText: "No stabilizer dose until verified.",
+        reason: recent ? "Stabilizer or tablets were reported recently." : "CYA reads low, but confidence is low.",
+        target: "Confirm CYA before adding stabilizer",
+        confidenceScore: cyaConfidence,
+        confidenceNote: "Retest before adjusting stabilizer.",
+        retest: "Retest tomorrow or with a dedicated CYA test"
+      });
+    } else {
+      const ppmIncrease = Math.max(0, 40 - cya);
+      const oz = factor10k ? (ppmIncrease / 10) * 13 * factor10k : null;
+      push({
+        key: "cyaUp",
+        priority: "Medium",
+        title: "Raise stabilizer",
+        chemical: "Cyanuric acid / stabilizer",
+        amountOz: oz,
+        reason: "CYA is below the target range for a standard chlorine pool.",
+        target: "Raise CYA toward 30-50 ppm",
+        confidenceScore: cyaConfidence,
+        confidenceNote: "",
+        retest: "Retest in 24-48 hours"
+      });
+    }
+  } else if (cya != null && cya > 80) {
+    push({
+      key: "cyaHigh",
+      priority: "High",
+      title: "Reduce stabilizer level",
+      chemical: "Partial drain/refill guidance",
+      amountOz: null,
+      amountText: "No chemical dose recommended.",
+      reason: "CYA is high; adding more chemicals will not lower it.",
+      target: "Bring CYA back toward 30-50 ppm",
+      confidenceScore: cyaConfidence,
+      confidenceNote: cyaConfidence < 0.6 ? "CYA confidence is low. Confirm before water replacement decisions." : "",
+      retest: "Confirm CYA before drain/refill decisions"
+    });
+  }
+
+  const hardness = toNumber(vals.hardness);
+  const hardnessConfidence = rawConfidenceScore(vals, "hardness");
+  const poolType = context.poolType || context.siteType || context.poolContext?.poolType || "";
+  const surface = context.surfaceType || context.surfaceCondition || "";
+  const calciumSupported = /plaster|concrete|gunite|quartz|pebble/i.test(surface);
+  if (hardness != null && hardness < 200 && calciumSupported) {
+    push({
+      key: "hardnessUp",
+      priority: "Low",
+      title: "Review calcium hardness",
+      chemical: "Calcium hardness increaser",
+      amountOz: null,
+      amountText: "Confirm surface type before dosing.",
+      reason: "Hardness may be low for plaster/concrete surfaces.",
+      target: "Plaster/concrete pools often target roughly 200-400 ppm",
+      confidenceScore: hardnessConfidence,
+      confidenceNote: "Surface type matters. Confirm pool surface before adding calcium.",
+      retest: "Retest before adding calcium"
+    });
+  }
+
+  return treatments;
+}
+
 function applyAdjustment(check, { code, penalty = 0.1, severity = "Caution", status = "Review", note }) {
   if (!check.reasonCodes.includes(code)) check.reasonCodes.push(code);
   check.adjustedScore = clamp(check.adjustedScore - penalty, 0, 1);
@@ -642,6 +887,7 @@ export function runStripSanityCheck(vals, context = {}) {
   const asksForContext = reasonCodes.includes("UNLIKELY_HISTORY_JUMP") && !recentActions.length;
   const summaryState = buildSummaryState(Math.round(health.score), scoreConfidence, allFindings, scanQuality);
   const summary = summaryCopy(summaryState, Math.round(health.score), context, scanQuality);
+  const treatments = buildTreatmentRecommendations(vals, { ...context, recentActions }, history);
 
   return {
     source: "strip",
@@ -663,6 +909,7 @@ export function runStripSanityCheck(vals, context = {}) {
     checks,
     topFindings,
     allFindings,
+    treatments,
     reasonCodes,
     asksForContext,
     contextQuestion: asksForContext

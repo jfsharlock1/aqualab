@@ -3472,7 +3472,10 @@ export function initPoolTestScanner(root) {
     lastSanityCheck = runStripSanityCheck(vals, {
       history: loadHistory(),
       recentActions: loadSanityContext().recentActions,
-      poolContext: { gallons: poolGallons },
+      gallons: poolGallons,
+      poolContext: { gallons: poolGallons, poolType: els.poolType?.value || "inGround", sanitizerType: els.sanitizerType?.value || "chlorine" },
+      poolType: els.poolType?.value || "inGround",
+      sanitizerType: els.sanitizerType?.value || "chlorine",
       ...poolContext
     });
     vals.__poolContext = poolContext;
@@ -3863,6 +3866,32 @@ export function initPoolTestScanner(root) {
     }
 
     const unique = arr => Array.from(new Set(arr.filter(Boolean)));
+    const treatments = Array.isArray(sanity?.treatments) ? sanity.treatments : [];
+    const treatmentCards = treatments.length
+      ? treatments.map(treatment => `
+        <article class="treatment-card ${escapeHtml(String(treatment.priority || "Medium").toLowerCase())}">
+          <div class="treatment-card-head">
+            <strong>${escapeHtml(treatment.title)}</strong>
+            <span class="tag">${escapeHtml(treatment.priority || "Medium")}</span>
+          </div>
+          <dl>
+            <div><dt>Chemical</dt><dd>${escapeHtml(treatment.chemical || "-")}</dd></div>
+            <div><dt>Dose</dt><dd>${escapeHtml(treatment.amountText || "Enter pool volume to calculate exact dosing.")}</dd></div>
+            <div><dt>Reason</dt><dd>${escapeHtml(treatment.reason || "-")}</dd></div>
+            <div><dt>Target</dt><dd>${escapeHtml(treatment.target || "-")}</dd></div>
+            <div><dt>Retest</dt><dd>${escapeHtml(treatment.retest || "-")}</dd></div>
+          </dl>
+          ${treatment.confidenceNote ? `<p class="muted">${escapeHtml(treatment.confidenceNote)}</p>` : ""}
+        </article>
+      `).join("")
+      : `<article class="treatment-card"><strong>Water is in good range.</strong><p class="muted">No chemical dosing recommended from this scan.</p></article>`;
+    const renderTreatmentSection = () => `
+      <section class="guidance-section treatment-section">
+        <h4>Recommended Treatment</h4>
+        <div class="treatment-card-list">${treatmentCards}</div>
+        <small class="muted">Dose estimates are conservative. Follow product label directions, circulate water, and retest before additional adjustments.</small>
+      </section>
+    `;
     const renderSection = (title, items, fallback) => `
       <section class="guidance-section">
         <h4>${escapeHtml(title)}</h4>
@@ -3870,9 +3899,9 @@ export function initPoolTestScanner(root) {
       </section>
     `;
     els.recs.innerHTML = [
-      renderSection("Scan Quality Notes", scanNotes, "No scan quality issues noted."),
+      renderTreatmentSection(),
       renderSection("Chemistry Observations", observations, "No chemistry observations yet."),
-      renderSection("Suggested Actions", actions, "No action suggested right now.")
+      renderSection("Scan Quality Notes", scanNotes, "No scan quality issues noted.")
     ].join("");
   }
 
@@ -4355,7 +4384,7 @@ export function initPoolTestScanner(root) {
     updateHomeSummary(null);
 
     els.gallonsDisplay && (els.gallonsDisplay.textContent = "Pool volume: – (enter shape/size or manual gallons)");
-    els.recs && (els.recs.innerHTML = `<section class="guidance-section"><h4>Guidance & Suggested Actions</h4><ul><li>Local data cleared. Enter pool setup and scan a new strip.</li></ul></section>`);
+    els.recs && (els.recs.innerHTML = `<section class="guidance-section"><h4>Guidance & Recommended Treatment</h4><ul><li>Local data cleared. Enter pool setup and scan a new strip.</li></ul></section>`);
     try {
       Object.keys(historyCharts).forEach(k => {
         historyCharts[k]?.destroy?.();

@@ -967,6 +967,66 @@ button:hover:not(:disabled),
   margin-top: 6px;
 }
 
+.treatment-card-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.treatment-card {
+  border: 1px solid rgba(56,189,248,0.24);
+  border-radius: 12px;
+  background: rgba(2,132,199,0.1);
+  padding: 12px;
+}
+
+.treatment-card.high {
+  border-color: rgba(239,68,68,0.46);
+}
+
+.treatment-card.low {
+  border-color: rgba(148,163,184,0.32);
+}
+
+.treatment-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.treatment-card-head strong {
+  color: var(--fg);
+}
+
+.treatment-card dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.treatment-card dl div {
+  display: grid;
+  gap: 2px;
+}
+
+.treatment-card dt {
+  color: #bae6fd;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.treatment-card dd {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+.treatment-card p {
+  margin: 10px 0 0;
+}
+
 .scan-debug-panel summary {
   cursor: pointer;
   font-weight: 700;
