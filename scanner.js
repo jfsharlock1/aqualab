@@ -379,6 +379,7 @@ export function initPoolTestScanner(root) {
     homeCyaStatus: root.querySelector('[data-pt="homeCyaStatus"]'),
     homeHardness: root.querySelector('[data-pt="homeHardness"]'),
     homeHardnessStatus: root.querySelector('[data-pt="homeHardnessStatus"]'),
+    betaStats: root.querySelector('[data-pt="betaStats"]'),
 
     btnStart: root.querySelector('[data-pt="btnStart"]'),
     btnCapture: root.querySelector('[data-pt="btnCapture"]'),
@@ -722,6 +723,8 @@ export function initPoolTestScanner(root) {
 
   const RESULT_CACHE_KEY = "pt_result_cache_v1";
   const RESULT_CACHE_MAX = 60;
+  const MANUAL_PAD_POSITIONS_KEY = "pt_manual_pad_positions_v1";
+  const MANUAL_PAD_POSITIONS_MAX = 24;
 
   const FP_KEY = "pt_pad_fingerprints_v1";
   const FP_MAX = 120;
@@ -758,6 +761,49 @@ export function initPoolTestScanner(root) {
       for (let i = 0; i < keys.length - RESULT_CACHE_MAX; i++) delete cache[keys[i]];
     }
     saveJson(RESULT_CACHE_KEY, cache);
+  }
+
+  function manualPositionCacheKey(hash = currentPreviewHash) {
+    return hash ? `${hash}:${calibrationFingerprint()}` : null;
+  }
+
+  function saveManualPadPositions(hash = currentPreviewHash) {
+    const key = manualPositionCacheKey(hash);
+    if (!key) return;
+    const cache = loadJson(MANUAL_PAD_POSITIONS_KEY, {});
+    if (!manualPadMarkers.length) {
+      delete cache[key];
+      saveJson(MANUAL_PAD_POSITIONS_KEY, cache);
+      return;
+    }
+    cache[key] = {
+      t: Date.now(),
+      markers: manualPadMarkers.map(marker => ({
+        imageX: Number(marker.imageX),
+        imageY: Number(marker.imageY)
+      }))
+    };
+    const keys = Object.keys(cache);
+    if (keys.length > MANUAL_PAD_POSITIONS_MAX) {
+      keys.sort((a, b) => (cache[a].t || 0) - (cache[b].t || 0));
+      for (let i = 0; i < keys.length - MANUAL_PAD_POSITIONS_MAX; i++) delete cache[keys[i]];
+    }
+    saveJson(MANUAL_PAD_POSITIONS_KEY, cache);
+  }
+
+  function restoreManualPadPositions(hash = currentPreviewHash) {
+    const key = manualPositionCacheKey(hash);
+    if (!key || !previewFit) return false;
+    const saved = loadJson(MANUAL_PAD_POSITIONS_KEY, {})?.[key]?.markers;
+    if (!Array.isArray(saved) || !saved.length) return false;
+    manualPadMarkers = saved.slice(0, EASYTEST_CFG.pads.length).map(marker => ({
+      imageX: Number(marker.imageX),
+      imageY: Number(marker.imageY)
+    })).filter(marker => Number.isFinite(marker.imageX) && Number.isFinite(marker.imageY));
+    manualPadMode = true;
+    renderManualPadMarkers();
+    setStatus(`Restored ${manualPadMarkers.length} saved manual pad marker${manualPadMarkers.length === 1 ? "" : "s"} for this image. Adjust if needed, then Use Manual Pads.`);
+    return true;
   }
 
   function recordFingerprint(hash, padColors, avgRgb, vals = null) {
@@ -1101,6 +1147,7 @@ export function initPoolTestScanner(root) {
 
   let previewImg = null;   // Image()
   let previewFit = null;   // {scale, dx, dy, iw, ih, cw, ch}
+  let currentPreviewHash = null;
   let manualPadMode = false;
   let manualPadMarkers = [];
   let chartCalibrationMode = false;
@@ -1137,6 +1184,13 @@ export function initPoolTestScanner(root) {
 
     requestAnimationFrame(() => {
       drawPreviewCanvas();
+      try {
+        const previewCtx = fullPreviewImageContext();
+        currentPreviewHash = previewCtx ? hashCanvas(previewCtx) : null;
+        restoreManualPadPositions(currentPreviewHash);
+      } catch {
+        currentPreviewHash = null;
+      }
       try { els.previewWrap.scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
     });
 
@@ -1147,6 +1201,7 @@ export function initPoolTestScanner(root) {
     if (els.previewWrap) els.previewWrap.style.display = "none";
     previewImg = null;
     previewFit = null;
+    currentPreviewHash = null;
     chartCalibrationMode = false;
     chartCalibrationSamples = [];
     resetManualPadSelection(false);
@@ -1210,6 +1265,12 @@ export function initPoolTestScanner(root) {
   function resetManualPadSelection(keepMode = manualPadMode) {
     manualPadMarkers = [];
     manualPadMode = !!keepMode;
+    const key = manualPositionCacheKey();
+    if (key) {
+      const cache = loadJson(MANUAL_PAD_POSITIONS_KEY, {});
+      delete cache[key];
+      saveJson(MANUAL_PAD_POSITIONS_KEY, cache);
+    }
     if (els.manualPadLayer) els.manualPadLayer.innerHTML = "";
     setManualPadButtons();
   }
@@ -1225,8 +1286,8 @@ export function initPoolTestScanner(root) {
     const innerH = outerH * 0.55;
     els.manualPadLayer.innerHTML = manualPadMarkers.map((marker, index) => {
       const pad = EASYTEST_CFG.pads[index];
-      const left = marker.stageX;
-      const top = marker.stageY;
+      const left = Number.isFinite(marker.stageX) ? marker.stageX : (previewFit.dx + marker.imageX * previewFit.scale);
+      const top = Number.isFinite(marker.stageY) ? marker.stageY : (previewFit.dy + marker.imageY * previewFit.scale);
       return `
         <div class="manual-pad-sample-box" style="left:${left - outerW / 2}px; top:${top - outerH / 2}px; width:${outerW}px; height:${outerH}px">
           <span style="left:${(outerW - innerW) / 2}px; top:${(outerH - innerH) / 2}px; width:${innerW}px; height:${innerH}px"></span>
@@ -1263,11 +1324,40 @@ export function initPoolTestScanner(root) {
       setStatus("Tap directly on the photo area for manual pad selection.");
       return;
     }
-    manualPadMarkers.push(point);
+    const ctx = fullPreviewImageContext();
+    let snapped = point;
+    let wasCentered = false;
+    if (ctx) {
+      const sampled = sampleManualPadRegion(ctx, point, {
+        outerWidth: 31,
+        outerHeight: 31,
+        innerScale: 0.72,
+        searchRadius: 10,
+        searchStep: 3,
+        nearWhiteFriendly: true
+      });
+      const sample = sampled.__manualSample;
+      if (sample) {
+        const imageX = sample.selectedCenterX ?? point.imageX;
+        let imageY = sample.selectedCenterY ?? point.imageY;
+        const prevY = manualPadMarkers[manualPadMarkers.length - 1]?.imageY;
+        if (Number.isFinite(prevY)) imageY = Math.max(prevY + 10, imageY);
+        imageY = clampNumber(imageY, 0, (previewImg.naturalHeight || previewImg.height || imageY));
+        snapped = {
+          imageX,
+          imageY,
+          stageX: previewFit.dx + imageX * previewFit.scale,
+          stageY: previewFit.dy + imageY * previewFit.scale
+        };
+        wasCentered = Math.hypot(imageX - point.imageX, imageY - point.imageY) >= 2;
+      }
+    }
+    manualPadMarkers.push(snapped);
     renderManualPadMarkers();
+    saveManualPadPositions();
     setStatus(manualPadMarkers.length === EASYTEST_CFG.pads.length
-      ? "Manual pad markers complete. Click Use Manual Pads. Tap a marker or use Undo Last Pad to adjust."
-      : `Tap ${nextManualPadLabel()}.`);
+      ? `Manual pad markers complete. ${wasCentered ? "Pad centered automatically. " : ""}Click Use Manual Pads. Tap a marker or use Undo Last Pad to adjust.`
+      : `${wasCentered ? "Pad centered automatically. " : ""}Tap ${nextManualPadLabel()}.`);
   }
 
   function removeManualPadMarker(index = manualPadMarkers.length - 1) {
@@ -1276,6 +1366,7 @@ export function initPoolTestScanner(root) {
     const pad = EASYTEST_CFG.pads[removeIndex];
     manualPadMarkers.splice(removeIndex, 1);
     renderManualPadMarkers();
+    saveManualPadPositions();
     setStatus(`${pad?.label || "Pad"} marker removed. Tap ${nextManualPadLabel()}.`);
   }
   function getCropRectInImagePixels() {
@@ -1518,6 +1609,37 @@ export function initPoolTestScanner(root) {
       best.__manualSample.tapCenterX = Math.round(marker.imageX);
       best.__manualSample.tapCenterY = Math.round(marker.imageY);
       best.__manualSample.searchRadius = searchRadius;
+      const center = {
+        x: Number(best.__manualSample.selectedCenterX ?? best.__manualSample.centerX ?? marker.imageX),
+        y: Number(best.__manualSample.selectedCenterY ?? best.__manualSample.centerY ?? marker.imageY)
+      };
+      const multiPointOffsets = [
+        { x: 0, y: 0 },
+        { x: -Math.max(3, Math.round((options.outerWidth ?? 40) * 0.18)), y: 0 },
+        { x: Math.max(3, Math.round((options.outerWidth ?? 40) * 0.18)), y: 0 },
+        { x: 0, y: -Math.max(3, Math.round((options.outerHeight ?? 30) * 0.18)) },
+        { x: 0, y: Math.max(3, Math.round((options.outerHeight ?? 30) * 0.18)) }
+      ];
+      const pointSamples = multiPointOffsets
+        .map(offset => sampleManualPadRegionAt(ctx, { imageX: center.x + offset.x, imageY: center.y + offset.y }, options))
+        .filter(sample => sample?.__lab);
+      if (pointSamples.length) {
+        const avgLab = pointSamples.reduce((sum, sample) => ({
+          l: sum.l + sample.__lab.l / pointSamples.length,
+          a: sum.a + sample.__lab.a / pointSamples.length,
+          b: sum.b + sample.__lab.b / pointSamples.length
+        }), { l: 0, a: 0, b: 0 });
+        best.__lab = avgLab;
+        best.r = pointSamples.reduce((sum, sample) => sum + sample.r / pointSamples.length, 0);
+        best.g = pointSamples.reduce((sum, sample) => sum + sample.g / pointSamples.length, 0);
+        best.b = pointSamples.reduce((sum, sample) => sum + sample.b / pointSamples.length, 0);
+        best.__manualSample.multiPointSamples = pointSamples.length;
+        best.__manualSample.multiPointAverageLab = {
+          l: Number(avgLab.l.toFixed(2)),
+          a: Number(avgLab.a.toFixed(2)),
+          b: Number(avgLab.b.toFixed(2))
+        };
+      }
     }
     return best;
   }
@@ -1608,7 +1730,7 @@ export function initPoolTestScanner(root) {
     }
     const ctx = fullPreviewImageContext();
     if (!ctx) return;
-    const sampled = sampleManualPadRegion(ctx, point, { outerWidth: 15, outerHeight: 15, innerScale: 1, searchRadius: 0 });
+    const sampled = sampleManualPadRegion(ctx, point, { outerWidth: 31, outerHeight: 31, innerScale: 0.72, searchRadius: 0 });
     chartCalibrationSamples.push({
       ...point,
       rgb: {
@@ -1682,7 +1804,16 @@ export function initPoolTestScanner(root) {
         minCenterY: Number.isFinite(prevY) && Number.isFinite(curY) ? (prevY + curY) / 2 : 0,
         maxCenterY: Number.isFinite(nextY) && Number.isFinite(curY) ? (curY + nextY) / 2 : ih
       });
+      const sample = padColors[pad.key]?.__manualSample;
+      if (sample?.selectedCenterX != null && sample?.selectedCenterY != null) {
+        manualPadMarkers[index] = {
+          imageX: Number(sample.selectedCenterX),
+          imageY: Number(sample.selectedCenterY)
+        };
+      }
     });
+    saveManualPadPositions();
+    renderManualPadMarkers();
 
     const avgRgb = averageRgbList(Object.values(padColors)) || { r: 0, g: 0, b: 0 };
     padColors.__avg = avgRgb;
@@ -2770,6 +2901,7 @@ export function initPoolTestScanner(root) {
           thirdDeltaE: topMatches[2]?.deltaE ?? null,
           deltaEGap: Number(separation.toFixed(2)),
           confidence: Number(confidence.toFixed(2)),
+          confidencePercent: Math.round(confidence * 100),
           confidenceLabel: confidenceLabel(confidence),
           displayedValue: pick.best.value,
           rangeApplied: false,
@@ -2787,9 +2919,11 @@ export function initPoolTestScanner(root) {
           sampleQuality: sampleMeta?.sampleQuality || null,
           sampleQualityScore: sampleMeta?.qualityScore == null ? null : Number(sampleMeta.qualityScore.toFixed(2)),
           samplePixelCount: sampleMeta?.usedPixels ?? null,
+          sampleMultiPointCount: sampleMeta?.multiPointSamples ?? null,
           sampleRejectedPct: sampleMeta?.rejectedPct ?? null,
           sampleLabVariance: sampleMeta?.labVariance ?? null,
           sampleAverageLab: sampleMeta?.averageLab || null,
+          sampleMultiPointAverageLab: sampleMeta?.multiPointAverageLab || null,
           sampleRgbVariance: sampleMeta?.rgbVariance ?? null,
           possibleEdgeContamination: !!sampleMeta?.possibleEdgeContamination,
           possibleBackingContamination: !!sampleMeta?.possibleBackingContamination,
@@ -3105,31 +3239,33 @@ export function initPoolTestScanner(root) {
       </div>
       ${correctionDetails.samplingOverlayDataUrl ? `<figure class="sampling-overlay"><figcaption>${correctionDetails.manualSelection ? "Manual pad markers and sampled pixels" : "Sampled pixels overlay"}</figcaption><img src="${escapeHtml(correctionDetails.samplingOverlayDataUrl)}" alt="Overlay showing marked pad boxes and sampled pixels"></figure>` : ""}
     `;
-    const padRows = EASYTEST_CFG.pads.map(pad => vals.__padDebug[pad.key]).filter(Boolean).map(debug => {
+    const padCards = EASYTEST_CFG.pads.map(pad => vals.__padDebug[pad.key]).filter(Boolean).map(debug => {
       const topMatches = (debug.topMatches || debug.distances?.slice(0, 3) || [])
         .map((item, index) => `${index + 1}. ${item.label || item.value}: ${item.deltaE}`)
         .join(" | ");
       const status = debug.status || (debug.reasonCode === "LOW_DELTA_E_SEPARATION" ? "Ambiguous" : "Best match clear");
       return `
-        <tr>
-          <td>${escapeHtml(debug.label)}</td>
-          <td>
-            <span class="scan-color-chip" style="background:rgb(${debug.measuredRgb.r},${debug.measuredRgb.g},${debug.measuredRgb.b})"></span>
-            <span class="scan-color-chip" style="background:rgb(${debug.normalizedRgb.r},${debug.normalizedRgb.g},${debug.normalizedRgb.b})"></span>
-          </td>
-          <td>${escapeHtml(debug.measuredRgb.r)}, ${escapeHtml(debug.measuredRgb.g)}, ${escapeHtml(debug.measuredRgb.b)}</td>
-          <td>${escapeHtml(debug.measuredLab.l)}, ${escapeHtml(debug.measuredLab.a)}, ${escapeHtml(debug.measuredLab.b)}</td>
-          <td>${escapeHtml(debug.sampleQuality ?? "-")}<br><span class="muted hint">pixels: ${escapeHtml(debug.samplePixelCount ?? "-")} | rejected: ${escapeHtml(debug.sampleRejectedPct ?? "-")}%</span></td>
-          <td>${escapeHtml(debug.sampleLabVariance ?? "-")}<br><span class="muted hint">RGB: ${escapeHtml(debug.sampleRgbVariance ?? "-")} | avg LAB: ${debug.sampleAverageLab ? escapeHtml(`${debug.sampleAverageLab.l}, ${debug.sampleAverageLab.a}, ${debug.sampleAverageLab.b}`) : "-"}</span></td>
-          <td>${debug.possibleEdgeContamination ? "edge " : ""}${debug.possibleBackingContamination ? "backing" : ""}${!debug.possibleEdgeContamination && !debug.possibleBackingContamination ? "-" : ""}</td>
-          <td>${escapeHtml(debug.displayedValue ?? debug.bestValue)}</td>
-          <td>${escapeHtml(debug.bestLabel || debug.bestValue)} (${escapeHtml(debug.bestDeltaE)})</td>
-          <td>${escapeHtml(debug.secondLabel ?? debug.secondValue ?? "-")} (${escapeHtml(debug.secondDeltaE ?? "-")})</td>
-          <td>${escapeHtml(debug.confidenceLabel)} (${Math.round(debug.confidence * 100)}%)</td>
-          <td>${debug.rangeApplied ? "yes" : "no"}</td>
-          <td>${debug.snapApplied ? "yes" : "no"}<br><span class="muted hint">prev: ${escapeHtml(debug.previousValueForSnap ?? "-")} | ${escapeHtml(debug.snapFrom ?? "-")} -> ${escapeHtml(debug.snapTo ?? "-")}</span></td>
-          <td>${escapeHtml(topMatches)}<br><span class="muted hint">Gap: ${escapeHtml(debug.deltaEGap ?? "-")} | ${escapeHtml(status)}</span></td>
-        </tr>
+        <details class="engineer-card">
+          <summary>${escapeHtml(debug.label)} — Confidence: ${escapeHtml(debug.confidencePercent ?? Math.round(debug.confidence * 100))}%</summary>
+          <div class="engineer-card-grid">
+            <span>Sampled RGB<strong><span class="scan-color-chip" style="background:rgb(${debug.measuredRgb.r},${debug.measuredRgb.g},${debug.measuredRgb.b})"></span>${escapeHtml(debug.measuredRgb.r)}, ${escapeHtml(debug.measuredRgb.g)}, ${escapeHtml(debug.measuredRgb.b)}</strong></span>
+            <span>Sampled LAB<strong>${escapeHtml(debug.measuredLab.l)}, ${escapeHtml(debug.measuredLab.a)}, ${escapeHtml(debug.measuredLab.b)}</strong></span>
+            <span>Adjusted Confidence<strong>${escapeHtml(debug.confidenceLabel)} (${escapeHtml(debug.confidencePercent ?? Math.round(debug.confidence * 100))}%)</strong></span>
+            <span>Status<strong>${escapeHtml(status)}</strong></span>
+            <span>Reason<strong>${escapeHtml(debug.reasonCode || "HIGH_CONFIDENCE_CONFIRMED")}</strong></span>
+            <span>Selected Result<strong>${escapeHtml(debug.displayedValue ?? debug.bestValue)}</strong></span>
+            <span>Best Delta-E<strong>${escapeHtml(debug.bestLabel || debug.bestValue)} (${escapeHtml(debug.bestDeltaE)})</strong></span>
+            <span>Second Match<strong>${escapeHtml(debug.secondLabel ?? debug.secondValue ?? "-")} (${escapeHtml(debug.secondDeltaE ?? "-")})</strong></span>
+            <span>Top Delta-E Matches<strong>${escapeHtml(topMatches || "-")}</strong></span>
+            <span>Delta-E Gap<strong>${escapeHtml(debug.deltaEGap ?? "-")}</strong></span>
+            <span>Sample Quality<strong>${escapeHtml(debug.sampleQuality ?? "-")} | pixels ${escapeHtml(debug.samplePixelCount ?? "-")} | rejected ${escapeHtml(debug.sampleRejectedPct ?? "-")}%</strong></span>
+            <span>Variance<strong>LAB ${escapeHtml(debug.sampleLabVariance ?? "-")} | RGB ${escapeHtml(debug.sampleRgbVariance ?? "-")}</strong></span>
+            <span>Five-Point LAB<strong>${debug.sampleMultiPointAverageLab ? escapeHtml(`${debug.sampleMultiPointAverageLab.l}, ${debug.sampleMultiPointAverageLab.a}, ${debug.sampleMultiPointAverageLab.b}`) : "-"} (${escapeHtml(debug.sampleMultiPointCount ?? "-")} samples)</strong></span>
+            <span>Contamination<strong>${debug.possibleEdgeContamination ? "edge " : ""}${debug.possibleBackingContamination ? "backing" : ""}${!debug.possibleEdgeContamination && !debug.possibleBackingContamination ? "-" : ""}</strong></span>
+            <span>Result Snap<strong>${debug.snapApplied ? "yes" : "no"} | ${escapeHtml(debug.snapFrom ?? "-")} -> ${escapeHtml(debug.snapTo ?? "-")}</strong></span>
+            <span>Previous<strong>${debug.previousValueForSnap == null ? "-" : escapeHtml(debug.previousValueForSnap)}</strong></span>
+          </div>
+        </details>
       `;
     }).join("");
 
@@ -3141,29 +3277,7 @@ export function initPoolTestScanner(root) {
       </div>
       ${correctionBlock}
       ${warningItems.length ? `<ul class="scan-debug-warnings">${warningItems.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
-      <div class="scan-debug-table-wrap">
-        <table class="scan-debug-table">
-          <thead>
-            <tr>
-              <th>Parameter</th>
-              <th>Preview</th>
-              <th>RGB</th>
-              <th>LAB</th>
-              <th>Sample Quality</th>
-              <th>LAB Variance</th>
-              <th>Contamination</th>
-              <th>Displayed</th>
-              <th>Best Delta-E</th>
-              <th>Second</th>
-              <th>Confidence</th>
-              <th>Range</th>
-              <th>Snap</th>
-              <th>Top Delta-E matches</th>
-            </tr>
-          </thead>
-          <tbody>${padRows}</tbody>
-        </table>
-      </div>
+      <div class="engineer-card-list">${padCards}</div>
       ${renderCalibrationDiagnostics()}
     `;
   }
@@ -3206,6 +3320,9 @@ export function initPoolTestScanner(root) {
     if (els.poolContextPanel) els.poolContextPanel.hidden = false;
     const context = lastVals?.__poolContext || loadPoolContext();
     const scoreClass = sanity.scoreConfidence === "High" ? "ok" : sanity.scoreConfidence === "Medium" ? "warn" : "bad";
+    const scoreConfidencePercent = Number.isFinite(Number(sanity.scoreConfidencePercent))
+      ? Number(sanity.scoreConfidencePercent)
+      : ({ High: 88, Medium: 71, Low: 52 }[sanity.scoreConfidence] || 50);
     const findings = sanity.topFindings || [];
 
     if (els.sanitySummary) {
@@ -3216,7 +3333,7 @@ export function initPoolTestScanner(root) {
             <h3>Pool Health: ${escapeHtml(sanity.poolHealthScore)} / 100</h3>
           </div>
           <div class="smart-review-meta">
-            <span class="tag ${scoreClass}">Confidence: ${escapeHtml(sanity.scoreConfidence)}</span>
+            <span class="tag ${scoreClass}">Confidence: ${escapeHtml(scoreConfidencePercent)}%</span>
             <span class="tag">Water Appearance: ${escapeHtml(sanity.waterAppearanceLabel || poolContextLabel("waterAppearance", context.waterAppearance))}</span>
           </div>
           <p>${escapeHtml(sanity.summary)}</p>
@@ -3268,31 +3385,20 @@ export function initPoolTestScanner(root) {
           <span class="muted hint">Chemistry score: ${escapeHtml(sanity.chemistryScore ?? "-")}</span>
           <span class="muted hint">Appearance adjustment: ${escapeHtml(sanity.appearanceAdjustment ?? 0)}</span>
         </div>
-        <div class="scan-debug-table-wrap">
-          <table class="scan-debug-table">
-            <thead>
-              <tr>
-                <th>Parameter</th>
-                <th>Raw</th>
-                <th>Adjusted</th>
-                <th>Status</th>
-                <th>Reason codes</th>
-                <th>Prior comparison</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${sanity.checks.map(check => `
-                <tr>
-                  <td>${escapeHtml(check.parameter)}</td>
-                  <td>${escapeHtml(check.measuredValue)} ${escapeHtml(check.unit)} / ${escapeHtml(check.rawConfidence)}</td>
-                  <td>${escapeHtml(check.adjustedConfidence)}</td>
-                  <td>${escapeHtml(check.status)} (${escapeHtml(check.severity)})</td>
-                  <td>${escapeHtml(check.reasonCodes.join(", ") || "HIGH_CONFIDENCE_CONFIRMED")}</td>
-                  <td>${check.priorValue == null ? "-" : `${escapeHtml(check.priorValue)} -> ${escapeHtml(check.measuredValue)} (${escapeHtml(check.change)})`}</td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
+        <div class="engineer-card-list">
+          ${sanity.checks.map(check => `
+            <details class="engineer-card">
+              <summary>${escapeHtml(check.parameter)}</summary>
+              <div class="engineer-card-grid">
+                <span>Raw<strong>${escapeHtml(check.measuredValue)} ${escapeHtml(check.unit)} / ${escapeHtml(check.rawConfidence)}</strong></span>
+                <span>Adjusted Confidence<strong>${escapeHtml(check.adjustedConfidence)}</strong></span>
+                <span>Status<strong>${escapeHtml(check.status)} (${escapeHtml(check.severity)})</strong></span>
+                <span>Reason<strong>${escapeHtml(check.reasonCodes.join(", ") || "HIGH_CONFIDENCE_CONFIRMED")}</strong></span>
+                <span>Previous<strong>${check.priorValue == null ? "-" : `${escapeHtml(check.priorValue)} -> ${escapeHtml(check.measuredValue)} (${escapeHtml(check.change)})`}</strong></span>
+                <span>Note<strong>${escapeHtml(check.note || check.message || "-")}</strong></span>
+              </div>
+            </details>
+          `).join("")}
         </div>
       `;
     }
@@ -3596,6 +3702,40 @@ export function initPoolTestScanner(root) {
     try { localStorage.setItem(HISTORY_KEY, JSON.stringify(arr)); } catch {}
   }
 
+  function confidenceBucket(item) {
+    const label = item?.sanityCheck?.scoreConfidence;
+    if (label === "High" || label === "Medium" || label === "Low") return label;
+    const values = Object.values(item?.confidence || {}).filter(value => Number.isFinite(Number(value))).map(Number);
+    if (!values.length) return "Low";
+    const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
+    return confidenceLabel(avg);
+  }
+
+  function renderBetaStats(historyOpt = loadHistory()) {
+    if (!els.betaStats) return;
+    const history = Array.isArray(historyOpt) ? historyOpt : [];
+    const total = history.length;
+    const counts = { High: 0, Medium: 0, Low: 0 };
+    let scoreTotal = 0;
+    let scoreCount = 0;
+    history.forEach(item => {
+      counts[confidenceBucket(item)]++;
+      const score = Number(item?.sanityCheck?.chemistryScore ?? item?.sanityCheck?.poolHealthScore);
+      if (Number.isFinite(score)) {
+        scoreTotal += score;
+        scoreCount++;
+      }
+    });
+    const pct = count => total ? `${Math.round((count / total) * 100)}%` : "-";
+    els.betaStats.innerHTML = `
+      <span>Total scans: ${escapeHtml(total)}</span>
+      <span>High confidence: ${escapeHtml(pct(counts.High))}</span>
+      <span>Medium confidence: ${escapeHtml(pct(counts.Medium))}</span>
+      <span>Low confidence: ${escapeHtml(pct(counts.Low))}</span>
+      <span>Average chemistry score: ${scoreCount ? escapeHtml(Math.round(scoreTotal / scoreCount)) : "-"}</span>
+    `;
+  }
+
   function recordReading(vals) {
     const history = loadHistory();
     history.push({
@@ -3629,6 +3769,7 @@ export function initPoolTestScanner(root) {
     saveHistory(history);
     renderHistoryCharts(history);
     renderHistoryLog(history);
+    renderBetaStats(history);
     updateHomeSummary(vals);
   }
 
@@ -3857,6 +3998,7 @@ export function initPoolTestScanner(root) {
     poolGallons = null;
     poolCollapsed = false;
     lastVals = null;
+    renderBetaStats([]);
 
     els.gallonsDisplay && (els.gallonsDisplay.textContent = "Pool volume: – (enter shape/size or manual gallons)");
     els.recs && (els.recs.innerHTML = "<li>Local data cleared. Enter pool setup and scan a new strip.</li>");
@@ -4056,6 +4198,7 @@ export function initPoolTestScanner(root) {
   setAppView((() => { try { return localStorage.getItem("pt_active_view_v1") || "home"; } catch { return "home"; } })());
   renderHistoryCharts();
   renderHistoryLog();
+  renderBetaStats();
   updateHomeSummary();
   listCameras();
   applyScannerMode();

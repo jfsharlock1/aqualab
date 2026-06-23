@@ -304,8 +304,28 @@ function evaluateHistory(vals, history, context, check) {
   if (!change) return;
   check.priorValue = change.previousValue;
   check.change = Number(change.change.toFixed(2));
+  const clearWater = !context?.waterAppearance || context.waterAppearance === "crystalClear";
+  const quietContext = !hasContext(context, ["phReducer", "phIncreaser", "aeration", "alkalinityAdjustment", "stabilizer", "chlorineTablets", "shock", "freshWater"]);
+  const jumpThresholds = {
+    freeCl: 4,
+    totalCl: 4,
+    bromine: 6,
+    alk: 60,
+    hardness: 100,
+    cya: 40
+  };
+  const largeJump = jumpThresholds[check.key] != null && change.hours != null && change.hours < 48 && change.absChange >= jumpThresholds[check.key];
+  if (largeJump && clearWater && quietContext && !check.reasonCodes.includes("UNLIKELY_HISTORY_JUMP")) {
+    applyAdjustment(check, {
+      code: "UNLIKELY_HISTORY_JUMP",
+      penalty: 0.16,
+      severity: "Caution",
+      status: "Suspicious",
+      note: `Previous ${check.parameter} was ${change.previousValue}${check.unit ? ` ${check.unit}` : ""}; change is ${Math.round(change.change)}${check.unit ? ` ${check.unit}` : ""} in ${change.hours.toFixed(1)} hours.`
+    });
+  }
 
-  if (check.key === "cya" && change.absChange > 30 && !hasContext(context, ["stabilizer", "chlorineTablets", "shock", "freshWater"])) {
+  if (check.key === "cya" && change.absChange > 30 && !check.reasonCodes.includes("UNLIKELY_HISTORY_JUMP") && !hasContext(context, ["stabilizer", "chlorineTablets", "shock", "freshWater"])) {
     applyAdjustment(check, {
       code: "UNLIKELY_HISTORY_JUMP",
       penalty: 0.24,
@@ -315,7 +335,7 @@ function evaluateHistory(vals, history, context, check) {
     });
   }
 
-  if (check.key === "ph" && change.hours != null && change.hours < 24 && change.absChange > 0.4 && !hasContext(context, ["phReducer", "phIncreaser", "aeration", "alkalinityAdjustment"])) {
+  if (check.key === "ph" && change.hours != null && change.hours < 24 && change.absChange > 0.4 && !check.reasonCodes.includes("UNLIKELY_HISTORY_JUMP") && !hasContext(context, ["phReducer", "phIncreaser", "aeration", "alkalinityAdjustment"])) {
     applyAdjustment(check, {
       code: "UNLIKELY_HISTORY_JUMP",
       penalty: 0.18,
@@ -594,7 +614,7 @@ export function runStripSanityCheck(vals, context = {}) {
     if (measuredValue == null || Number.isNaN(Number(measuredValue))) return;
     const check = createCheck(vals, key, Number(measuredValue));
     evaluatePadEvidence(vals, key, check, scanQuality);
-    evaluateHistory(vals, history, { recentActions }, check);
+    evaluateHistory(vals, history, { ...context, recentActions }, check);
     evaluateChemistry(vals, check);
     evaluateExtremeGuards(vals, check);
     checks.push(check);
@@ -630,6 +650,7 @@ export function runStripSanityCheck(vals, context = {}) {
     chemistryScore: Math.round(health.chemistryScore),
     appearanceAdjustment: health.appearanceAdjustment,
     scoreConfidence,
+    scoreConfidencePercent: Math.round(clamp(avgConfidence, 0, 1) * 100),
     summaryState,
     summary: summary.summary,
     nextAction: summary.nextAction,
