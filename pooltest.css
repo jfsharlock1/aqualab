@@ -171,6 +171,22 @@ a { color: inherit; text-decoration: none; }
   gap: 18px;
   align-items: center;
   padding: 20px;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.home-hero-card.ok {
+  border-color: rgba(34,197,94,0.42);
+  box-shadow: 0 18px 48px rgba(0,0,0,0.3), 0 0 34px rgba(34,197,94,0.1);
+}
+
+.home-hero-card.warn {
+  border-color: rgba(249,115,22,0.5);
+  box-shadow: 0 18px 48px rgba(0,0,0,0.3), 0 0 34px rgba(249,115,22,0.1);
+}
+
+.home-hero-card.bad {
+  border-color: rgba(239,68,68,0.55);
+  box-shadow: 0 18px 48px rgba(0,0,0,0.3), 0 0 34px rgba(239,68,68,0.1);
 }
 
 .home-hero-copy h2 {
@@ -196,6 +212,7 @@ a { color: inherit; text-decoration: none; }
     radial-gradient(circle at center, rgba(15,23,42,0.98) 0 58%, transparent 59%),
     conic-gradient(var(--score-color) calc(var(--score) * 1%), rgba(51,65,85,0.9) 0);
   border: 1px solid rgba(226,232,240,0.12);
+  filter: drop-shadow(0 0 18px rgba(56,189,248,0.18));
 }
 
 .score-ring span {
@@ -208,19 +225,23 @@ a { color: inherit; text-decoration: none; }
 
 .score-ring small {
   display: block;
-  color: var(--fg-muted);
+  color: var(--score-color);
+  font-weight: 800;
   text-align: center;
   margin-top: 2px;
 }
 
 .home-hero-meta {
   grid-column: 1 / -1;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
-  flex-wrap: wrap;
   padding-top: 2px;
+}
+
+.home-hero-meta small:last-child {
+  grid-column: 1 / -1;
 }
 
 .home-site-card {
@@ -293,6 +314,17 @@ a { color: inherit; text-decoration: none; }
   font-size: 0.72rem;
 }
 
+.home-status-card small::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 1px;
+}
+
 .home-status-card.ok { border-color: rgba(34,197,94,0.45); }
 .home-status-card.ok small { color: #bbf7d0; }
 .home-status-card.warn { border-color: rgba(249,115,22,0.55); }
@@ -342,7 +374,7 @@ a { color: inherit; text-decoration: none; }
 
 .home-activity-grid,
 .home-sensor-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .home-activity-grid span,

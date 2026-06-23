@@ -368,10 +368,12 @@ export function initPoolTestScanner(root) {
     homePrimaryAction: root.querySelector('[data-pt="homePrimaryAction"]'),
     homeSecondaryAction: root.querySelector('[data-pt="homeSecondaryAction"]'),
     homeScore: root.querySelector('[data-pt="homeScore"]'),
+    homeScoreLabel: root.querySelector('[data-pt="homeScoreLabel"]'),
     homeScoreRing: root.querySelector('[data-pt="homeScoreRing"]'),
     homeStatusTitle: root.querySelector('[data-pt="homeStatusTitle"]'),
     homeHealthBadge: root.querySelector('[data-pt="homeHealthBadge"]'),
     homeLastSummary: root.querySelector('[data-pt="homeLastSummary"]'),
+    homeLastRelative: root.querySelector('[data-pt="homeLastRelative"]'),
     homeNextAction: root.querySelector('[data-pt="homeNextAction"]'),
     homeRecommendationTitle: root.querySelector('[data-pt="homeRecommendationTitle"]'),
     homeSiteName: root.querySelector('[data-pt="homeSiteName"]'),
@@ -398,8 +400,10 @@ export function initPoolTestScanner(root) {
     homeTrendBadge: root.querySelector('[data-pt="homeTrendBadge"]'),
     homeTrendSparkline: root.querySelector('[data-pt="homeTrendSparkline"]'),
     homeActivityLast: root.querySelector('[data-pt="homeActivityLast"]'),
-    homePreviousScore: root.querySelector('[data-pt="homePreviousScore"]'),
     homeCurrentScore: root.querySelector('[data-pt="homeCurrentScore"]'),
+    homeWeeklyAverage: root.querySelector('[data-pt="homeWeeklyAverage"]'),
+    homeBestScore: root.querySelector('[data-pt="homeBestScore"]'),
+    homeLowestScore: root.querySelector('[data-pt="homeLowestScore"]'),
     homeEmptyHelp: root.querySelector('[data-pt="homeEmptyHelp"]'),
     betaStats: root.querySelector('[data-pt="betaStats"]'),
 
@@ -548,26 +552,67 @@ export function initPoolTestScanner(root) {
       const n = Number(score);
       if (!Number.isFinite(n)) return "warn";
       if (n >= 80) return "ok";
-      if (n >= 60) return "warn";
+      if (n >= 50) return "warn";
       return "bad";
     };
     const statusText = score => {
       const n = Number(score);
       if (!Number.isFinite(n)) return "No test yet";
+      if (n >= 95) return "Excellent";
       if (n >= 80) return "Healthy";
-      if (n >= 60) return "Needs Attention";
-      return "Retest Recommended";
+      if (n >= 65) return "Watch";
+      if (n >= 50) return "Needs Attention";
+      return "Critical";
+    };
+    const relativeTime = timeValue => {
+      const t = Number(timeValue);
+      if (!Number.isFinite(t)) return "Not tested";
+      const minutes = Math.max(0, Math.round((Date.now() - t) / 60000));
+      if (minutes < 1) return "Just now";
+      if (minutes < 60) return `${minutes} min ago`;
+      const hours = Math.round(minutes / 60);
+      if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+      const days = Math.round(hours / 24);
+      return `${days} day${days === 1 ? "" : "s"} ago`;
+    };
+    const recommendationFor = (finding, currentScore) => {
+      if (!finding && Number(currentScore) >= 80) {
+        return { title: "Water looks healthy.", action: "No treatment recommended. Keep testing on your normal schedule." };
+      }
+      const key = finding?.key || "";
+      const status = String(finding?.status || "").toLowerCase();
+      if (key === "freeCl" || key === "totalCl" || /chlorine|sanitizer/.test(status)) {
+        return { title: "Chlorine slightly low.", action: "Add liquid chlorine gradually and retest tonight." };
+      }
+      if (key === "cya" || /stabilizer|cya/.test(status)) {
+        return { title: "Stabilizer appears low.", action: "Add stabilizer gradually and retest tomorrow." };
+      }
+      if (key === "ph") {
+        return { title: "pH needs attention.", action: "Adjust pH slowly, circulate water, and test again." };
+      }
+      if (key === "alk") {
+        return { title: "Alkalinity needs balancing.", action: "Adjust alkalinity gradually before making large pH changes." };
+      }
+      if (Number(currentScore) < 50) {
+        return { title: "Retest recommended.", action: "Run a fresh test before adding chemicals." };
+      }
+      return { title: "Review water balance.", action: finding?.recommendedAction || "Make small adjustments and test again soon." };
     };
     const setStatusCard = (card, valueEl, statusEl, key, value, unit = "") => {
       const status = readingStatus(key, value);
       const cls = status === "Good" || status === "Recorded" ? "ok" : status === "Not tested" ? "" : "warn";
       if (card) card.className = `home-status-card ${cls}`.trim();
       if (valueEl) valueEl.textContent = value == null ? "-" : `${value}${unit}`;
-      if (statusEl) statusEl.textContent = status;
+      if (statusEl) {
+        if (status === "Good") statusEl.textContent = "✓ GOOD";
+        else if (status === "Not tested") statusEl.textContent = "NOT TESTED";
+        else statusEl.textContent = `! ${status.toUpperCase()}`;
+      }
     };
     const context = latest?.poolContext || latest?.__poolContext || loadPoolContext();
     const appearanceLabel = poolContextLabel("waterAppearance", context.waterAppearance);
     const typeLabel = { inGround: "In-ground", aboveGround: "Above-ground", spa: "Spa / hot tub" }[els.poolType?.value] || "Pool";
+    const healthLabel = els.poolType?.value === "spa" ? "Spa Health" : "Pool Health";
     const shapeLabel = { rect: "Rectangle", round: "Round", oval: "Oval" }[els.shape?.value] || "Water site";
     const dimension = els.shape?.value === "round" && Number(els.roundDia?.value)
       ? `${Number(els.roundDia.value)}' Round Pool`
@@ -585,10 +630,14 @@ export function initPoolTestScanner(root) {
       if (els.homeSecondaryAction) els.homeSecondaryAction.textContent = "Add Water Site";
       els.homeSecondaryAction?.setAttribute("data-app-nav", "pool");
       setScoreRing(null, "warn");
+      if (els.homeScoreLabel) els.homeScoreLabel.textContent = "No test yet";
+      const hero = root.querySelector('[data-pt="homeHeroCard"]');
+      if (hero) hero.className = "home-hero-card warn";
       if (els.homeHealthBadge) {
         els.homeHealthBadge.className = "tag warn";
         els.homeHealthBadge.textContent = "No recent test";
       }
+      if (els.homeLastRelative) els.homeLastRelative.textContent = "Last tested: Not tested";
       if (els.homeLastSummary) els.homeLastSummary.textContent = "Last Scan: Not tested";
       if (els.homeRecommendationTitle) els.homeRecommendationTitle.textContent = "Start with a first scan";
       if (els.homeNextAction) els.homeNextAction.textContent = "Scan a strip to get pool status and plain-language guidance.";
@@ -600,8 +649,10 @@ export function initPoolTestScanner(root) {
       if (els.homeTrendBadge) els.homeTrendBadge.textContent = "7 days";
       if (els.homeTrendSparkline) els.homeTrendSparkline.innerHTML = Array.from({ length: 7 }, () => `<span style="height:8px; opacity:.28"></span>`).join("");
       if (els.homeActivityLast) els.homeActivityLast.textContent = "Not tested";
-      if (els.homePreviousScore) els.homePreviousScore.textContent = "-";
       if (els.homeCurrentScore) els.homeCurrentScore.textContent = "-";
+      if (els.homeWeeklyAverage) els.homeWeeklyAverage.textContent = "-";
+      if (els.homeBestScore) els.homeBestScore.textContent = "-";
+      if (els.homeLowestScore) els.homeLowestScore.textContent = "-";
       return;
     }
 
@@ -609,7 +660,10 @@ export function initPoolTestScanner(root) {
     const score = sanity?.poolHealthScore ?? latest.sanityCheck?.poolHealthScore ?? latest.healthScore ?? null;
     const cls = scoreClass(score);
     setScoreRing(score, cls);
-    if (els.homeStatusTitle) els.homeStatusTitle.textContent = "Pool Health";
+    if (els.homeScoreLabel) els.homeScoreLabel.textContent = statusText(score);
+    const hero = root.querySelector('[data-pt="homeHeroCard"]');
+    if (hero) hero.className = `home-hero-card ${cls}`;
+    if (els.homeStatusTitle) els.homeStatusTitle.textContent = healthLabel;
     if (els.homeHeroSubtitle) els.homeHeroSubtitle.textContent = statusText(score);
     if (els.homePrimaryAction) els.homePrimaryAction.textContent = "Scan New Strip";
     if (els.homeSecondaryAction) els.homeSecondaryAction.textContent = "View History";
@@ -622,11 +676,11 @@ export function initPoolTestScanner(root) {
       const when = latest.t ? new Date(latest.t).toLocaleString() : "Current scan";
       els.homeLastSummary.textContent = `Last Scan: ${when}`;
     }
+    if (els.homeLastRelative) els.homeLastRelative.textContent = `Last tested: ${relativeTime(latest.t)}`;
     const topFinding = sanity?.topFindings?.[0] || sanity?.allFindings?.[0] || null;
-    if (els.homeRecommendationTitle) els.homeRecommendationTitle.textContent = cls === "ok" && !topFinding ? "Water looks healthy" : (topFinding?.status || "Review recommendations");
-    if (els.homeNextAction) {
-      els.homeNextAction.textContent = sanity?.nextAction || topFinding?.recommendedAction || latest.nextAction || "Review results before dosing.";
-    }
+    const rec = recommendationFor(topFinding, score);
+    if (els.homeRecommendationTitle) els.homeRecommendationTitle.textContent = rec.title;
+    if (els.homeNextAction) els.homeNextAction.textContent = rec.action;
 
     setStatusCard(els.homePhCard, els.homePh, els.homePhStatus, "ph", latest.ph);
     setStatusCard(els.homeSanitizerCard, els.homeFreeCl, els.homeFreeClStatus, "freeCl", latest.freeCl, latest.freeCl == null ? "" : " ppm");
@@ -640,8 +694,13 @@ export function initPoolTestScanner(root) {
     const currentScore = scores[scores.length - 1] ?? Number(score);
     const previousScore = scores.length > 1 ? scores[scores.length - 2] : null;
     const delta = Number.isFinite(previousScore) ? Math.round(currentScore - previousScore) : null;
+    const averageScore = scores.length ? Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length) : null;
+    const bestScore = scores.length ? Math.round(Math.max(...scores)) : null;
+    const lowestScore = scores.length ? Math.round(Math.min(...scores)) : null;
     if (els.homeTrendTitle) els.homeTrendTitle.textContent = Number.isFinite(delta) ? `${Math.round(currentScore)} ${delta >= 0 ? "up" : "down"} ${Math.abs(delta)} since last test` : "First score saved";
-    if (els.homeTrendBadge) els.homeTrendBadge.textContent = scores.length > 1 ? "Improving" : "Watching";
+    if (els.homeTrendBadge) els.homeTrendBadge.textContent = Number.isFinite(delta)
+      ? (delta > 0 ? "Improving" : delta < 0 ? "Declining" : "Stable")
+      : "Watching";
     if (els.homeTrendSparkline) {
       const padded = scores.length ? scores : [0];
       const min = Math.min(...padded, 40);
@@ -653,8 +712,10 @@ export function initPoolTestScanner(root) {
       }).join("");
     }
     if (els.homeActivityLast) els.homeActivityLast.textContent = latest.t ? new Date(latest.t).toLocaleString() : "Current scan";
-    if (els.homePreviousScore) els.homePreviousScore.textContent = Number.isFinite(previousScore) ? Math.round(previousScore) : "-";
     if (els.homeCurrentScore) els.homeCurrentScore.textContent = Number.isFinite(currentScore) ? Math.round(currentScore) : "-";
+    if (els.homeWeeklyAverage) els.homeWeeklyAverage.textContent = Number.isFinite(averageScore) ? averageScore : "-";
+    if (els.homeBestScore) els.homeBestScore.textContent = Number.isFinite(bestScore) ? bestScore : "-";
+    if (els.homeLowestScore) els.homeLowestScore.textContent = Number.isFinite(lowestScore) ? lowestScore : "-";
   }
 
   // ================================================================
@@ -3842,9 +3903,9 @@ export function initPoolTestScanner(root) {
     const pct = count => total ? `${Math.round((count / total) * 100)}%` : "-";
     els.betaStats.innerHTML = `
       <span>Total scans: ${escapeHtml(total)}</span>
-      <span>High confidence: ${escapeHtml(pct(counts.High))}</span>
-      <span>Medium confidence: ${escapeHtml(pct(counts.Medium))}</span>
-      <span>Low confidence: ${escapeHtml(pct(counts.Low))}</span>
+      <span>Clear reads: ${escapeHtml(pct(counts.High))}</span>
+      <span>Approximate reads: ${escapeHtml(pct(counts.Medium))}</span>
+      <span>Retest reads: ${escapeHtml(pct(counts.Low))}</span>
       <span>Average chemistry score: ${scoreCount ? escapeHtml(Math.round(scoreTotal / scoreCount)) : "-"}</span>
     `;
   }

@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=22" />
+  <link rel="stylesheet" href="pooltest.css?v=23" />
 </head>
 
 <body>
@@ -49,11 +49,12 @@
         <div class="score-ring" data-pt="homeScoreRing" style="--score:0; --score-color:#f97316;">
           <div>
             <span data-pt="homeScore">--</span>
-            <small>/ 100</small>
+            <small data-pt="homeScoreLabel">No test yet</small>
           </div>
         </div>
         <div class="home-hero-meta">
           <span data-pt="homeHealthBadge" class="tag warn">No recent test</span>
+          <small class="muted" data-pt="homeLastRelative">Last tested: Not tested</small>
           <small class="muted" data-pt="homeLastSummary">Last Scan: Not tested</small>
         </div>
       </article>
@@ -100,8 +101,10 @@
         <div class="home-sparkline" data-pt="homeTrendSparkline"></div>
         <div class="home-activity-grid">
           <span>Last Scan<strong data-pt="homeActivityLast">Not tested</strong></span>
-          <span>Previous Score<strong data-pt="homePreviousScore">-</strong></span>
-          <span>Current Score<strong data-pt="homeCurrentScore">-</strong></span>
+          <span>Current<strong data-pt="homeCurrentScore">-</strong></span>
+          <span>Weekly Average<strong data-pt="homeWeeklyAverage">-</strong></span>
+          <span>Best<strong data-pt="homeBestScore">-</strong></span>
+          <span>Lowest<strong data-pt="homeLowestScore">-</strong></span>
         </div>
       </article>
 
@@ -111,14 +114,15 @@
             <span class="section-eyebrow">Live Sensor Data</span>
             <h3>Future sensor station</h3>
           </div>
-          <span class="tag">Coming Soon</span>
+          <span class="tag">Planned</span>
         </div>
+        <p class="muted">Continuous monitoring for temperature, water quality, and environmental sensing.</p>
         <div class="home-sensor-grid">
           <span>Water Temp<strong data-pt="homeSensorTemp">--</strong></span>
           <span>pH<strong data-pt="homeSensorPh">--</strong></span>
           <span>ORP<strong data-pt="homeSensorOrp">--</strong></span>
         </div>
-        <small class="muted">Last Updated: Sensor array not connected</small>
+        <small class="muted" data-pt="homeSensorUpdated">Last sensor update: Not connected</small>
       </article>
 
       <article class="home-dashboard-card home-empty-help" data-pt="homeEmptyHelp">
@@ -447,9 +451,9 @@
           <strong>Beta Version: v0.9</strong>
           <div class="beta-stats-grid" data-pt="betaStats">
             <span>Total scans: -</span>
-            <span>High confidence: -</span>
-            <span>Medium confidence: -</span>
-            <span>Low confidence: -</span>
+            <span>Clear reads: -</span>
+            <span>Approximate reads: -</span>
+            <span>Retest reads: -</span>
             <span>Average chemistry score: -</span>
           </div>
         </div>
@@ -515,7 +519,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev33";
+    import { initPoolTestScanner } from "./scanner.js?v=dev34";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>
