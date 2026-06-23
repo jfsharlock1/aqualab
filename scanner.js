@@ -1012,12 +1012,22 @@ export function initPoolTestScanner(root) {
     saveJson(FP_KEY, arr);
   }
 
-  function clearScanCache() {
+  async function clearScanCache() {
+    let pwaCachesCleared = 0;
     try {
       localStorage.removeItem(RESULT_CACHE_KEY);
       localStorage.removeItem(FP_KEY);
+      localStorage.removeItem(MANUAL_PAD_POSITIONS_KEY);
     } catch {}
-    setStatus("Scan cache cleared (results + fingerprints).");
+    try {
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        const scanKeys = keys.filter(key => /^pooltest-cache-/i.test(key));
+        await Promise.all(scanKeys.map(key => caches.delete(key)));
+        pwaCachesCleared = scanKeys.length;
+      }
+    } catch {}
+    setStatus(`Scan cache cleared (results, fingerprints, saved manual markers${pwaCachesCleared ? ", app cache" : ""}).`);
   }
 
   function exportJsonPayload(payload, filenamePrefix, successMessage) {
