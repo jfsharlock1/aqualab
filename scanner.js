@@ -363,22 +363,44 @@ export function initPoolTestScanner(root) {
     poolUsage: root.querySelector('[data-pt="poolUsage"]'),
     surfaceCondition: root.querySelector('[data-pt="surfaceCondition"]'),
     historyLog: root.querySelector('[data-pt="historyLog"]'),
+    homeGreeting: root.querySelector('[data-pt="homeGreeting"]'),
+    homeHeroSubtitle: root.querySelector('[data-pt="homeHeroSubtitle"]'),
+    homePrimaryAction: root.querySelector('[data-pt="homePrimaryAction"]'),
+    homeSecondaryAction: root.querySelector('[data-pt="homeSecondaryAction"]'),
+    homeScore: root.querySelector('[data-pt="homeScore"]'),
+    homeScoreRing: root.querySelector('[data-pt="homeScoreRing"]'),
     homeStatusTitle: root.querySelector('[data-pt="homeStatusTitle"]'),
     homeHealthBadge: root.querySelector('[data-pt="homeHealthBadge"]'),
     homeLastSummary: root.querySelector('[data-pt="homeLastSummary"]'),
     homeNextAction: root.querySelector('[data-pt="homeNextAction"]'),
+    homeRecommendationTitle: root.querySelector('[data-pt="homeRecommendationTitle"]'),
+    homeSiteName: root.querySelector('[data-pt="homeSiteName"]'),
+    homeSiteMeta: root.querySelector('[data-pt="homeSiteMeta"]'),
+    homeWaterAppearance: root.querySelector('[data-pt="homeWaterAppearance"]'),
+    homeWaterTemp: root.querySelector('[data-pt="homeWaterTemp"]'),
     homePh: root.querySelector('[data-pt="homePh"]'),
     homePhStatus: root.querySelector('[data-pt="homePhStatus"]'),
+    homePhCard: root.querySelector('[data-pt="homePhCard"]'),
     homeFreeCl: root.querySelector('[data-pt="homeFreeCl"]'),
     homeFreeClStatus: root.querySelector('[data-pt="homeFreeClStatus"]'),
+    homeSanitizerCard: root.querySelector('[data-pt="homeSanitizerCard"]'),
     homeTotalCl: root.querySelector('[data-pt="homeTotalCl"]'),
     homeTotalClStatus: root.querySelector('[data-pt="homeTotalClStatus"]'),
     homeAlk: root.querySelector('[data-pt="homeAlk"]'),
     homeAlkStatus: root.querySelector('[data-pt="homeAlkStatus"]'),
+    homeAlkCard: root.querySelector('[data-pt="homeAlkCard"]'),
     homeCya: root.querySelector('[data-pt="homeCya"]'),
     homeCyaStatus: root.querySelector('[data-pt="homeCyaStatus"]'),
+    homeStabilityCard: root.querySelector('[data-pt="homeStabilityCard"]'),
     homeHardness: root.querySelector('[data-pt="homeHardness"]'),
     homeHardnessStatus: root.querySelector('[data-pt="homeHardnessStatus"]'),
+    homeTrendTitle: root.querySelector('[data-pt="homeTrendTitle"]'),
+    homeTrendBadge: root.querySelector('[data-pt="homeTrendBadge"]'),
+    homeTrendSparkline: root.querySelector('[data-pt="homeTrendSparkline"]'),
+    homeActivityLast: root.querySelector('[data-pt="homeActivityLast"]'),
+    homePreviousScore: root.querySelector('[data-pt="homePreviousScore"]'),
+    homeCurrentScore: root.querySelector('[data-pt="homeCurrentScore"]'),
+    homeEmptyHelp: root.querySelector('[data-pt="homeEmptyHelp"]'),
     betaStats: root.querySelector('[data-pt="betaStats"]'),
 
     btnStart: root.querySelector('[data-pt="btnStart"]'),
@@ -506,42 +528,133 @@ export function initPoolTestScanner(root) {
   function updateHomeSummary(vals = lastVals) {
     const history = loadHistory();
     const latest = vals || history[history.length - 1] || null;
-    const sanity = vals?.__sanityCheck || lastSanityCheck || null;
+    const sanity = vals?.__sanityCheck || latest?.sanityCheck || lastSanityCheck || null;
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? "Good Morning" : hour < 18 ? "Good Afternoon" : "Good Evening";
+    if (els.homeGreeting) els.homeGreeting.textContent = greeting;
+
+    const homeScreen = root.querySelector('[data-app-view="home"]');
+    const setScoreRing = (score, cls = "warn") => {
+      const n = Number(score);
+      const safeScore = Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0;
+      const color = cls === "ok" ? "#22c55e" : cls === "bad" ? "#ef4444" : "#f97316";
+      if (els.homeScoreRing) {
+        els.homeScoreRing.style.setProperty("--score", safeScore);
+        els.homeScoreRing.style.setProperty("--score-color", color);
+      }
+      if (els.homeScore) els.homeScore.textContent = Number.isFinite(n) ? safeScore : "--";
+    };
+    const scoreClass = score => {
+      const n = Number(score);
+      if (!Number.isFinite(n)) return "warn";
+      if (n >= 80) return "ok";
+      if (n >= 60) return "warn";
+      return "bad";
+    };
+    const statusText = score => {
+      const n = Number(score);
+      if (!Number.isFinite(n)) return "No test yet";
+      if (n >= 80) return "Healthy";
+      if (n >= 60) return "Needs Attention";
+      return "Retest Recommended";
+    };
+    const setStatusCard = (card, valueEl, statusEl, key, value, unit = "") => {
+      const status = readingStatus(key, value);
+      const cls = status === "Good" || status === "Recorded" ? "ok" : status === "Not tested" ? "" : "warn";
+      if (card) card.className = `home-status-card ${cls}`.trim();
+      if (valueEl) valueEl.textContent = value == null ? "-" : `${value}${unit}`;
+      if (statusEl) statusEl.textContent = status;
+    };
+    const context = latest?.poolContext || latest?.__poolContext || loadPoolContext();
+    const appearanceLabel = poolContextLabel("waterAppearance", context.waterAppearance);
+    const typeLabel = { inGround: "In-ground", aboveGround: "Above-ground", spa: "Spa / hot tub" }[els.poolType?.value] || "Pool";
+    const shapeLabel = { rect: "Rectangle", round: "Round", oval: "Oval" }[els.shape?.value] || "Water site";
+    const dimension = els.shape?.value === "round" && Number(els.roundDia?.value)
+      ? `${Number(els.roundDia.value)}' Round Pool`
+      : `${typeLabel} ${shapeLabel}`;
+    if (els.homeSiteName) els.homeSiteName.textContent = "My Backyard Pool";
+    if (els.homeSiteMeta) els.homeSiteMeta.textContent = dimension;
+    if (els.homeWaterAppearance) els.homeWaterAppearance.textContent = appearanceLabel;
+    if (els.homeWaterTemp) els.homeWaterTemp.textContent = "Temp not connected";
+
     if (!latest) {
-      if (els.homeStatusTitle) els.homeStatusTitle.textContent = "Ready for a pool check";
+      homeScreen?.classList.remove("has-test");
+      if (els.homeStatusTitle) els.homeStatusTitle.textContent = "Welcome to AquaLab";
+      if (els.homeHeroSubtitle) els.homeHeroSubtitle.textContent = "No water tests yet.";
+      if (els.homePrimaryAction) els.homePrimaryAction.textContent = "Scan First Test";
+      if (els.homeSecondaryAction) els.homeSecondaryAction.textContent = "Add Water Site";
+      els.homeSecondaryAction?.setAttribute("data-app-nav", "pool");
+      setScoreRing(null, "warn");
       if (els.homeHealthBadge) {
         els.homeHealthBadge.className = "tag warn";
         els.homeHealthBadge.textContent = "No recent test";
       }
+      if (els.homeLastSummary) els.homeLastSummary.textContent = "Last Scan: Not tested";
+      if (els.homeRecommendationTitle) els.homeRecommendationTitle.textContent = "Start with a first scan";
+      if (els.homeNextAction) els.homeNextAction.textContent = "Scan a strip to get pool status and plain-language guidance.";
+      setStatusCard(els.homePhCard, els.homePh, els.homePhStatus, "ph", null);
+      setStatusCard(els.homeSanitizerCard, els.homeFreeCl, els.homeFreeClStatus, "freeCl", null);
+      setStatusCard(els.homeAlkCard, els.homeAlk, els.homeAlkStatus, "alk", null);
+      setStatusCard(els.homeStabilityCard, els.homeCya, els.homeCyaStatus, "cya", null);
+      if (els.homeTrendTitle) els.homeTrendTitle.textContent = "No trend yet";
+      if (els.homeTrendBadge) els.homeTrendBadge.textContent = "7 days";
+      if (els.homeTrendSparkline) els.homeTrendSparkline.innerHTML = Array.from({ length: 7 }, () => `<span style="height:8px; opacity:.28"></span>`).join("");
+      if (els.homeActivityLast) els.homeActivityLast.textContent = "Not tested";
+      if (els.homePreviousScore) els.homePreviousScore.textContent = "-";
+      if (els.homeCurrentScore) els.homeCurrentScore.textContent = "-";
       return;
     }
 
-    const score = sanity?.score ?? latest.healthScore ?? null;
-    const summaryState = sanity?.summaryState || latest.summaryState || "Last reading saved";
-    if (els.homeStatusTitle) els.homeStatusTitle.textContent = summaryState;
+    homeScreen?.classList.add("has-test");
+    const score = sanity?.poolHealthScore ?? latest.sanityCheck?.poolHealthScore ?? latest.healthScore ?? null;
+    const cls = scoreClass(score);
+    setScoreRing(score, cls);
+    if (els.homeStatusTitle) els.homeStatusTitle.textContent = "Pool Health";
+    if (els.homeHeroSubtitle) els.homeHeroSubtitle.textContent = statusText(score);
+    if (els.homePrimaryAction) els.homePrimaryAction.textContent = "Scan New Strip";
+    if (els.homeSecondaryAction) els.homeSecondaryAction.textContent = "View History";
+    els.homeSecondaryAction?.setAttribute("data-app-nav", "history");
     if (els.homeHealthBadge) {
-      const ok = Number(score) >= 80;
-      els.homeHealthBadge.className = `tag ${ok ? "ok" : Number(score) >= 62 ? "warn" : "bad"}`;
-      els.homeHealthBadge.textContent = Number.isFinite(Number(score)) ? `Pool Health ${Math.round(score)}/100` : "Last test saved";
+      els.homeHealthBadge.className = `tag ${cls}`;
+      els.homeHealthBadge.textContent = statusText(score);
     }
     if (els.homeLastSummary) {
       const when = latest.t ? new Date(latest.t).toLocaleString() : "Current scan";
-      els.homeLastSummary.textContent = `${when}`;
+      els.homeLastSummary.textContent = `Last Scan: ${when}`;
     }
+    const topFinding = sanity?.topFindings?.[0] || sanity?.allFindings?.[0] || null;
+    if (els.homeRecommendationTitle) els.homeRecommendationTitle.textContent = cls === "ok" && !topFinding ? "Water looks healthy" : (topFinding?.status || "Review recommendations");
     if (els.homeNextAction) {
-      els.homeNextAction.textContent = sanity?.summary?.nextAction || latest.nextAction || "Review results before dosing.";
+      els.homeNextAction.textContent = sanity?.nextAction || topFinding?.recommendedAction || latest.nextAction || "Review results before dosing.";
     }
 
-    const setReading = (valueEl, statusEl, key, value, unit = "") => {
-      if (valueEl) valueEl.textContent = value == null ? "-" : `${value}${unit}`;
-      if (statusEl) statusEl.textContent = readingStatus(key, value);
-    };
-    setReading(els.homePh, els.homePhStatus, "ph", latest.ph);
-    setReading(els.homeFreeCl, els.homeFreeClStatus, "freeCl", latest.freeCl, latest.freeCl == null ? "" : " ppm");
-    setReading(els.homeTotalCl, els.homeTotalClStatus, "totalCl", latest.totalCl, latest.totalCl == null ? "" : " ppm");
-    setReading(els.homeAlk, els.homeAlkStatus, "alk", latest.alk, latest.alk == null ? "" : " ppm");
-    setReading(els.homeCya, els.homeCyaStatus, "cya", latest.cya, latest.cya == null ? "" : " ppm");
-    setReading(els.homeHardness, els.homeHardnessStatus, "hardness", latest.hardness, latest.hardness == null ? "" : " ppm");
+    setStatusCard(els.homePhCard, els.homePh, els.homePhStatus, "ph", latest.ph);
+    setStatusCard(els.homeSanitizerCard, els.homeFreeCl, els.homeFreeClStatus, "freeCl", latest.freeCl, latest.freeCl == null ? "" : " ppm");
+    setStatusCard(els.homeAlkCard, els.homeAlk, els.homeAlkStatus, "alk", latest.alk, latest.alk == null ? "" : " ppm");
+    setStatusCard(els.homeStabilityCard, els.homeCya, els.homeCyaStatus, "cya", latest.cya, latest.cya == null ? "" : " ppm");
+
+    const scored = history
+      .filter(item => item?.sanityCheck?.poolHealthScore != null)
+      .slice(-7);
+    const scores = scored.length ? scored.map(item => Number(item.sanityCheck.poolHealthScore)) : [Number(score)].filter(Number.isFinite);
+    const currentScore = scores[scores.length - 1] ?? Number(score);
+    const previousScore = scores.length > 1 ? scores[scores.length - 2] : null;
+    const delta = Number.isFinite(previousScore) ? Math.round(currentScore - previousScore) : null;
+    if (els.homeTrendTitle) els.homeTrendTitle.textContent = Number.isFinite(delta) ? `${Math.round(currentScore)} ${delta >= 0 ? "up" : "down"} ${Math.abs(delta)} since last test` : "First score saved";
+    if (els.homeTrendBadge) els.homeTrendBadge.textContent = scores.length > 1 ? "Improving" : "Watching";
+    if (els.homeTrendSparkline) {
+      const padded = scores.length ? scores : [0];
+      const min = Math.min(...padded, 40);
+      const max = Math.max(...padded, 100);
+      const bars = Array.from({ length: 7 }, (_, index) => padded[Math.max(0, padded.length - 7 + index)] ?? padded[0] ?? 0);
+      els.homeTrendSparkline.innerHTML = bars.map(value => {
+        const height = 10 + clamp01((value - min) / Math.max(1, max - min)) * 44;
+        return `<span style="height:${height.toFixed(0)}px"></span>`;
+      }).join("");
+    }
+    if (els.homeActivityLast) els.homeActivityLast.textContent = latest.t ? new Date(latest.t).toLocaleString() : "Current scan";
+    if (els.homePreviousScore) els.homePreviousScore.textContent = Number.isFinite(previousScore) ? Math.round(previousScore) : "-";
+    if (els.homeCurrentScore) els.homeCurrentScore.textContent = Number.isFinite(currentScore) ? Math.round(currentScore) : "-";
   }
 
   // ================================================================
@@ -3999,6 +4112,7 @@ export function initPoolTestScanner(root) {
     poolCollapsed = false;
     lastVals = null;
     renderBetaStats([]);
+    updateHomeSummary(null);
 
     els.gallonsDisplay && (els.gallonsDisplay.textContent = "Pool volume: – (enter shape/size or manual gallons)");
     els.recs && (els.recs.innerHTML = "<li>Local data cleared. Enter pool setup and scan a new strip.</li>");
@@ -4166,10 +4280,10 @@ export function initPoolTestScanner(root) {
     els.canvas.addEventListener("click", handler);
   });
 
-  els.shape?.addEventListener("change", () => { updateShapeVisibility(); savePoolSetup(); });
-  [els.poolType, els.sanitizerType].forEach(el => el?.addEventListener("change", savePoolSetup));
+  els.shape?.addEventListener("change", () => { updateShapeVisibility(); savePoolSetup(); updateHomeSummary(); });
+  [els.poolType, els.sanitizerType].forEach(el => el?.addEventListener("change", () => { savePoolSetup(); updateHomeSummary(); }));
   [els.poolType, els.sanitizerType, els.rectLen, els.rectWid, els.roundDia, els.ovalLen, els.ovalWid, els.depthShallow, els.depthDeep, els.gallonsManual]
-    .forEach(el => el?.addEventListener("input", savePoolSetup));
+    .forEach(el => el?.addEventListener("input", () => { savePoolSetup(); updateHomeSummary(); }));
 
   els.btnCalcGallons?.addEventListener("click", calcGallons);
 
