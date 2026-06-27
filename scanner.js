@@ -2055,6 +2055,11 @@ export function initPoolTestScanner(root) {
     if (lowSampleCount) scanQuality.warnings.push("Pad sample quality is low. Reposition marker or verify with a retest before large adjustments.");
 
     const vals = rgbToChemistryEasyTest(padColors, scanQuality, neutralReference);
+    let manualScanHash = currentPreviewHash;
+    if (!manualScanHash) {
+      try { manualScanHash = hashCanvas(ctx); } catch { manualScanHash = null; }
+    }
+    attachScanIdentity(vals, manualScanHash, "manual-pads");
     vals.__manualPadSelection = true;
     vals.__scanQuality.details.manualSelection = true;
     vals.__scanQuality.details.samplingOverlayDataUrl = padColors.__samplingDiagnostics.overlayDataUrl;
@@ -2067,6 +2072,7 @@ export function initPoolTestScanner(root) {
     renderRecs(vals);
     renderScanDiagnostics(vals);
     setStatus(`Manual pad scan | 40x${outerHeight} inner-core LAB samples | quality ${scanQuality.score}/100`);
+    finalizeSuccessfulScan(vals, { scanHash: manualScanHash, scanSource: "manual-pads" });
     hidePreview();
     return vals;
   }
@@ -4131,19 +4137,21 @@ export function initPoolTestScanner(root) {
     let imgHash = null;
     try { imgHash = hashCanvas(ctx); } catch { imgHash = null; }
     const cacheKey = imgHash ? `${imgHash}:${calibrationFingerprint()}` : null;
+    const scanSource = frameContexts?.length ? "camera" : "image";
 
     if (cacheKey) {
       const hit = cacheGet(cacheKey);
       if (hit?.vals) {
+        attachScanIdentity(hit.vals, imgHash, "cached");
         lastVals = hit.vals;
         const sanity = runSanityCheck(hit.vals);
         renderBars(hit.vals);
         renderSanityCheck(sanity);
         renderRecs(hit.vals);
         renderScanDiagnostics(hit.vals);
-        updateHomeSummary(hit.vals);
         setStatus(`EasyTest scan (cached) | id=${imgHash}`);
         els.canvas && (els.canvas.hidden = true);
+        finalizeSuccessfulScan(hit.vals, { scanHash: imgHash, scanSource: "cached" });
         return hit.vals;
       }
     }
@@ -4167,6 +4175,7 @@ export function initPoolTestScanner(root) {
     scanQuality.details.frameCount = frameSample.frameCount || 1;
     scanQuality.correction = frameSample.correctionDiagnostics || null;
     const vals = rgbToChemistryEasyTest(padColors, scanQuality, neutralReference);
+    attachScanIdentity(vals, imgHash, scanSource);
     lastVals = vals;
     const sanity = runSanityCheck(vals);
 
@@ -4174,7 +4183,6 @@ export function initPoolTestScanner(root) {
     renderSanityCheck(sanity);
     renderRecs(vals);
     renderScanDiagnostics(vals);
-    updateHomeSummary(vals);
     let statusPrefix = scanQuality.score < 55
       ? "Low scan quality. Move to indirect daylight and rescan."
       : "EasyTest scan";
@@ -4186,6 +4194,7 @@ export function initPoolTestScanner(root) {
 
     if (cacheKey) cachePut(cacheKey, vals);
     recordFingerprint(imgHash, padColors, avgRgb, vals);
+    finalizeSuccessfulScan(vals, { scanHash: imgHash, scanSource });
     return vals;
   }
 
@@ -4204,21 +4213,42 @@ export function initPoolTestScanner(root) {
     catch { return []; }
   }
   function saveHistory(arr) {
+    const beforeCount = (() => {
+      try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]").length || 0; }
+      catch { return 0; }
+    })();
+    const logSave = (ok, savedArr, mode = "full") => {
+      const afterCount = (() => {
+        try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]").length || 0; }
+        catch { return 0; }
+      })();
+      const payload = {
+        key: HISTORY_KEY,
+        mode,
+        before: beforeCount,
+        attempted: Array.isArray(arr) ? arr.length : 0,
+        saved: Array.isArray(savedArr) ? savedArr.length : 0,
+        after: afterCount
+      };
+      if (ok) console.info("[AquaLab] saveHistory complete", payload);
+      else console.warn("[AquaLab] saveHistory failed", payload);
+      return ok;
+    };
     try {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(arr));
-      return true;
+      return logSave(true, arr);
     } catch {}
     try {
       const compact = arr.slice(-120).map(compactHistoryEntry);
       localStorage.setItem(HISTORY_KEY, JSON.stringify(compact));
-      return true;
+      return logSave(true, compact, "compact-120");
     } catch {}
     try {
       const compact = arr.slice(-30).map(compactHistoryEntry);
       localStorage.setItem(HISTORY_KEY, JSON.stringify(compact));
-      return true;
+      return logSave(true, compact, "compact-30");
     } catch {
-      return false;
+      return logSave(false, [], "failed");
     }
   }
 
@@ -4239,6 +4269,9 @@ export function initPoolTestScanner(root) {
 
   function compactHistoryEntry(item) {
     return {
+      scanId: item.scanId || null,
+      scanHash: item.scanHash || null,
+      scanSource: item.scanSource || null,
       t: item.t,
       gallons: item.gallons ?? null,
       ph: item.ph,
@@ -4262,6 +4295,23 @@ export function initPoolTestScanner(root) {
       timestamp: item.timestamp || null,
       sanityCheck: compactSanityCheck(item.sanityCheck)
     };
+  }
+
+  function attachScanIdentity(vals, scanHash = null, scanSource = "scan") {
+    if (!vals) return null;
+    const hash = scanHash || vals.__scanHash || null;
+    const source = scanSource || vals.__scanSource || "scan";
+    vals.__scanHash = hash;
+    vals.__scanSource = source;
+    vals.__scanId = hash ? `${hash}:${calibrationFingerprint()}` : (vals.__scanId || `scan-${Date.now()}`);
+    return vals.__scanId;
+  }
+
+  function finalizeSuccessfulScan(vals, options = {}) {
+    if (!vals) return null;
+    attachScanIdentity(vals, options.scanHash || vals.__scanHash || null, options.scanSource || vals.__scanSource || "scan");
+    recordReading(vals);
+    return vals;
   }
 
   function confidenceBucket(item) {
@@ -4299,8 +4349,13 @@ export function initPoolTestScanner(root) {
   }
 
   function recordReading(vals) {
+    if (!vals) return false;
+    attachScanIdentity(vals, vals.__scanHash || null, vals.__scanSource || "scan");
     const history = loadHistory();
-    history.push(compactHistoryEntry({
+    const entry = compactHistoryEntry({
+      scanId: vals.__scanId || null,
+      scanHash: vals.__scanHash || null,
+      scanSource: vals.__scanSource || null,
       t: Date.now(),
       gallons: poolGallons,
       ph: vals.ph,
@@ -4326,14 +4381,34 @@ export function initPoolTestScanner(root) {
       surfaceCondition: vals.__poolContext?.surfaceCondition || loadPoolContext().surfaceCondition,
       timestamp: new Date().toISOString(),
       sanityCheck: vals.__sanityCheck || null
-    }));
+    });
+    const latest = history[history.length - 1] || null;
+    if (entry.scanHash && latest?.scanHash === entry.scanHash) {
+      history[history.length - 1] = { ...latest, ...entry };
+      console.info("[AquaLab] recordReading updated latest matching scan", {
+        key: HISTORY_KEY,
+        scanHash: entry.scanHash,
+        scanId: entry.scanId,
+        count: history.length
+      });
+    } else {
+      history.push(entry);
+      console.info("[AquaLab] recordReading appended scan", {
+        key: HISTORY_KEY,
+        scanHash: entry.scanHash,
+        scanId: entry.scanId,
+        count: history.length
+      });
+    }
     if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
     const saved = saveHistory(history);
-    renderHistoryCharts(history);
-    renderHistoryLog(history);
-    renderBetaStats(history);
-    updateHomeSummary(vals);
+    const savedHistory = loadHistory();
+    renderHistoryCharts(savedHistory);
+    renderHistoryLog(savedHistory);
+    renderBetaStats(savedHistory);
+    updateHomeSummary();
     setStatus(saved ? "Reading saved to this device." : "Reading shown, but this browser could not save history storage.");
+    return saved;
   }
 
   function renderHistoryLog(historyOpt) {
@@ -4611,8 +4686,7 @@ export function initPoolTestScanner(root) {
   els.btnStart?.addEventListener("click", startCamera);
   els.btnCapture?.addEventListener("click", async () => {
     setStatus("Capturing 5 frames for a steadier reading...");
-    const vals = await analyzeLiveMultiFrame();
-    if (vals) recordReading(vals);
+    await analyzeLiveMultiFrame();
   });
 
   // Phone-first buttons
@@ -4666,8 +4740,7 @@ export function initPoolTestScanner(root) {
   els.chartInput?.addEventListener("change", handleChartCalibrationFile);
 
   els.btnUseCrop?.addEventListener("click", () => {
-    const vals = analyzeFromPreviewCrop();
-    if (vals) recordReading(vals);
+    analyzeFromPreviewCrop();
   });
 
   els.btnManualPads?.addEventListener("click", toggleManualPadMode);
@@ -4677,8 +4750,7 @@ export function initPoolTestScanner(root) {
   });
   els.btnUndoManualPad?.addEventListener("click", () => removeManualPadMarker());
   els.btnUseManualPads?.addEventListener("click", () => {
-    const vals = analyzeFromManualPads();
-    if (vals) recordReading(vals);
+    analyzeFromManualPads();
   });
   els.previewStage?.addEventListener("click", (ev) => {
     if (chartCalibrationMode) {
