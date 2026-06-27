@@ -112,6 +112,49 @@ function rawConfidenceScore(vals, key) {
   return 0.7;
 }
 
+function valueRange(vals, key) {
+  const legacy = ({
+    ph: vals?.__phRange,
+    freeCl: vals?.__freeClRange,
+    totalCl: vals?.__totalClRange,
+    bromine: vals?.__bromineRange,
+    hardness: vals?.__hardnessRange,
+    alk: vals?.__alkRange,
+    cya: vals?.__cyaRange
+  })[key] || null;
+  const range = vals?.__padRanges?.[key] || legacy;
+  if (!Array.isArray(range) || range.length < 2) return null;
+  const a = toNumber(range[0]);
+  const b = toNumber(range[1]);
+  if (a == null || b == null) return null;
+  return [Math.min(a, b), Math.max(a, b)];
+}
+
+function formatRangeNumber(value) {
+  const n = toNumber(value);
+  if (n == null) return `${value}`;
+  return `${Number(n.toFixed(Math.abs(n) < 10 && !Number.isInteger(n) ? 1 : 0))}`;
+}
+
+function displayValue(vals, key, value) {
+  const range = valueRange(vals, key);
+  const unit = PARAMS[key]?.unit || "";
+  const text = range ? `${formatRangeNumber(range[0])}–${formatRangeNumber(range[1])}` : formatRangeNumber(value);
+  return unit ? `${text} ${unit}` : text;
+}
+
+function rangeState(vals, key, value, min, max) {
+  const range = valueRange(vals, key) || [toNumber(value), toNumber(value)];
+  const low = range[0];
+  const high = range[1];
+  if (low == null || high == null) return "unknown";
+  if (high < min) return "low";
+  if (low > max) return "high";
+  if (low < min) return "slightlyLow";
+  if (high > max) return "slightlyHigh";
+  return "good";
+}
+
 function getPoolGallons(context = {}) {
   const direct = toNumber(context.gallons);
   if (direct != null && direct > 0) return direct;
@@ -173,7 +216,8 @@ function buildTreatmentRecommendations(vals, context = {}, history = []) {
 
   const ph = toNumber(vals.ph);
   const phConfidence = rawConfidenceScore(vals, "ph");
-  if (ph != null && ph < 7.2) {
+  const phState = rangeState(vals, "ph", ph, 7.2, 7.8);
+  if (ph != null && phState === "low") {
     const correction = Math.min(0.4, Math.max(0, 7.2 - ph));
     const oz = factor10k ? (correction / 0.2) * 6 * factor10k : null;
     const recent = hasRecent(["phIncreaser", "phReducer", "alkalinityAdjustment"]);
@@ -188,10 +232,24 @@ function buildTreatmentRecommendations(vals, context = {}, history = []) {
       confidenceScore: phConfidence,
       confidenceNote: recent
         ? "A pH product was reported recently. Retest before another large pH correction."
-        : confidenceTone(phConfidence, "", "", "Use a modest correction and retest.", "Reading suggests low pH, but confidence is low. Retest before a large pH adjustment."),
+        : confidenceTone(phConfidence, "", "", "Use a modest correction and retest.", "pH appears low, but scan quality is limited. Verify before a large pH adjustment."),
       retest: "Retest in 4-24 hours"
     });
-  } else if (ph != null && ph > 7.8) {
+  } else if (ph != null && phState === "slightlyLow") {
+    push({
+      key: "phReviewLow",
+      priority: "Low",
+      title: "pH is near the low end",
+      chemical: "No large pH dose",
+      amountOz: null,
+      amountText: "Use only a modest correction if needed.",
+      reason: `pH is reading as an approximate range (${displayValue(vals, "ph", ph)}).`,
+      target: "Keep pH around 7.2-7.6",
+      confidenceScore: phConfidence,
+      confidenceNote: "Range overlaps the target. Avoid large exact-dose changes from this value alone.",
+      retest: "Retest after circulation if you make a small correction"
+    });
+  } else if (ph != null && phState === "high") {
     const correction = Math.min(0.4, Math.max(0, ph - 7.6));
     const oz = factor10k ? (correction / 0.2) * 4 * factor10k : null;
     const recent = hasRecent(["phReducer", "phIncreaser", "alkalinityAdjustment"]);
@@ -206,8 +264,22 @@ function buildTreatmentRecommendations(vals, context = {}, history = []) {
       confidenceScore: phConfidence,
       confidenceNote: recent
         ? "A pH product was reported recently. Retest before another large pH correction."
-        : confidenceTone(phConfidence, "", "", "Use a modest correction and retest.", "Reading suggests high pH, but confidence is low. Retest before a large pH adjustment."),
+        : confidenceTone(phConfidence, "", "", "Use a modest correction and retest.", "pH appears high, but scan quality is limited. Verify before a large pH adjustment."),
       retest: "Retest in 4-24 hours"
+    });
+  } else if (ph != null && phState === "slightlyHigh") {
+    push({
+      key: "phReviewHigh",
+      priority: "Low",
+      title: "pH is near the high end",
+      chemical: "No large pH dose",
+      amountOz: null,
+      amountText: "Use only a modest correction if needed.",
+      reason: `pH is reading as an approximate range (${displayValue(vals, "ph", ph)}).`,
+      target: "Keep pH around 7.2-7.6",
+      confidenceScore: phConfidence,
+      confidenceNote: "Range overlaps the target. Avoid large exact-dose changes from this value alone.",
+      retest: "Retest after circulation if you make a small correction"
     });
   }
 
@@ -215,7 +287,8 @@ function buildTreatmentRecommendations(vals, context = {}, history = []) {
   const cya = toNumber(vals.cya);
   const fcConfidence = rawConfidenceScore(vals, "freeCl");
   const chlorineTarget = cya == null || cya <= 50 ? 3 : cya <= 80 ? 5 : 7;
-  if (cya != null && cya > 80) {
+  const cyaStateForChlorine = rangeState(vals, "cya", cya, 30, 80);
+  if (cya != null && cyaStateForChlorine === "high") {
     treatments.push(treatmentItem({
       key: "highCyaNote",
       priority: "Medium",
@@ -230,45 +303,47 @@ function buildTreatmentRecommendations(vals, context = {}, history = []) {
       retest: "Confirm CYA before water replacement decisions"
     }));
   }
-  if (freeCl != null && freeCl < chlorineTarget) {
+  const fcState = rangeState(vals, "freeCl", freeCl, 1, chlorineTarget);
+  if (freeCl != null && (fcState === "low" || fcState === "slightlyLow")) {
     const ppmIncrease = Math.max(0, chlorineTarget - freeCl);
     const flOz = factor10k ? factor10k * (ppmIncrease / 10) * 128 : null;
     const recent = hasRecent(["liquidChlorine", "shock", "chlorineTablets"]);
     push({
       key: "liquidChlorine",
       priority: freeCl < 1 ? "High" : "Medium",
-      title: "Raise free chlorine",
+      title: fcState === "slightlyLow" ? "Free chlorine may be low" : "Raise free chlorine",
       chemical: "10% liquid chlorine",
       amountOz: flOz,
       amountUnit: "flOz",
-      reason: "Free chlorine is below the target for the current CYA level.",
+      reason: fcState === "slightlyLow" ? `Free chlorine is reading as an approximate range (${displayValue(vals, "freeCl", freeCl)}).` : "Free chlorine is below the target for the current CYA level.",
       target: `Target free chlorine: ${chlorineTarget} ppm`,
       confidenceScore: fcConfidence,
       confidenceNote: recent
         ? "Chlorine or shock was reported recently. Retest before adding more unless water is cloudy or green."
-        : confidenceTone(fcConfidence, "", "", "Small corrective dosing may still be appropriate; retest after circulation.", "Reading suggests low chlorine, but confidence is low. Retest chlorine before a large sanitizer adjustment."),
+        : confidenceTone(fcConfidence, "", "", "Small corrective dosing may still be appropriate; retest after circulation.", "Chlorine appears low, but scan quality is limited. Verify chlorine before a large sanitizer adjustment."),
       retest: "Retest after 30-60 minutes of circulation"
     });
   }
 
   const alk = toNumber(vals.alk);
   const alkConfidence = rawConfidenceScore(vals, "alk");
-  if (alk != null && alk < 80) {
+  const alkState = rangeState(vals, "alk", alk, 80, 120);
+  if (alk != null && (alkState === "low" || alkState === "slightlyLow")) {
     const ppmIncrease = Math.max(0, 100 - alk);
     const oz = factor10k ? (ppmIncrease / 10) * 1.5 * 16 * factor10k : null;
     push({
       key: "alkUp",
       priority: "Medium",
-      title: "Raise alkalinity",
+      title: alkState === "slightlyLow" ? "Alkalinity is near the low end" : "Raise alkalinity",
       chemical: "Alkalinity increaser / baking soda",
       amountOz: oz,
-      reason: "Total alkalinity is below the target range.",
+      reason: alkState === "slightlyLow" ? `Total alkalinity is reading as an approximate range (${displayValue(vals, "alk", alk)}).` : "Total alkalinity is below the target range.",
       target: "Raise alkalinity toward 80-120 ppm",
       confidenceScore: alkConfidence,
-      confidenceNote: confidenceTone(alkConfidence, "", "", "Use a gradual correction and retest.", "Reading suggests low alkalinity, but confidence is low. Retest before a large adjustment."),
+      confidenceNote: confidenceTone(alkConfidence, "", "", "Use a gradual correction and retest.", "Alkalinity appears low, but scan quality is limited. Verify before a large adjustment."),
       retest: "Retest in 4-24 hours"
     });
-  } else if (alk != null && alk > 140) {
+  } else if (alk != null && rangeState(vals, "alk", alk, 80, 140) === "high") {
     push({
       key: "alkHigh",
       priority: "Medium",
@@ -285,7 +360,8 @@ function buildTreatmentRecommendations(vals, context = {}, history = []) {
   }
 
   const cyaConfidence = rawConfidenceScore(vals, "cya");
-  if (cya != null && cya < 30) {
+  const cyaState = rangeState(vals, "cya", cya, 30, 100);
+  if (cya != null && cyaState === "low") {
     const recent = hasRecent(["stabilizer", "chlorineTablets"]);
     if (cyaConfidence < 0.6 || recent) {
       push({
@@ -295,10 +371,10 @@ function buildTreatmentRecommendations(vals, context = {}, history = []) {
         chemical: "No stabilizer dose yet",
         amountOz: null,
         amountText: "No stabilizer dose until verified.",
-        reason: recent ? "Stabilizer or tablets were reported recently." : "CYA reads low, but confidence is low.",
+        reason: recent ? "Stabilizer or tablets were reported recently." : "CYA appears low, but scan quality is limited.",
         target: "Confirm CYA before adding stabilizer",
         confidenceScore: cyaConfidence,
-        confidenceNote: "Retest before adjusting stabilizer.",
+        confidenceNote: "Verify before adjusting stabilizer.",
         retest: "Retest tomorrow or with a dedicated CYA test"
       });
     } else {
@@ -317,7 +393,21 @@ function buildTreatmentRecommendations(vals, context = {}, history = []) {
         retest: "Retest in 24-48 hours"
       });
     }
-  } else if (cya != null && cya > 80) {
+  } else if (cya != null && cyaState === "slightlyLow") {
+    push({
+      key: "cyaReview",
+      priority: "Low",
+      title: "Stabilizer is near normal",
+      chemical: "No stabilizer dose",
+      amountOz: null,
+      amountText: "No stabilizer dose recommended from this range.",
+      reason: `CYA is reading as an approximate range (${displayValue(vals, "cya", cya)}) that overlaps normal.`,
+      target: "Keep CYA around 30-50 ppm",
+      confidenceScore: cyaConfidence,
+      confidenceNote: "Range overlaps the normal band. Do not add stabilizer from this scan alone.",
+      retest: "Check again on your normal schedule"
+    });
+  } else if (cya != null && cyaState === "high") {
     push({
       key: "cyaHigh",
       priority: "High",
@@ -328,7 +418,7 @@ function buildTreatmentRecommendations(vals, context = {}, history = []) {
       reason: "CYA is high; adding more chemicals will not lower it.",
       target: "Bring CYA back toward 30-50 ppm",
       confidenceScore: cyaConfidence,
-      confidenceNote: cyaConfidence < 0.6 ? "CYA confidence is low. Confirm before water replacement decisions." : "",
+      confidenceNote: cyaConfidence < 0.6 ? "CYA scan quality is limited. Confirm before water replacement decisions." : "",
       retest: "Confirm CYA before drain/refill decisions"
     });
   }
@@ -338,7 +428,7 @@ function buildTreatmentRecommendations(vals, context = {}, history = []) {
   const poolType = context.poolType || context.siteType || context.poolContext?.poolType || "";
   const surface = context.surfaceType || context.surfaceCondition || "";
   const calciumSupported = /plaster|concrete|gunite|quartz|pebble/i.test(surface);
-  if (hardness != null && hardness < 200 && calciumSupported) {
+  if (hardness != null && rangeState(vals, "hardness", hardness, 200, 400) === "low" && calciumSupported) {
     push({
       key: "hardnessUp",
       priority: "Low",
@@ -372,6 +462,7 @@ function createCheck(vals, key, measuredValue) {
     parameter: param.label,
     key,
     measuredValue,
+    displayValue: displayValue(vals, key, measuredValue),
     unit: param.unit,
     rawConfidence: confidenceLabel(rawScore),
     adjustedConfidence: confidenceLabel(rawScore),
@@ -400,7 +491,7 @@ function getHistoryChange(history, key, currentValue) {
 }
 
 function buildMessage(check, context) {
-  const valueText = `${check.measuredValue}${check.unit ? ` ${check.unit}` : ""}`;
+  const valueText = check.displayValue || `${check.measuredValue}${check.unit ? ` ${check.unit}` : ""}`;
   const appearance = context?.waterAppearance;
 
   if (check.key === "freeCl" && check.reasonCodes.includes("CLOUDY_OR_GREEN_LOW_CHLORINE")) {
@@ -417,8 +508,8 @@ function buildMessage(check, context) {
   }
   if (check.reasonCodes.includes("CLEAR_WATER_LOW_CONFIDENCE")) {
     return {
-      message: `${check.parameter} confidence is reduced, while the water appearance looks good.`,
-      action: "Treat this reading as approximate and verify before large adjustments."
+      message: `${check.parameter} is approximate, while the water appearance looks good.`,
+      action: "Use the approximate result for small guidance and verify before large adjustments."
     };
   }
   if (check.reasonCodes.includes("WATER_APPEARANCE_DECLINING")) {
@@ -460,13 +551,13 @@ function buildMessage(check, context) {
   if (check.reasonCodes.includes("LOW_SAMPLE_QUALITY")) {
     return {
       message: `${check.parameter} pad sample quality is low.`,
-      action: "Reposition the marker near the center of the pad or use this result cautiously before large adjustments."
+      action: "Reposition the marker near the center of the pad before large adjustments."
     };
   }
   if (check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")) {
     return {
-      message: `${check.parameter} is between nearby chart colors, so this result is approximate.`,
-      action: "Use the displayed range for cautious guidance and avoid large exact-dose changes from this value alone."
+      message: `${check.parameter} is an approximate range (${valueText}).`,
+      action: "Use the displayed range for guidance; avoid large exact-dose changes from this value alone."
     };
   }
   if (check.reasonCodes.includes("LOW_DELTA_E_SEPARATION")) {
@@ -486,7 +577,7 @@ function finaliseCheck(check, context) {
   const content = buildMessage(check, context);
   check.message = content.message;
   check.recommendedAction = content.action;
-  if (check.adjustedConfidence === "Low" && check.status === "Plausible") check.status = "Use cautiously";
+  if (check.adjustedConfidence === "Low" && check.status === "Plausible") check.status = "Approximate";
   return check;
 }
 
@@ -722,7 +813,7 @@ function evaluateContext(vals, context, history, checks) {
           code: "CLEAR_WATER_LOW_CONFIDENCE",
           penalty: 0,
           severity: "Caution",
-          status: "Verify reading",
+          status: "Approximate",
           note: `${APPEARANCE_LABELS[appearance]} water lowers urgency, but does not make unsafe chemistry safe.`
         });
       }

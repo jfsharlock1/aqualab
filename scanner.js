@@ -3132,7 +3132,7 @@ export function initPoolTestScanner(root) {
           : (smallGap ? "LOW_DELTA_E_SEPARATION" : null);
         if (manualSelection && sampleMeta?.sampleQuality === "Low") reasonCode = "LOW_SAMPLE_QUALITY";
         const ambiguityStatus = approximateRange
-          ? `Approximate Range ${formatPadRange(pick.best.value, pick.second.value)}`
+          ? `Approximate range ${formatPadRange(pick.best.value, pick.second.value)}`
           : (reasonCode === "LOW_SAMPLE_QUALITY" ? "Low sample quality" : (reasonCode === "LOW_DELTA_E_SEPARATION" ? "Ambiguous non-adjacent match" : "Best match clear"));
         const debug = {
           key,
@@ -3399,7 +3399,7 @@ export function initPoolTestScanner(root) {
     el.textContent = text;
   }
 
-  function resultRangeText(vals, key, value, unit = "") {
+  function getResultRange(vals, key) {
     const legacyRange = ({
       ph: vals?.__phRange,
       freeCl: vals?.__freeClRange,
@@ -3410,10 +3410,45 @@ export function initPoolTestScanner(root) {
       cya: vals?.__cyaRange
     })[key] || null;
     const range = vals?.__padRanges?.[key] || legacyRange;
-    const valueText = unit ? `${value} ${unit}` : `${value}`;
-    if (!Array.isArray(range)) return valueText;
-    const rangeText = unit ? `${range[0]}-${range[1]} ${unit}` : `${range[0]}-${range[1]}`;
-    return `${valueText}, Approximate Range ${rangeText}`;
+    if (!Array.isArray(range) || range.length < 2) return null;
+    const a = Number(range[0]);
+    const b = Number(range[1]);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    return [Math.min(a, b), Math.max(a, b)];
+  }
+
+  function formatDisplayNumber(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return `${value}`;
+    return `${Number(n.toFixed(Math.abs(n) < 10 && !Number.isInteger(n) ? 1 : 0))}`;
+  }
+
+  function formatResultRange(range, unit = "") {
+    if (!Array.isArray(range)) return "";
+    const text = `${formatDisplayNumber(range[0])}–${formatDisplayNumber(range[1])}`;
+    return unit ? `${text} ${unit}` : text;
+  }
+
+  function displayValueText(vals, key, value, unit = "") {
+    const range = getResultRange(vals, key);
+    if (range) return formatResultRange(range, unit);
+    return unit ? `${formatDisplayNumber(value)} ${unit}` : formatDisplayNumber(value);
+  }
+
+  function rangeState(vals, key, value, min, max) {
+    const range = getResultRange(vals, key) || [Number(value), Number(value)];
+    const low = Number(range[0]);
+    const high = Number(range[1]);
+    if (!Number.isFinite(low) || !Number.isFinite(high)) return "unknown";
+    if (high < min) return "low";
+    if (low > max) return "high";
+    if (low < min) return "slightlyLow";
+    if (high > max) return "slightlyHigh";
+    return "good";
+  }
+
+  function resultRangeText(vals, key, value, unit = "") {
+    return displayValueText(vals, key, value, unit);
   }
 
   function renderBars(vals) {
@@ -3426,34 +3461,47 @@ export function initPoolTestScanner(root) {
     els.barCya && (els.barCya.style.width = pct(vals.cya, 0, 240) + "%");
 
     const phText = resultRangeText(vals, "ph", vals.ph);
-    if (vals.ph < 7.2) tag(els.tagPh, "warn", `Low (${phText})`);
+    const phState = rangeState(vals, "ph", vals.ph, 7.2, 7.8);
+    if (getResultRange(vals, "ph")) tag(els.tagPh, phState === "good" ? "ok" : "warn", `Approximate range (${phText})`);
+    else if (vals.ph < 7.2) tag(els.tagPh, "warn", `Low (${phText})`);
     else if (vals.ph > 7.8) tag(els.tagPh, "warn", `High (${phText})`);
     else tag(els.tagPh, "ok", `Good (${phText})`);
 
     const freeClText = resultRangeText(vals, "freeCl", vals.freeCl, "ppm");
-    if (vals.freeCl < 1) tag(els.tagFCl, "warn", `Low (${freeClText})`);
+    const freeClState = rangeState(vals, "freeCl", vals.freeCl, 1, 3);
+    if (getResultRange(vals, "freeCl")) tag(els.tagFCl, freeClState === "good" ? "ok" : "warn", `Approximate range (${freeClText})`);
+    else if (vals.freeCl < 1) tag(els.tagFCl, "warn", `Low (${freeClText})`);
     else if (vals.freeCl > 3) tag(els.tagFCl, "warn", `High (${freeClText})`);
     else tag(els.tagFCl, "ok", `Good (${freeClText})`);
 
-    tag(els.tagTCl, "ok", resultRangeText(vals, "totalCl", vals.totalCl, "ppm"));
+    const totalClText = resultRangeText(vals, "totalCl", vals.totalCl, "ppm");
+    tag(els.tagTCl, getResultRange(vals, "totalCl") ? "warn" : "ok", getResultRange(vals, "totalCl") ? `Approximate range (${totalClText})` : totalClText);
 
     const bromineText = resultRangeText(vals, "bromine", vals.bromine, "ppm");
-    if (vals.bromine < 2) tag(els.tagBr, "warn", `Low (${bromineText})`);
+    const bromineState = rangeState(vals, "bromine", vals.bromine, 2, 6);
+    if (getResultRange(vals, "bromine")) tag(els.tagBr, bromineState === "good" ? "ok" : "warn", `Approximate range (${bromineText})`);
+    else if (vals.bromine < 2) tag(els.tagBr, "warn", `Low (${bromineText})`);
     else if (vals.bromine > 6) tag(els.tagBr, "warn", `High (${bromineText})`);
     else tag(els.tagBr, "ok", `Good (${bromineText})`);
 
     const hardnessText = resultRangeText(vals, "hardness", vals.hardness, "ppm");
-    if (vals.hardness < 150) tag(els.tagHard, "warn", `Low (${hardnessText})`);
+    const hardnessState = rangeState(vals, "hardness", vals.hardness, 150, 300);
+    if (getResultRange(vals, "hardness")) tag(els.tagHard, hardnessState === "good" ? "ok" : "warn", `Approximate range (${hardnessText})`);
+    else if (vals.hardness < 150) tag(els.tagHard, "warn", `Low (${hardnessText})`);
     else if (vals.hardness > 300) tag(els.tagHard, "warn", `High (${hardnessText})`);
     else tag(els.tagHard, "ok", `Good (${hardnessText})`);
 
     const alkText = resultRangeText(vals, "alk", vals.alk, "ppm");
-    if (vals.alk < 80) tag(els.tagAlk, "warn", `Low (${alkText})`);
+    const alkState = rangeState(vals, "alk", vals.alk, 80, 120);
+    if (getResultRange(vals, "alk")) tag(els.tagAlk, alkState === "good" ? "ok" : "warn", `Approximate range (${alkText})`);
+    else if (vals.alk < 80) tag(els.tagAlk, "warn", `Low (${alkText})`);
     else if (vals.alk > 120) tag(els.tagAlk, "warn", `High (${alkText})`);
     else tag(els.tagAlk, "ok", `Good (${alkText})`);
 
     const cyaText = resultRangeText(vals, "cya", vals.cya, "ppm");
-    if (vals.cya < 30) tag(els.tagCya, "warn", `Low (${cyaText})`);
+    const cyaState = rangeState(vals, "cya", vals.cya, 30, 100);
+    if (getResultRange(vals, "cya")) tag(els.tagCya, cyaState === "good" ? "ok" : "warn", `Approximate range (${cyaText})`);
+    else if (vals.cya < 30) tag(els.tagCya, "warn", `Low (${cyaText})`);
     else if (vals.cya > 100) tag(els.tagCya, "warn", `High (${cyaText})`);
     else tag(els.tagCya, "ok", `Good (${cyaText})`);
   }
@@ -3703,7 +3751,7 @@ export function initPoolTestScanner(root) {
       warnings.push("pH is an extreme reading. Verify pH before a large pH adjustment.");
     }
     if ((vals.__freeClConfidence ?? 1) < 0.55 && (vals.__totalClConfidence ?? 1) < 0.55) {
-      warnings.push("Chlorine pad confidence is low. Retest chlorine before large sanitizer adjustments.");
+      warnings.push("Chlorine scan quality is limited. Verify chlorine before large sanitizer adjustments.");
     }
     return warnings;
   }
@@ -3719,22 +3767,27 @@ export function initPoolTestScanner(root) {
     ];
     const readings = readingMap.map(([key, label]) => {
       const confidence = confidenceFor(key);
+      const range = getResultRange(vals, key);
+      const debug = vals?.__padDebug?.[key] || null;
+      const approximateAdjacentRange = !!range && (debug?.usableAmbiguous || debug?.rangeApplied || debug?.reasonCode === "AMBIGUOUS_ADJACENT_MATCH");
       return {
         key,
         label,
         confidence,
+        approximateAdjacentRange,
         quality: confidence < 0.5 ? "Verify" : confidence < 0.7 ? "Approximate" : "Reliable"
       };
     });
     const scanScore = Number(vals.__scanQuality?.score ?? sanity?.scoreConfidencePercent ?? 75);
-    const low = readings.filter(item => item.confidence < 0.5);
-    const approximate = readings.filter(item => item.confidence >= 0.5 && item.confidence < 0.7);
+    const low = readings.filter(item => item.confidence < 0.5 && !item.approximateAdjacentRange);
+    const approximate = readings.filter(item => item.confidence >= 0.5 && item.confidence < 0.7 && !item.approximateAdjacentRange);
+    const approximateRanges = readings.filter(item => item.approximateAdjacentRange);
     const review = [...low, ...approximate];
     const reliable = readings
-      .filter(item => item.confidence >= 0.7)
+      .filter(item => item.confidence >= 0.7 || item.approximateAdjacentRange)
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, 3)
-      .map(item => item.label);
+      .map(item => item.approximateAdjacentRange ? `${item.label} range` : item.label);
     const verify = [];
     const addVerify = label => {
       if (label && !verify.includes(label)) verify.push(label);
@@ -3752,15 +3805,19 @@ export function initPoolTestScanner(root) {
     const cyaTreatmentRecommended = (vals.cya < 30 || vals.cya > 100 || treatmentTitles.some(text => text.includes("stabilizer") || text.includes("cya")));
     const safetyNotes = [];
 
-    if (fcConfidence < 0.7 || tcConfidence < 0.7) {
+    const chlorineApproxRange = readings.some(item => (item.key === "freeCl" || item.key === "totalCl") && item.approximateAdjacentRange);
+    const phApproxRange = readings.some(item => item.key === "ph" && item.approximateAdjacentRange);
+    const cyaApproxRange = readings.some(item => item.key === "cya" && item.approximateAdjacentRange);
+
+    if ((fcConfidence < 0.7 || tcConfidence < 0.7) && !chlorineApproxRange) {
       addVerify("Chlorine");
       safetyNotes.push("Verify chlorine before shock or large sanitizer adjustments.");
     }
-    if (phConfidence < 0.7 && pHTreatmentRecommended) {
+    if (phConfidence < 0.7 && pHTreatmentRecommended && !phApproxRange) {
       addVerify("pH");
       safetyNotes.push("Retest pH before a large pH adjustment.");
     }
-    if (cyaConfidence < 0.6 && cyaTreatmentRecommended) {
+    if (cyaConfidence < 0.6 && cyaTreatmentRecommended && !cyaApproxRange) {
       addVerify("Stabilizer");
       safetyNotes.push("Retest stabilizer before changing CYA.");
     }
@@ -3774,6 +3831,8 @@ export function initPoolTestScanner(root) {
     let explanation = "Scan looks consistent enough for normal guidance.";
     if (review.length >= 3) {
       explanation = "Several readings are approximate because some pads were close to multiple reference colors.";
+    } else if (approximateRanges.length) {
+      explanation = "Some pads were close to adjacent reference colors, so AquaLab is showing approximate ranges.";
     } else if (review.length > 0) {
       explanation = "Some pads were close to multiple reference colors, so a few results are approximate.";
     }
@@ -3811,7 +3870,7 @@ export function initPoolTestScanner(root) {
         return severityClass(check.severity) === "bad" || check.adjustedConfidence === "Low";
       })
       .map(check => `${check.message} ${check.recommendedAction}`);
-    const chemistryWarnings = hasTrueLowPads ? chemistrySanityWarnings(vals) : chemistrySanityWarnings(vals).filter(message => !/low confidence/i.test(message));
+    const chemistryWarnings = hasTrueLowPads ? chemistrySanityWarnings(vals) : chemistrySanityWarnings(vals).filter(message => !/scan quality is limited/i.test(message));
     const warnings = Array.from(new Set([...(vals.__warnings || []), ...chemistryWarnings, ...sanityMessages]));
 
     warnings.forEach(warning => {
@@ -3906,104 +3965,113 @@ export function initPoolTestScanner(root) {
     const combinedCl = Math.max(0, Number(vals.totalCl || 0) - Number(vals.freeCl || 0));
     const combinedEstimated = fcConfidence < 0.7 || tcConfidence < 0.7;
     const reliability = buildScanReliability(vals, sanity, confidenceFor);
+    const textFor = (key, value, unit = "") => displayValueText(vals, key, value, unit);
+    const stateFor = (key, value, min, max) => rangeState(vals, key, value, min, max);
 
-    if (vals.ph < 7.2) {
+    const phState = stateFor("ph", vals.ph, 7.2, 7.8);
+    if (phState === "low" || phState === "slightlyLow") {
       const deltaPh = Math.max(0, targets.ph - vals.ph);
       const dose = factor10k ? formatWeightOz((deltaPh / 0.2) * 6 * factor10k) : null;
-      observations.push(`pH appears low (${vals.ph}).`);
+      observations.push(`pH appears ${phState === "slightlyLow" ? "slightly low" : "low"} (${textFor("ph", vals.ph)}).`);
       actions.push(wording(
         confidenceFor("ph"),
         `Raise pH slightly toward 7.2-7.6. ${doseText(dose, `Add about ${dose} of pH increaser, split into smaller doses with circulation.`)}`,
         "pH appears low. Consider a modest pH increase, then retest.",
-        "pH appears low. If the water otherwise looks normal, make a modest correction and retest.",
-        "pH reads low, but confidence is low. Verify with a retest before large adjustments."
+        "pH appears slightly low. If the water otherwise looks normal, make only a modest correction.",
+        "pH appears low, but scan quality is limited. Verify before a large pH adjustment."
       ));
-    } else if (vals.ph > 7.8) {
+    } else if (phState === "high" || phState === "slightlyHigh") {
       const deltaPh = Math.max(0, vals.ph - targets.ph);
       const dose = factor10k ? formatWeightOz((deltaPh / 0.2) * 12 * factor10k) : null;
-      observations.push(`pH appears high (${vals.ph}).`);
+      observations.push(`pH appears ${phState === "slightlyHigh" ? "slightly high" : "high"} (${textFor("ph", vals.ph)}).`);
       actions.push(wording(
         confidenceFor("ph"),
         `Lower pH gradually toward 7.2-7.6. ${doseText(dose, `Add about ${dose} of pH reducer in divided doses.`)}`,
         "pH appears high. Consider a modest pH reduction, then retest.",
         "pH appears high. Treat this as approximate and make only a modest correction.",
-        "pH reads high, but confidence is low. Verify with a retest before large adjustments."
+        "pH appears high, but scan quality is limited. Verify before a large pH adjustment."
       ));
     } else {
-      observations.push(`pH appears good (${vals.ph}).`);
+      observations.push(`pH appears good (${textFor("ph", vals.ph)}).`);
       actions.push("pH is in range. No pH adjustment suggested right now.");
     }
 
-    if (vals.freeCl < 1) {
+    const fcState = stateFor("freeCl", vals.freeCl, 1, 3);
+    if (fcState === "low" || fcState === "slightlyLow") {
       const deltaCl = Math.max(0, targets.freeCl - vals.freeCl);
       const dose = factor10k ? formatWeightOz(deltaCl * 10.7 * factor10k) : null;
-      observations.push(`Free chlorine appears low (${vals.freeCl} ppm).`);
+      observations.push(`Free chlorine appears ${fcState === "slightlyLow" ? "slightly low" : "low"} (${textFor("freeCl", vals.freeCl, "ppm")}).`);
       actions.push(wording(
         fcConfidence,
         `Raise free chlorine toward 1-3 ppm. ${doseText(dose, `Add about ${dose} of 12% liquid chlorine, circulate, then retest after 30-60 minutes.`)}`,
         "Free chlorine appears low. Add a modest amount of liquid chlorine and retest tonight.",
         "Free chlorine appears low. Small corrective dosing may still be appropriate; retest after circulation.",
-        "Free chlorine reads low, but confidence is low. Retest chlorine first before making a large sanitizer adjustment."
+        "Free chlorine appears low, but scan quality is limited. Verify chlorine before a large sanitizer adjustment."
       ));
-    } else if (vals.freeCl > 3) {
-      observations.push(`Free chlorine appears high (${vals.freeCl} ppm).`);
+    } else if (fcState === "high" || fcState === "slightlyHigh") {
+      observations.push(`Free chlorine appears ${fcState === "slightlyHigh" ? "slightly high" : "high"} (${textFor("freeCl", vals.freeCl, "ppm")}).`);
       actions.push("Avoid adding more chlorine right now; keep water circulating and let sanitizer drift down.");
     } else {
-      observations.push(`Free chlorine appears good (${vals.freeCl} ppm).`);
+      observations.push(`Free chlorine appears good (${textFor("freeCl", vals.freeCl, "ppm")}).`);
       actions.push("Sanitizer is in the expected range. No chlorine adjustment suggested right now.");
     }
 
-    observations.push(`Total chlorine reads ${vals.totalCl} ppm.`);
+    observations.push(`Total chlorine reads ${textFor("totalCl", vals.totalCl, "ppm")}.`);
     if (combinedCl > 0.5) {
       observations.push(`Combined chlorine ${combinedEstimated ? "may be" : "appears"} elevated (${combinedCl.toFixed(2)} ppm${combinedEstimated ? ", estimated" : ""}).`);
       if (fcConfidence >= 0.7 && tcConfidence >= 0.7) actions.push("Combined chlorine appears elevated. Consider oxidation/shock guidance per product label, then retest.");
-      else actions.push("Combined chlorine may be elevated. Retest chlorine first if either chlorine pad confidence is low.");
+      else actions.push("Combined chlorine may be elevated. Verify chlorine first if either chlorine pad scan quality is limited.");
     } else {
       observations.push(`Combined chlorine appears acceptable (${combinedCl.toFixed(2)} ppm${combinedEstimated ? ", estimated" : ""}).`);
     }
 
-    if (vals.alk < 80) {
+    const alkState = stateFor("alk", vals.alk, 80, 120);
+    if (alkState === "low" || alkState === "slightlyLow") {
       const deltaAlk = Math.max(0, targets.alk - vals.alk);
       const dose = factor10k ? formatWeightOz((deltaAlk / 10) * 1.5 * 16 * factor10k) : null;
-      observations.push(`Total alkalinity appears low (${vals.alk} ppm).`);
+      observations.push(`Total alkalinity appears ${alkState === "slightlyLow" ? "slightly low" : "low"} (${textFor("alk", vals.alk, "ppm")}).`);
       actions.push(wording(
         confidenceFor("alk"),
         `Raise alkalinity toward 80-120 ppm. ${doseText(dose, `Add about ${dose} of alkalinity increaser in portions with the pump running.`)}`,
         "Alkalinity appears low. Consider a modest alkalinity increase, then retest.",
         "Alkalinity appears low. Treat this as approximate and adjust gradually.",
-        "Alkalinity reads low, but confidence is low. Verify with a retest before large adjustments."
+        "Alkalinity appears low, but scan quality is limited. Verify before a large adjustment."
       ));
-    } else if (vals.alk > 120) {
-      observations.push(`Total alkalinity appears high (${vals.alk} ppm).`);
+    } else if (alkState === "high" || alkState === "slightlyHigh") {
+      observations.push(`Total alkalinity appears ${alkState === "slightlyHigh" ? "slightly high" : "high"} (${textFor("alk", vals.alk, "ppm")}).`);
       actions.push("Lower alkalinity gradually only if it remains high on retest; pH control usually comes first.");
     } else {
-      observations.push(`Total alkalinity appears good (${vals.alk} ppm).`);
+      observations.push(`Total alkalinity appears good (${textFor("alk", vals.alk, "ppm")}).`);
     }
 
     const cyaConfidence = confidenceFor("cya");
-    if (vals.cya < 30) {
+    const cyaState = stateFor("cya", vals.cya, 30, 100);
+    if (cyaState === "low") {
       const deltaCya = Math.max(0, targets.cya - vals.cya);
       const dose = factor10k ? formatWeightOz((deltaCya / 10) * 13 * factor10k) : null;
-      observations.push(`Cyanuric acid reads low (${vals.cya} ppm).`);
-      if (cyaConfidence < 0.6) actions.push("CYA reads low, but confidence is low. Retest before adjusting stabilizer.");
+      observations.push(`Stabilizer appears low (${textFor("cya", vals.cya, "ppm")}).`);
+      if (cyaConfidence < 0.6 && !getResultRange(vals, "cya")) actions.push("CYA appears low, but scan quality is limited. Verify before adjusting stabilizer.");
       else actions.push(`CYA appears low. ${doseText(dose, `Add about ${dose} of stabilizer gradually per label directions, then retest tomorrow or the next day.`)}`);
-    } else if (vals.cya > 100) {
-      observations.push(`Cyanuric acid reads high (${vals.cya} ppm).`);
-      if (cyaConfidence < 0.6) actions.push("CYA reads high, but confidence is low. Retest before making stabilizer or drain/refill decisions.");
+    } else if (cyaState === "slightlyLow") {
+      observations.push(`Stabilizer appears near the low end (${textFor("cya", vals.cya, "ppm")}).`);
+      actions.push("Stabilizer overlaps the normal range. Do not add stabilizer from this scan alone.");
+    } else if (cyaState === "high" || cyaState === "slightlyHigh") {
+      observations.push(`Stabilizer appears ${cyaState === "slightlyHigh" ? "near the high end" : "high"} (${textFor("cya", vals.cya, "ppm")}).`);
+      if (cyaConfidence < 0.6 && !getResultRange(vals, "cya")) actions.push("CYA appears high, but scan quality is limited. Verify before making stabilizer or drain/refill decisions.");
       else actions.push("CYA appears high. Confirm with a dedicated CYA test before considering partial water replacement.");
     } else {
-      observations.push(`Cyanuric acid appears acceptable (${vals.cya} ppm).`);
-      if (cyaConfidence < 0.6) actions.push("CYA reads acceptable, but confidence is low. Retest before adjusting stabilizer.");
+      observations.push(`Stabilizer appears within the normal range (${textFor("cya", vals.cya, "ppm")}).`);
     }
 
-    if (vals.hardness < 150) {
-      observations.push(`Total hardness appears low (${vals.hardness} ppm).`);
+    const hardnessState = stateFor("hardness", vals.hardness, 150, 300);
+    if (hardnessState === "low" || hardnessState === "slightlyLow") {
+      observations.push(`Total hardness appears ${hardnessState === "slightlyLow" ? "slightly low" : "low"} (${textFor("hardness", vals.hardness, "ppm")}).`);
       actions.push("Hardness is low. Some pool surfaces may need calcium hardness increaser; adjust gradually if your pool type requires it.");
-    } else if (vals.hardness > 300) {
-      observations.push(`Total hardness appears high (${vals.hardness} ppm).`);
+    } else if (hardnessState === "high" || hardnessState === "slightlyHigh") {
+      observations.push(`Total hardness appears ${hardnessState === "slightlyHigh" ? "slightly high" : "high"} (${textFor("hardness", vals.hardness, "ppm")}).`);
       actions.push("Hardness is high. Watch for scale and avoid adding calcium unless a product label calls for it.");
     } else {
-      observations.push(`Total hardness appears acceptable (${vals.hardness} ppm).`);
+      observations.push(`Total hardness appears acceptable (${textFor("hardness", vals.hardness, "ppm")}).`);
     }
 
     if (poolGallons) {
