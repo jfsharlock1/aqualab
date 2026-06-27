@@ -1736,8 +1736,11 @@ body {
 
 .pool-context-panel {
   margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid rgba(125,154,176,0.18);
+  padding: 14px;
+  border: 1px solid rgba(53,164,255,0.26);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(14,165,233,0.10), rgba(15,23,42,0.72));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
 
 .card-header-row.compact h3 {
@@ -1745,21 +1748,102 @@ body {
   font-size: 1rem;
 }
 
+.card-header-row.compact p {
+  margin: 5px 0 0;
+}
+
+.weather-context-card {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(125,154,176,0.22);
+  border-radius: 14px;
+  background: rgba(2,6,23,0.36);
+}
+
+.weather-context-card strong {
+  color: var(--fg);
+}
+
+.weather-context-card span,
+.weather-context-card small {
+  color: var(--fg-muted);
+}
+
 .pool-context-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .pool-context-grid label {
   display: grid;
-  gap: 5px;
+  gap: 8px;
+  min-height: 92px;
+  padding: 12px;
+  border: 1px solid rgba(125,154,176,0.22);
+  border-radius: 14px;
+  background: rgba(15,23,42,0.62);
   color: var(--fg-muted);
-  font-size: 0.82rem;
+  font-size: 0.86rem;
+  font-weight: 800;
 }
 
 .pool-context-grid select {
   width: 100%;
   min-width: 0;
+  min-height: 44px;
+  font-size: 0.95rem;
+}
+
+.scan-reliability-card {
+  display: grid;
+  gap: 12px;
+}
+
+.scan-reliability-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scan-reliability-head p,
+.scan-reliability-action p {
+  margin: 4px 0 0;
+}
+
+.reliability-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.reliability-list {
+  display: grid;
+  gap: 6px;
+  min-height: 100%;
+  padding: 12px;
+  border: 1px solid rgba(125,154,176,0.22);
+  border-radius: 14px;
+  background: rgba(15,23,42,0.56);
+}
+
+.reliability-list strong,
+.scan-reliability-action strong {
+  color: var(--fg);
+}
+
+.reliability-list ul {
+  margin: 2px 0 0 18px;
+  padding: 0;
+}
+
+.scan-reliability-action {
+  padding: 12px;
+  border: 1px solid rgba(53,164,255,0.24);
+  border-radius: 14px;
+  background: rgba(14,165,233,0.08);
 }
 
 .top-findings {
@@ -1806,6 +1890,7 @@ body {
 @media (max-width: 700px) {
   .smart-review-meta,
   .pool-context-grid,
+  .reliability-grid,
   .history-log-list {
     grid-template-columns: minmax(0, 1fr);
   }

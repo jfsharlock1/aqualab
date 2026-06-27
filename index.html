@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=25" />
+  <link rel="stylesheet" href="pooltest.css?v=26" />
 </head>
 
 <body>
@@ -368,9 +368,15 @@
         <div class="pool-context-panel" data-pt="poolContextPanel" hidden>
           <div class="card-header-row compact">
             <div>
-              <span class="section-eyebrow">Pool Context</span>
-              <h3>What changed since the last test?</h3>
+              <span class="section-eyebrow">Before We Recommend Treatment...</span>
+              <h3>Confirm recent pool conditions</h3>
+              <p class="muted">Confirm recent pool conditions so treatment advice is accurate.</p>
             </div>
+          </div>
+          <div class="weather-context-card" data-pt="weatherContext">
+            <strong>Weather context</strong>
+            <span data-pt="weatherSummary">Weather suggestions are not connected yet. Confirm conditions manually.</span>
+            <small>Future support: recent rain, temperature, UV index, wind, and forecasted storms.</small>
           </div>
           <div class="pool-context-grid">
             <label>Water Appearance
@@ -466,7 +472,7 @@
 
     <section class="card full-width debug-card app-view engineer-only" data-app-view="more">
       <details class="scan-debug-panel">
-        <summary>Advanced Scan Diagnostics</summary>
+        <summary>Advanced Scan Details</summary>
         <div data-pt="scanDebug">
           <p class="muted hint">Run a scan to see LAB/Delta-E diagnostics.</p>
         </div>
@@ -518,7 +524,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev38";
+    import { initPoolTestScanner } from "./scanner.js?v=dev39";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>

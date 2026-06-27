@@ -362,6 +362,8 @@ export function initPoolTestScanner(root) {
     recentRain: root.querySelector('[data-pt="recentRain"]'),
     poolUsage: root.querySelector('[data-pt="poolUsage"]'),
     surfaceCondition: root.querySelector('[data-pt="surfaceCondition"]'),
+    weatherContext: root.querySelector('[data-pt="weatherContext"]'),
+    weatherSummary: root.querySelector('[data-pt="weatherSummary"]'),
     historyLog: root.querySelector('[data-pt="historyLog"]'),
     homeGreeting: root.querySelector('[data-pt="homeGreeting"]'),
     homeHeroSubtitle: root.querySelector('[data-pt="homeHeroSubtitle"]'),
@@ -2970,10 +2972,32 @@ export function initPoolTestScanner(root) {
     if (els.recentRain) els.recentRain.value = context.recentRain;
     if (els.poolUsage) els.poolUsage.value = context.poolUsage;
     if (els.surfaceCondition) els.surfaceCondition.value = context.surfaceCondition;
+    renderWeatherContextSuggestion();
   }
 
   function poolContextLabel(group, value) {
     return POOL_CONTEXT_LABELS[group]?.[value] || value || "Not provided";
+  }
+
+  function getWeatherContextSuggestion() {
+    return {
+      source: "placeholder",
+      available: false,
+      recentRain: null,
+      temperatureF: null,
+      uvIndex: null,
+      windMph: null,
+      forecastStorms: null,
+      summary: "Weather suggestions are not connected yet. Confirm conditions manually."
+    };
+  }
+
+  function renderWeatherContextSuggestion() {
+    if (!els.weatherSummary) return;
+    const weather = getWeatherContextSuggestion();
+    els.weatherSummary.textContent = weather.available
+      ? weather.summary
+      : "Weather suggestions are not connected yet. Confirm conditions manually.";
   }
 
   function confidenceLabel(score) {
@@ -3273,7 +3297,7 @@ export function initPoolTestScanner(root) {
         if (Number.isFinite(a) && Number.isFinite(b)) result.__padRanges[key] = [a, b];
       }
       if (debug.trueLowConfidence) {
-        result.__warnings.push(`${debug.label} sample quality is low. Use this reading cautiously and verify before large adjustments.`);
+        result.__warnings.push(`${debug.label} sample quality is low. Verify before large adjustments.`);
       }
       if (debug.sampleQuality === "Low") {
         result.__warnings.push(`${debug.label} pad sample quality is low. Reposition marker or retest before large adjustments.`);
@@ -3619,16 +3643,108 @@ export function initPoolTestScanner(root) {
     if (previous && Number.isFinite(Number(previous.cya)) && Number.isFinite(Number(vals.cya))) {
       const jump = Math.abs(Number(vals.cya) - Number(previous.cya));
       if (jump >= 70 && (vals.__cyaConfidence ?? 1) < 0.65) {
-      warnings.push("CYA confidence is low and differs sharply from the previous scan. Use this reading cautiously.");
+      warnings.push("CYA differs sharply from the previous scan. Verify stabilizer before large adjustments.");
       }
     }
     if ((vals.__phConfidence ?? 1) < 0.55 && (vals.ph <= 6.4 || vals.ph >= 8.2)) {
-      warnings.push("pH confidence is low for an extreme reading. Verify with a retest before large adjustments.");
+      warnings.push("pH is an extreme reading. Verify pH before a large pH adjustment.");
     }
     if ((vals.__freeClConfidence ?? 1) < 0.55 && (vals.__totalClConfidence ?? 1) < 0.55) {
       warnings.push("Chlorine pad confidence is low. Retest chlorine before large sanitizer adjustments.");
     }
     return warnings;
+  }
+
+  function buildScanReliability(vals, sanity, confidenceFor) {
+    const readingMap = [
+      ["ph", "pH"],
+      ["freeCl", "Free Chlorine"],
+      ["totalCl", "Total Chlorine"],
+      ["alk", "Alkalinity"],
+      ["cya", "Stabilizer"],
+      ["hardness", "Hardness"]
+    ];
+    const readings = readingMap.map(([key, label]) => {
+      const confidence = confidenceFor(key);
+      return {
+        key,
+        label,
+        confidence,
+        quality: confidence < 0.5 ? "Verify" : confidence < 0.7 ? "Approximate" : "Reliable"
+      };
+    });
+    const scanScore = Number(vals.__scanQuality?.score ?? sanity?.scoreConfidencePercent ?? 75);
+    const low = readings.filter(item => item.confidence < 0.5);
+    const approximate = readings.filter(item => item.confidence >= 0.5 && item.confidence < 0.7);
+    const review = [...low, ...approximate];
+    const reliable = readings
+      .filter(item => item.confidence >= 0.7)
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 3)
+      .map(item => item.label);
+    const verify = [];
+    const addVerify = label => {
+      if (label && !verify.includes(label)) verify.push(label);
+    };
+
+    if (review.length <= 2) review.forEach(item => addVerify(item.label));
+    else if (low.length <= 2) low.forEach(item => addVerify(item.label));
+
+    const fcConfidence = confidenceFor("freeCl");
+    const tcConfidence = confidenceFor("totalCl");
+    const phConfidence = confidenceFor("ph");
+    const cyaConfidence = confidenceFor("cya");
+    const treatmentTitles = (sanity?.treatments || []).map(treatment => `${treatment.title || ""} ${treatment.reason || ""}`.toLowerCase());
+    const pHTreatmentRecommended = vals.ph < 7.2 || vals.ph > 7.8 || treatmentTitles.some(text => text.includes("ph"));
+    const cyaTreatmentRecommended = (vals.cya < 30 || vals.cya > 100 || treatmentTitles.some(text => text.includes("stabilizer") || text.includes("cya")));
+    const safetyNotes = [];
+
+    if (fcConfidence < 0.7 || tcConfidence < 0.7) {
+      addVerify("Chlorine");
+      safetyNotes.push("Verify chlorine before shock or large sanitizer adjustments.");
+    }
+    if (phConfidence < 0.7 && pHTreatmentRecommended) {
+      addVerify("pH");
+      safetyNotes.push("Retest pH before a large pH adjustment.");
+    }
+    if (cyaConfidence < 0.6 && cyaTreatmentRecommended) {
+      addVerify("Stabilizer");
+      safetyNotes.push("Retest stabilizer before changing CYA.");
+    }
+
+    let level = "Good";
+    if (scanScore >= 88 && !low.length && approximate.length <= 1) level = "Excellent";
+    else if (scanScore >= 74 && !low.length && review.length <= 2) level = "Good";
+    else if (scanScore >= 55 && low.length <= 2) level = "Moderate";
+    else level = "Low";
+
+    let explanation = "Scan looks consistent enough for normal guidance.";
+    if (review.length >= 3) {
+      explanation = "Several readings are approximate because some pads were close to multiple reference colors.";
+    } else if (review.length > 0) {
+      explanation = "Some pads were close to multiple reference colors, so a few results are approximate.";
+    }
+    const imageWarnings = Array.from(new Set([...(vals.__warnings || []), ...chemistrySanityWarnings(vals)]))
+      .filter(Boolean)
+      .filter(warning => !/confidence is|use .*cautiously/i.test(String(warning)));
+    if (imageWarnings.some(warning => /background|shadow|edge|backing|sample/i.test(String(warning)))) {
+      explanation = `${explanation} Image or sample conditions may have influenced the scan.`;
+    }
+
+    let action = "Use treatment cards below and retest after circulation.";
+    if (level === "Low") action = "Retest before large chemical changes.";
+    else if (safetyNotes.length) action = safetyNotes[0];
+    else if (level === "Moderate") action = "Verify before large chemical changes.";
+
+    return {
+      level,
+      explanation,
+      mostReliable: reliable.length ? reliable : ["No standout readings"],
+      verifyBeforeAdjustments: verify.length ? verify : ["None flagged"],
+      action,
+      safetyNotes: Array.from(new Set(safetyNotes)),
+      approximateCount: review.length
+    };
   }
 
   function renderRecsLegacy(vals) {
@@ -3713,7 +3829,6 @@ export function initPoolTestScanner(root) {
   function renderRecs(vals) {
     if (!els.recs) return;
     const sanity = vals.__sanityCheck || lastSanityCheck || runSanityCheck(vals);
-    const scanNotes = [];
     const observations = [];
     const actions = [];
     const targets = { ph: 7.5, freeCl: 2.5, hardness: 250, alk: 100, cya: 40 };
@@ -3725,7 +3840,6 @@ export function initPoolTestScanner(root) {
       if (Number.isFinite(Number(check?.adjustedScore))) return clamp01(Number(check.adjustedScore));
       return 0.7;
     };
-    const noteForConfidence = conf => conf < 0.5 ? "low" : conf < 0.7 ? "moderate" : null;
     const wording = (conf, high, normal, cautious, low) => {
       if (conf > 0.85) return high;
       if (conf >= 0.7) return normal;
@@ -3738,28 +3852,7 @@ export function initPoolTestScanner(root) {
     const tcConfidence = confidenceFor("totalCl");
     const combinedCl = Math.max(0, Number(vals.totalCl || 0) - Number(vals.freeCl || 0));
     const combinedEstimated = fcConfidence < 0.7 || tcConfidence < 0.7;
-
-    [
-      ["ph", "pH"],
-      ["freeCl", "Free chlorine"],
-      ["totalCl", "Total chlorine"],
-      ["alk", "Alkalinity"],
-      ["cya", "CYA"],
-      ["hardness", "Hardness"]
-    ].forEach(([key, label]) => {
-      const note = noteForConfidence(confidenceFor(key));
-      if (note) scanNotes.push(`${label} confidence is ${note}. Use this reading cautiously.`);
-    });
-    Array.from(new Set([...(vals.__warnings || []), ...chemistrySanityWarnings(vals)]))
-      .filter(Boolean)
-      .forEach(warning => {
-        const clean = String(warning)
-          .replace(/old harsh dosing warning/gi, "Use this reading cautiously.")
-          .replace(/old harsh adjustment warning/gi, "Verify with a retest before large adjustments.");
-        scanNotes.push(clean);
-      });
-    if (combinedEstimated) scanNotes.push("Combined chlorine is estimated because one chlorine pad has moderate or low confidence.");
-    if (!poolGallons) scanNotes.push("Enter pool volume to calculate exact chemical amounts.");
+    const reliability = buildScanReliability(vals, sanity, confidenceFor);
 
     if (vals.ph < 7.2) {
       const deltaPh = Math.max(0, targets.ph - vals.ph);
@@ -3780,7 +3873,7 @@ export function initPoolTestScanner(root) {
         confidenceFor("ph"),
         `Lower pH gradually toward 7.2-7.6. ${doseText(dose, `Add about ${dose} of pH reducer in divided doses.`)}`,
         "pH appears high. Consider a modest pH reduction, then retest.",
-        "pH appears high. Use this reading cautiously and make only a modest correction.",
+        "pH appears high. Treat this as approximate and make only a modest correction.",
         "pH reads high, but confidence is low. Verify with a retest before large adjustments."
       ));
     } else {
@@ -3824,7 +3917,7 @@ export function initPoolTestScanner(root) {
         confidenceFor("alk"),
         `Raise alkalinity toward 80-120 ppm. ${doseText(dose, `Add about ${dose} of alkalinity increaser in portions with the pump running.`)}`,
         "Alkalinity appears low. Consider a modest alkalinity increase, then retest.",
-        "Alkalinity appears low. Use this reading cautiously and adjust gradually.",
+        "Alkalinity appears low. Treat this as approximate and adjust gradually.",
         "Alkalinity reads low, but confidence is low. Verify with a retest before large adjustments."
       ));
     } else if (vals.alk > 120) {
@@ -3861,7 +3954,6 @@ export function initPoolTestScanner(root) {
     }
 
     if (poolGallons) {
-      scanNotes.unshift(`Estimated pool volume: about ${poolGallons.toLocaleString()} gallons (~${factor10k.toFixed(2)} x 10,000 gal).`);
       actions.push("Dose amounts are estimates. Follow product labels and retest between adjustments.");
     }
 
@@ -3892,6 +3984,37 @@ export function initPoolTestScanner(root) {
         <small class="muted">Dose estimates are conservative. Follow product label directions, circulate water, and retest before additional adjustments.</small>
       </section>
     `;
+    const renderReliabilitySection = () => {
+      const levelClass = reliability.level === "Excellent" || reliability.level === "Good"
+        ? "ok"
+        : reliability.level === "Moderate" ? "warn" : "bad";
+      return `
+        <section class="guidance-section scan-reliability-card">
+          <div class="scan-reliability-head">
+            <div>
+              <h4>Scan Reliability</h4>
+              <p class="muted">${escapeHtml(reliability.explanation)}</p>
+            </div>
+            <span class="tag ${levelClass}">${escapeHtml(reliability.level)}</span>
+          </div>
+          <div class="reliability-grid">
+            <div class="reliability-list">
+              <strong>Most reliable</strong>
+              <ul>${reliability.mostReliable.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            </div>
+            <div class="reliability-list">
+              <strong>Verify before large adjustments</strong>
+              <ul>${reliability.verifyBeforeAdjustments.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            </div>
+          </div>
+          ${reliability.safetyNotes.length ? `<ul class="muted">${reliability.safetyNotes.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+          <div class="scan-reliability-action">
+            <strong>Next step</strong>
+            <p>${escapeHtml(reliability.action)}</p>
+          </div>
+        </section>
+      `;
+    };
     const renderSection = (title, items, fallback) => `
       <section class="guidance-section">
         <h4>${escapeHtml(title)}</h4>
@@ -3899,9 +4022,9 @@ export function initPoolTestScanner(root) {
       </section>
     `;
     els.recs.innerHTML = [
-      renderTreatmentSection(),
+      renderReliabilitySection(),
       renderSection("Chemistry Observations", observations, "No chemistry observations yet."),
-      renderSection("Scan Quality Notes", scanNotes, "No scan quality issues noted.")
+      renderTreatmentSection()
     ].join("");
   }
 

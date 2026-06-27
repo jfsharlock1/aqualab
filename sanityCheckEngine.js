@@ -407,7 +407,7 @@ function buildMessage(check, context) {
     if (check.adjustedConfidence === "Low") {
       return {
         message: "Water appearance and chlorine may be pointing in different directions.",
-        action: "Use the chlorine reading cautiously and verify before large sanitizer adjustments."
+        action: "Verify chlorine before large sanitizer adjustments."
       };
     }
     return {
@@ -418,7 +418,7 @@ function buildMessage(check, context) {
   if (check.reasonCodes.includes("CLEAR_WATER_LOW_CONFIDENCE")) {
     return {
       message: `${check.parameter} confidence is reduced, while the water appearance looks good.`,
-      action: "Use this reading cautiously and verify before large adjustments."
+      action: "Treat this reading as approximate and verify before large adjustments."
     };
   }
   if (check.reasonCodes.includes("WATER_APPEARANCE_DECLINING")) {
