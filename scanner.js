@@ -504,6 +504,22 @@ export function initPoolTestScanner(root) {
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
   const ENGINEER_MODE_KEY = "pt_engineer_mode_v1";
+  const LAYOUT_CLASSES = ["layout-phone", "layout-tablet", "layout-desktop"];
+
+  function currentLayoutClass() {
+    const width = window.innerWidth || document.documentElement.clientWidth || 0;
+    if (width >= 1200) return "layout-desktop";
+    if (width >= 768) return "layout-tablet";
+    return "layout-phone";
+  }
+
+  function applyViewportLayout() {
+    const layout = currentLayoutClass();
+    root.classList.remove(...LAYOUT_CLASSES);
+    document.body.classList.remove(...LAYOUT_CLASSES);
+    root.classList.add(layout);
+    document.body.classList.add(layout);
+  }
 
   function setAppView(view) {
     const next = ["home", "scan", "history", "pool", "more"].includes(view) ? view : "home";
@@ -4851,6 +4867,7 @@ export function initPoolTestScanner(root) {
   loadEasyTestReferenceSwatches();
   loadPoolSetup();
   applyPoolContextInputs();
+  applyViewportLayout();
   applyEngineerMode((() => { try { return localStorage.getItem(ENGINEER_MODE_KEY) === "1"; } catch { return false; } })());
   setAppView((() => { try { return localStorage.getItem("pt_active_view_v1") || "home"; } catch { return "home"; } })());
   renderHistoryCharts();
@@ -4867,5 +4884,6 @@ export function initPoolTestScanner(root) {
     setStatus("Ready. Upload a photo to crop, or enable camera.");
   }
 
+  window.addEventListener("resize", applyViewportLayout);
   window.addEventListener("pagehide", stopCamera);
 }

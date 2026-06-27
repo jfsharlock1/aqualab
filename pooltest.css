@@ -1904,6 +1904,162 @@ body {
   }
 }
 
+/* ---------------------------
+   Device-aware app layouts
+---------------------------- */
+@media (max-width: 767px) {
+  body.layout-phone {
+    padding-bottom: 78px;
+  }
+
+  body.layout-phone .pt-nav {
+    display: none;
+  }
+
+  body.layout-phone .bottom-nav {
+    display: grid;
+  }
+
+  .layout-phone.app-workspace.mobile-app {
+    display: block;
+    max-width: 720px;
+  }
+}
+
+@media (min-width: 768px) {
+  body.layout-tablet,
+  body.layout-desktop {
+    padding-bottom: 0;
+  }
+
+  body.layout-tablet .bottom-nav,
+  body.layout-desktop .bottom-nav {
+    display: none;
+  }
+
+  body.layout-tablet .pt-nav,
+  body.layout-desktop .pt-nav {
+    display: flex;
+  }
+
+  .layout-tablet.app-workspace.mobile-app,
+  .layout-desktop.app-workspace.mobile-app {
+    display: grid;
+    width: min(calc(100vw - 32px), 1080px);
+    max-width: none;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+    padding-inline: 0;
+  }
+
+  .layout-tablet .scan-card,
+  .layout-tablet .result-panel,
+  .layout-desktop .scan-card,
+  .layout-desktop .result-panel {
+    min-width: 0;
+  }
+
+  .layout-tablet .scan-card .row.row-wrap,
+  .layout-desktop .scan-card .row.row-wrap {
+    justify-content: flex-start;
+  }
+
+  .layout-tablet .live-controls,
+  .layout-tablet .photo-controls,
+  .layout-desktop .live-controls,
+  .layout-desktop .photo-controls {
+    align-items: center;
+    gap: 10px;
+  }
+
+  .layout-tablet .scan-view,
+  .layout-tablet .preview-wrap {
+    max-width: min(100%, 820px);
+  }
+
+  .layout-tablet .preview-stage {
+    min-height: 430px;
+  }
+
+  .layout-tablet .home-screen,
+  .layout-desktop .home-screen {
+    width: 100%;
+  }
+
+  .layout-tablet[data-active-view="pool"],
+  .layout-tablet[data-active-view="history"],
+  .layout-tablet[data-active-view="more"],
+  .layout-desktop[data-active-view="pool"],
+  .layout-desktop[data-active-view="history"],
+  .layout-desktop[data-active-view="more"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 1000px) and (max-width: 1199px) {
+  .layout-tablet.app-workspace.mobile-app[data-active-view="scan"] {
+    width: min(calc(100vw - 36px), 1120px);
+    grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr);
+    align-items: start;
+  }
+
+  .layout-tablet[data-active-view="scan"] .scan-card {
+    grid-column: 1;
+  }
+
+  .layout-tablet[data-active-view="scan"] .result-panel {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+@media (min-width: 1200px) {
+  .layout-desktop.app-workspace.mobile-app {
+    width: min(calc(100vw - 48px), 1320px);
+  }
+
+  .layout-desktop.app-workspace.mobile-app[data-active-view="scan"] {
+    grid-template-columns: minmax(0, 760px) minmax(380px, 1fr);
+    align-items: start;
+  }
+
+  .layout-desktop[data-active-view="scan"] .scan-card {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .layout-desktop[data-active-view="scan"] .result-panel {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .layout-desktop[data-active-view="scan"] .scan-view,
+  .layout-desktop[data-active-view="scan"] .preview-wrap {
+    max-width: 100%;
+  }
+
+  .layout-desktop[data-active-view="scan"] .preview-stage {
+    min-height: 500px;
+  }
+
+  .layout-desktop[data-active-view="scan"] .scan-view video {
+    min-height: 520px;
+  }
+
+  .layout-desktop[data-active-view="scan"] .result-panel {
+    position: sticky;
+    top: 86px;
+    max-height: calc(100vh - 108px);
+    overflow: auto;
+  }
+
+  .layout-desktop .home-status-grid,
+  .layout-desktop .home-activity-grid,
+  .layout-desktop .home-sensor-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
 .scan-debug-correction {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=27" />
+  <link rel="stylesheet" href="pooltest.css?v=28" />
 </head>
 
 <body>
@@ -27,6 +27,7 @@
       </div>
     </div>
     <nav class="pt-nav">
+      <button type="button" class="btn-ghost" data-app-nav="home">Home</button>
       <button type="button" class="btn-ghost" data-app-nav="scan">Scan</button>
       <button type="button" class="btn-ghost" data-app-nav="history">History</button>
       <button type="button" class="btn-ghost" data-app-nav="pool">Water</button>
@@ -523,7 +524,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev41";
+    import { initPoolTestScanner } from "./scanner.js?v=dev42";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>
