@@ -4081,7 +4081,64 @@ export function initPoolTestScanner(root) {
     catch { return []; }
   }
   function saveHistory(arr) {
-    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(arr)); } catch {}
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(arr));
+      return true;
+    } catch {}
+    try {
+      const compact = arr.slice(-120).map(compactHistoryEntry);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(compact));
+      return true;
+    } catch {}
+    try {
+      const compact = arr.slice(-30).map(compactHistoryEntry);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(compact));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function compactSanityCheck(sanity) {
+    if (!sanity) return null;
+    return {
+      poolHealthScore: sanity.poolHealthScore ?? null,
+      chemistryScore: sanity.chemistryScore ?? null,
+      scoreConfidence: sanity.scoreConfidence ?? null,
+      scoreConfidencePercent: sanity.scoreConfidencePercent ?? null,
+      summaryState: sanity.summaryState ?? null,
+      summary: sanity.summary ?? null,
+      nextAction: sanity.nextAction ?? null,
+      retestTiming: sanity.retestTiming ?? null,
+      reasonCodes: Array.isArray(sanity.reasonCodes) ? sanity.reasonCodes.slice(0, 8) : []
+    };
+  }
+
+  function compactHistoryEntry(item) {
+    return {
+      t: item.t,
+      gallons: item.gallons ?? null,
+      ph: item.ph,
+      freeCl: item.freeCl,
+      totalCl: item.totalCl,
+      bromine: item.bromine,
+      hardness: item.hardness,
+      alk: item.alk,
+      cya: item.cya,
+      chlorineCorrected: !!item.chlorineCorrected,
+      scanQuality: item.scanQuality ? {
+        score: item.scanQuality.score ?? null,
+        label: item.scanQuality.label ?? null,
+        warnings: Array.isArray(item.scanQuality.warnings) ? item.scanQuality.warnings.slice(0, 4) : []
+      } : null,
+      confidence: item.confidence || null,
+      waterAppearance: item.waterAppearance || null,
+      recentRain: item.recentRain || null,
+      poolUsage: item.poolUsage || null,
+      surfaceCondition: item.surfaceCondition || null,
+      timestamp: item.timestamp || null,
+      sanityCheck: compactSanityCheck(item.sanityCheck)
+    };
   }
 
   function confidenceBucket(item) {
@@ -4120,7 +4177,7 @@ export function initPoolTestScanner(root) {
 
   function recordReading(vals) {
     const history = loadHistory();
-    history.push({
+    history.push(compactHistoryEntry({
       t: Date.now(),
       gallons: poolGallons,
       ph: vals.ph,
@@ -4146,13 +4203,14 @@ export function initPoolTestScanner(root) {
       surfaceCondition: vals.__poolContext?.surfaceCondition || loadPoolContext().surfaceCondition,
       timestamp: new Date().toISOString(),
       sanityCheck: vals.__sanityCheck || null
-    });
+    }));
     if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
-    saveHistory(history);
+    const saved = saveHistory(history);
     renderHistoryCharts(history);
     renderHistoryLog(history);
     renderBetaStats(history);
     updateHomeSummary(vals);
+    setStatus(saved ? "Reading saved to this device." : "Reading shown, but this browser could not save history storage.");
   }
 
   function renderHistoryLog(historyOpt) {
@@ -4170,7 +4228,7 @@ export function initPoolTestScanner(root) {
           <article class="history-log-item">
             <div class="history-log-head">
               <strong>${escapeHtml(new Date(item.t || Date.now()).toLocaleString())}</strong>
-              <span class="tag ${Number(item.sanityCheck?.score ?? 0) >= 80 ? "ok" : "warn"}">${escapeHtml(item.sanityCheck?.summaryState || "Saved")}</span>
+              <span class="tag ${Number(item.sanityCheck?.poolHealthScore ?? 0) >= 80 ? "ok" : "warn"}">${escapeHtml(item.sanityCheck?.summaryState || "Saved")}</span>
             </div>
             <span>pH ${escapeHtml(item.ph ?? "-")} | FC ${escapeHtml(item.freeCl ?? "-")} ppm | TC ${escapeHtml(item.totalCl ?? "-")} ppm</span>
             <span>Alk ${escapeHtml(item.alk ?? "-")} ppm | CYA ${escapeHtml(item.cya ?? "-")} ppm | Hardness ${escapeHtml(item.hardness ?? "-")} ppm</span>
