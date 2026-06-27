@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=26" />
+  <link rel="stylesheet" href="pooltest.css?v=27" />
 </head>
 
 <body>
@@ -294,12 +294,11 @@
         <div data-pt="previewHeader" class="preview-header">
           <strong>Preview (drag/resize the box around the strip)</strong>
           <div class="preview-actions">
-            <button type="button" class="btn-ghost" data-pt="btnAutoCrop">Auto-Crop Box</button>
             <button type="button" data-pt="btnUseCrop">Use Crop</button>
             <button type="button" class="btn-ghost" data-pt="btnManualPads">Manual Pads</button>
-            <button type="button" class="btn-ghost" data-pt="btnResetManualPads" hidden>Reset Pads</button>
-            <button type="button" class="btn-ghost" data-pt="btnUndoManualPad" hidden>Undo Last Pad</button>
-            <button type="button" data-pt="btnUseManualPads" hidden>Use Manual Pads</button>
+            <button type="button" class="btn-ghost" data-pt="btnResetManualPads">Reset</button>
+            <button type="button" class="btn-ghost" data-pt="btnUndoManualPad" hidden>Undo Last</button>
+            <button type="button" data-pt="btnUseManualPads" hidden>Analyze</button>
             <button type="button" class="btn-ghost" data-pt="btnCancelCrop">Cancel</button>
           </div>
         </div>
@@ -314,7 +313,7 @@
         </div>
 
         <div data-pt="previewTip" class="preview-tip">
-          Tip: Make the box tall and skinny. Include all pads. Or tap Manual Pads and select pads top-to-bottom.
+          Use the crop box, or tap Manual Pads for precise pad sampling.
         </div>
       </div>
 
@@ -524,7 +523,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev40";
+    import { initPoolTestScanner } from "./scanner.js?v=dev41";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>

@@ -5,7 +5,7 @@
 // - JS/CSS: stale-while-revalidate (fast, but updates in background)
 // - Everything else: cache-first
 
-const CACHE_VERSION = "v54"; // bump to force refresh
+const CACHE_VERSION = "v55"; // bump to force refresh
 const CACHE_NAME = `pooltest-cache-${CACHE_VERSION}`;
 
 const ASSETS = [

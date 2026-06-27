@@ -483,13 +483,13 @@ export function initPoolTestScanner(root) {
     previewCanvas: root.querySelector('[data-pt="previewCanvas"]'),
     cropBox: root.querySelector('[data-pt="cropBox"]'),
     cropHandle: root.querySelector('[data-pt="cropHandle"]'),
-    btnAutoCrop: root.querySelector('[data-pt="btnAutoCrop"]'),
     btnUseCrop: root.querySelector('[data-pt="btnUseCrop"]'),
     btnManualPads: root.querySelector('[data-pt="btnManualPads"]'),
     btnResetManualPads: root.querySelector('[data-pt="btnResetManualPads"]'),
     btnUndoManualPad: root.querySelector('[data-pt="btnUndoManualPad"]'),
     btnUseManualPads: root.querySelector('[data-pt="btnUseManualPads"]'),
     manualPadLayer: root.querySelector('[data-pt="manualPadLayer"]'),
+    previewTip: root.querySelector('[data-pt="previewTip"]'),
     btnCancelCrop: root.querySelector('[data-pt="btnCancelCrop"]')
   };
 
@@ -978,7 +978,7 @@ export function initPoolTestScanner(root) {
     })).filter(marker => Number.isFinite(marker.imageX) && Number.isFinite(marker.imageY));
     manualPadMode = true;
     renderManualPadMarkers();
-    setStatus(`Restored ${manualPadMarkers.length} saved manual pad marker${manualPadMarkers.length === 1 ? "" : "s"} for this image. Adjust if needed, then Use Manual Pads.`);
+    setStatus(`Restored ${manualPadMarkers.length} saved manual pad marker${manualPadMarkers.length === 1 ? "" : "s"} for this image. Adjust if needed, then Analyze.`);
     return true;
   }
 
@@ -1339,6 +1339,14 @@ export function initPoolTestScanner(root) {
   let chartCalibrationMode = false;
   let chartCalibrationSamples = [];
 
+  function setDefaultCropBox() {
+    if (!els.cropBox) return;
+    els.cropBox.style.left = "32%";
+    els.cropBox.style.top = "6%";
+    els.cropBox.style.width = "36%";
+    els.cropBox.style.height = "88%";
+  }
+
   function chartCalibrationOrder() {
     return EASYTEST_CFG.pads.flatMap(pad => (EASYTEST_SWATCHES[pad.key] || []).map((swatch, swatchIndex) => ({
       padKey: pad.key,
@@ -1361,12 +1369,7 @@ export function initPoolTestScanner(root) {
     els.previewWrap.style.display = "block";
 
     resetManualPadSelection(false);
-
-    // Default crop box (tall/skinny)
-    els.cropBox.style.left = "30%";
-    els.cropBox.style.top = "8%";
-    els.cropBox.style.width = "40%";
-    els.cropBox.style.height = "84%";
+    setDefaultCropBox();
 
     requestAnimationFrame(() => {
       drawPreviewCanvas();
@@ -1380,7 +1383,8 @@ export function initPoolTestScanner(root) {
       try { els.previewWrap.scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
     });
 
-    setStatus("Adjust the crop box around the strip, then click Use Crop.");
+    updatePreviewInstruction();
+    setStatus("Crop box is ready. Adjust if needed, or tap Manual Pads for precise sampling.");
   }
 
   function hidePreview() {
@@ -1432,20 +1436,39 @@ export function initPoolTestScanner(root) {
     return { imageX: imgX, imageY: imgY, stageX: x, stageY: y };
   }
 
+  function updatePreviewInstruction() {
+    if (!els.previewTip) return;
+    if (!manualPadMode) {
+      els.previewTip.innerHTML = "Crop box is ready. Drag or resize it around the strip, or tap <strong>Manual Pads</strong> for precise pad sampling.";
+      return;
+    }
+    const next = Math.min(manualPadMarkers.length + 1, EASYTEST_CFG.pads.length);
+    const complete = manualPadMarkers.length === EASYTEST_CFG.pads.length;
+    els.previewTip.innerHTML = complete
+      ? `<strong>Pad ${EASYTEST_CFG.pads.length} of ${EASYTEST_CFG.pads.length}</strong> selected. Tap <strong>Analyze</strong> to read the strip.`
+      : `<strong>Tap each pad center from top to bottom.</strong> Pad ${next} of ${EASYTEST_CFG.pads.length}.`;
+  }
+
   function setManualPadButtons() {
     const active = manualPadMode;
-    if (els.btnResetManualPads) els.btnResetManualPads.hidden = !active;
+    if (els.btnUseCrop) els.btnUseCrop.hidden = active;
+    if (els.btnManualPads) {
+      els.btnManualPads.hidden = active;
+      els.btnManualPads.textContent = "Manual Pads";
+    }
+    if (els.btnResetManualPads) els.btnResetManualPads.hidden = false;
     if (els.btnUndoManualPad) {
-      els.btnUndoManualPad.hidden = !active;
+      els.btnUndoManualPad.hidden = !active || manualPadMarkers.length === 0;
       els.btnUndoManualPad.disabled = !active || manualPadMarkers.length === 0;
     }
     if (els.btnUseManualPads) {
-      els.btnUseManualPads.hidden = !active;
+      els.btnUseManualPads.hidden = !active || manualPadMarkers.length !== EASYTEST_CFG.pads.length;
       els.btnUseManualPads.disabled = manualPadMarkers.length !== EASYTEST_CFG.pads.length;
+      els.btnUseManualPads.textContent = "Analyze";
     }
-    if (els.btnManualPads) els.btnManualPads.textContent = active ? "Manual Pads On" : "Manual Pads";
     if (els.cropBox) els.cropBox.style.display = active ? "none" : "";
     if (els.manualPadLayer) els.manualPadLayer.hidden = !active;
+    updatePreviewInstruction();
   }
 
   function resetManualPadSelection(keepMode = manualPadMode) {
@@ -1459,6 +1482,17 @@ export function initPoolTestScanner(root) {
     }
     if (els.manualPadLayer) els.manualPadLayer.innerHTML = "";
     setManualPadButtons();
+  }
+
+  function resetPreviewControls() {
+    if (manualPadMode) {
+      resetManualPadSelection(true);
+      setStatus("Manual pads reset. Tap each pad center from top to bottom.");
+      return;
+    }
+    resetManualPadSelection(false);
+    setDefaultCropBox();
+    setStatus("Preview reset. Adjust the crop box or tap Manual Pads.");
   }
 
   function renderManualPadMarkers() {
@@ -1491,14 +1525,9 @@ export function initPoolTestScanner(root) {
 
   function toggleManualPadMode() {
     if (!previewImg) return;
-    manualPadMode = !manualPadMode;
-    if (manualPadMode) {
-      manualPadMarkers = [];
-      setStatus(`Manual pad mode: tap ${nextManualPadLabel()}, then continue top-to-bottom.`);
-    } else {
-      manualPadMarkers = [];
-      setStatus("Manual pad mode off. Adjust the crop box or re-enable manual pads.");
-    }
+    manualPadMode = true;
+    manualPadMarkers = [];
+    setStatus("Manual pad mode: tap each pad center from top to bottom.");
     renderManualPadMarkers();
     setManualPadButtons();
   }
@@ -1541,8 +1570,9 @@ export function initPoolTestScanner(root) {
     manualPadMarkers.push(snapped);
     renderManualPadMarkers();
     saveManualPadPositions();
+    updatePreviewInstruction();
     setStatus(manualPadMarkers.length === EASYTEST_CFG.pads.length
-      ? `Manual pad markers complete. ${wasCentered ? "Pad centered automatically. " : ""}Click Use Manual Pads. Tap a marker or use Undo Last Pad to adjust.`
+      ? `Manual pad markers complete. ${wasCentered ? "Pad centered automatically. " : ""}Tap Analyze to read the strip.`
       : `${wasCentered ? "Pad centered automatically. " : ""}Tap ${nextManualPadLabel()}.`);
   }
 
@@ -1553,6 +1583,7 @@ export function initPoolTestScanner(root) {
     manualPadMarkers.splice(removeIndex, 1);
     renderManualPadMarkers();
     saveManualPadPositions();
+    updatePreviewInstruction();
     setStatus(`${pad?.label || "Pad"} marker removed. Tap ${nextManualPadLabel()}.`);
   }
   function getCropRectInImagePixels() {
@@ -4745,8 +4776,7 @@ export function initPoolTestScanner(root) {
 
   els.btnManualPads?.addEventListener("click", toggleManualPadMode);
   els.btnResetManualPads?.addEventListener("click", () => {
-    resetManualPadSelection(true);
-    setStatus(`Manual pad mode: tap ${nextManualPadLabel()}, then continue top-to-bottom.`);
+    resetPreviewControls();
   });
   els.btnUndoManualPad?.addEventListener("click", () => removeManualPadMarker());
   els.btnUseManualPads?.addEventListener("click", () => {
@@ -4773,15 +4803,6 @@ export function initPoolTestScanner(root) {
   els.btnCancelCrop?.addEventListener("click", () => {
     hidePreview();
     setStatus("Canceled preview. Upload another image or use the camera.");
-  });
-
-  els.btnAutoCrop?.addEventListener("click", () => {
-    if (!els.cropBox) return;
-    els.cropBox.style.left = "32%";
-    els.cropBox.style.top = "6%";
-    els.cropBox.style.width = "36%";
-    els.cropBox.style.height = "88%";
-    setStatus("Auto-crop box set. Fine-tune if needed, then click Use Crop.");
   });
 
   els.btnWB?.addEventListener("click", () => {
