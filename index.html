@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=29" />
+  <link rel="stylesheet" href="pooltest.css?v=30" />
 </head>
 
 <body>
@@ -450,7 +450,7 @@
         </div>
         <label class="more-row engineer-toggle-row">
           <strong>Engineer Mode</strong>
-          <span>Show LAB, Delta-E, sample quality, calibration diagnostics, and reason codes</span>
+          <span>Show advanced scan diagnostics and troubleshooting details</span>
           <input type="checkbox" data-pt="engineerToggle">
         </label>
         <div class="more-row beta-stats-card">
@@ -524,7 +524,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev43";
+    import { initPoolTestScanner } from "./scanner.js?v=dev44";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>

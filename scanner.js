@@ -125,6 +125,17 @@ function swatchText(swatchOrValue) {
   return `${swatchOrValue}`;
 }
 
+function swatchLabelRange(swatch) {
+  const label = swatch?.label;
+  if (typeof label !== "string") return null;
+  const match = label.match(/(-?\d+(?:\.\d+)?)\s*[-–]\s*(-?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const a = Number(match[1]);
+  const b = Number(match[2]);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return [Math.min(a, b), Math.max(a, b)];
+}
+
 // Pads needing extra stabilization. Snap-to-history is disabled while chart calibration is being tuned.
 const PAD_STABILITY = {
   hardness: { snap: 100, ambiguousRatio: 0.72, enableRange: true, allowSnap: false },
@@ -3107,10 +3118,11 @@ export function initPoolTestScanner(root) {
         const secondIndex = swatchIndexForValue(pad, pick.second?.value);
         const adjacentMatch = bestIndex >= 0 && secondIndex >= 0 && Math.abs(bestIndex - secondIndex) === 1;
         const cfg = PAD_STABILITY[key];
-        const smallGap = separation < 2.2;
+        const smallGap = separation <= 2.5;
         const verySmallGap = separation < 0.85;
         const sampleQualityPoor = variance > 18 || colorQualityScore < 0.55 || sampleQualityScore < 0.5;
-        const farFromChart = pick.bestD > (manualSelection ? 18 : 16);
+        const farFromChartLimit = adjacentMatch && !sampleQualityPoor ? (manualSelection ? 24 : 22) : (manualSelection ? 18 : 16);
+        const farFromChart = pick.bestD > farFromChartLimit;
         const usableAmbiguous = smallGap && adjacentMatch && !sampleQualityPoor && !farFromChart;
         const severeAmbiguity = smallGap && !adjacentMatch;
         const trueLowConfidence = sampleQualityPoor || farFromChart || (manualSelection ? severeAmbiguity && verySmallGap : false);
@@ -3118,9 +3130,12 @@ export function initPoolTestScanner(root) {
           ? clamp01(distanceScore * 0.28 + varianceScore * 0.28 + colorQualityScore * 0.34 + Math.min(separationScore, 0.75) * 0.10)
           : clamp01(distanceScore * 0.45 + separationScore * 0.30 + qualityScore * 0.15 + varianceScore * 0.10);
         if (usableAmbiguous) confidence = Math.min(0.74, Math.max(confidence * 0.86, colorQualityScore * 0.52 + varianceScore * 0.36));
+        if (usableAmbiguous && !sampleQualityPoor) confidence = Math.max(confidence, 0.52);
         if (manualSelection) confidence = Math.min(confidence, sampleQualityScore === 1 ? confidence : sampleQualityScore);
         if (trueLowConfidence) confidence = Math.min(confidence, 0.49);
         const approximateRange = !!cfg?.enableRange && usableAmbiguous;
+        const labelRange = swatchLabelRange(pick.best) || swatchLabelRange(pick.second);
+        const adjacentRange = labelRange || (pick.second ? [Math.min(pick.best.value, pick.second.value), Math.max(pick.best.value, pick.second.value)] : null);
         const topMatches = pick.distances.slice(0, 3).map(item => ({
           value: item.value,
           label: item.label || `${item.value}`,
@@ -3173,6 +3188,8 @@ export function initPoolTestScanner(root) {
           status: ambiguityStatus,
           reasonCode,
           approximateRange,
+          readingCertainty: approximateRange ? "Approximate" : (trueLowConfidence || reasonCode === "LOW_DELTA_E_SEPARATION" ? "Retest Recommended" : "Reliable"),
+          adjacentRange,
           usableAmbiguous,
           trueLowConfidence,
           adjacentMatch,
@@ -3248,9 +3265,10 @@ export function initPoolTestScanner(root) {
       let snapTo = null;
 
       if (cfg.enableRange && ambiguous && pick.adjacentMatch && pick.secondValue != null) {
-        const a = Math.min(pick.value, pick.secondValue);
-        const b = Math.max(pick.value, pick.secondValue);
-        range = [a, b];
+        const debugRange = Array.isArray(debug?.adjacentRange) ? debug.adjacentRange : null;
+        const a = debugRange ? Number(debugRange[0]) : Math.min(pick.value, pick.secondValue);
+        const b = debugRange ? Number(debugRange[1]) : Math.max(pick.value, pick.secondValue);
+        range = [Math.min(a, b), Math.max(a, b)];
       }
 
       const strongGap = (pick.separation || 0) >= 4;
@@ -3345,15 +3363,21 @@ export function initPoolTestScanner(root) {
 
     Object.entries(result.__padDebug).forEach(([key, debug]) => {
       if ((debug.usableAmbiguous || debug.rangeApplied) && debug.secondValue != null) {
-        const a = Math.min(Number(debug.bestValue), Number(debug.secondValue));
-        const b = Math.max(Number(debug.bestValue), Number(debug.secondValue));
+        const debugRange = Array.isArray(debug.adjacentRange) ? debug.adjacentRange : null;
+        const a = debugRange ? Number(debugRange[0]) : Math.min(Number(debug.bestValue), Number(debug.secondValue));
+        const b = debugRange ? Number(debugRange[1]) : Math.max(Number(debug.bestValue), Number(debug.secondValue));
         if (Number.isFinite(a) && Number.isFinite(b)) result.__padRanges[key] = [a, b];
       }
-      if (debug.trueLowConfidence) {
-        result.__warnings.push(`${debug.label} sample quality is low. Verify before large adjustments.`);
-      }
       if (debug.sampleQuality === "Low") {
-        result.__warnings.push(`${debug.label} pad sample quality is low. Reposition marker or retest before large adjustments.`);
+        result.__warnings.push(`${debug.label} sample quality is low. Reposition marker or retest before large adjustments.`);
+      } else if (debug.reasonCode === "AMBIGUOUS_ADJACENT_MATCH" || debug.usableAmbiguous) {
+        result.__warnings.push(debug.key === "cya"
+          ? `${debug.label} result is approximate. Confirm before large adjustments.`
+          : `${debug.label} result is approximate. Color falls between reference values.`);
+      } else if (debug.reasonCode === "LOW_DELTA_E_SEPARATION") {
+        result.__warnings.push(`${debug.label} is close to non-adjacent reference colors. Verify before large adjustments.`);
+      } else if (debug.trueLowConfidence) {
+        result.__warnings.push(`${debug.label} result is uncertain. Verify before large adjustments.`);
       }
     });
     if (Object.values(result.__padDebug).some(debug => debug.usableAmbiguous)) {
@@ -3635,6 +3659,9 @@ export function initPoolTestScanner(root) {
     const scoreConfidencePercent = Number.isFinite(Number(sanity.scoreConfidencePercent))
       ? Number(sanity.scoreConfidencePercent)
       : ({ High: 88, Medium: 71, Low: 52 }[sanity.scoreConfidence] || 50);
+    const userScanStatus = sanity.scoreConfidence === "High"
+      ? "Reliable"
+      : sanity.scoreConfidence === "Medium" ? "Approximate" : "Retest Recommended";
     const findings = sanity.topFindings || [];
 
     if (els.sanitySummary) {
@@ -3645,7 +3672,7 @@ export function initPoolTestScanner(root) {
             <h3>Pool Health: ${escapeHtml(sanity.poolHealthScore)} / 100</h3>
           </div>
           <div class="smart-review-meta">
-            <span class="tag ${scoreClass}">Confidence: ${escapeHtml(scoreConfidencePercent)}%</span>
+            <span class="tag ${scoreClass}">${escapeHtml(userScanStatus)}</span>
             <span class="tag">Water Appearance: ${escapeHtml(sanity.waterAppearanceLabel || poolContextLabel("waterAppearance", context.waterAppearance))}</span>
           </div>
           <p>${escapeHtml(sanity.summary)}</p>
@@ -3658,7 +3685,7 @@ export function initPoolTestScanner(root) {
             <p>${escapeHtml(check.message)}</p>
             <small>${escapeHtml(check.recommendedAction)}</small>
           </article>
-        `).join("")}</div>` : `<p class="muted hint">No suspicious chemistry jumps or low-confidence dosing guards were triggered.</p>`}
+        `).join("")}</div>` : `<p class="muted hint">No unusual chemistry jumps or scan-quality guards were triggered.</p>`}
         ${(sanity.allFindings || []).length > findings.length ? `<details class="smart-review-details"><summary>View Details</summary><div class="sanity-cards">${(sanity.allFindings || []).slice(3).map(check => `
           <article class="sanity-card ${severityClass(check.severity)}">
             <strong>${escapeHtml(check.parameter)}: ${escapeHtml(check.status)}</strong>
@@ -3770,11 +3797,13 @@ export function initPoolTestScanner(root) {
       const range = getResultRange(vals, key);
       const debug = vals?.__padDebug?.[key] || null;
       const approximateAdjacentRange = !!range && (debug?.usableAmbiguous || debug?.rangeApplied || debug?.reasonCode === "AMBIGUOUS_ADJACENT_MATCH");
+      const nonAdjacentAmbiguous = debug?.reasonCode === "LOW_DELTA_E_SEPARATION";
       return {
         key,
         label,
         confidence,
         approximateAdjacentRange,
+        nonAdjacentAmbiguous,
         quality: confidence < 0.5 ? "Verify" : confidence < 0.7 ? "Approximate" : "Reliable"
       };
     });
@@ -3793,6 +3822,7 @@ export function initPoolTestScanner(root) {
       if (label && !verify.includes(label)) verify.push(label);
     };
 
+    readings.filter(item => item.nonAdjacentAmbiguous).forEach(item => addVerify(item.label));
     if (review.length <= 2) review.forEach(item => addVerify(item.label));
     else if (low.length <= 2) low.forEach(item => addVerify(item.label));
 
@@ -3846,6 +3876,7 @@ export function initPoolTestScanner(root) {
     let action = "Use treatment cards below and retest after circulation.";
     if (level === "Low") action = "Retest before large chemical changes.";
     else if (safetyNotes.length) action = safetyNotes[0];
+    else if (verify.length && !verify.includes("None flagged")) action = "Verify flagged readings before large chemical changes.";
     else if (level === "Moderate") action = "Verify before large chemical changes.";
 
     return {

@@ -562,7 +562,7 @@ function buildMessage(check, context) {
   }
   if (check.reasonCodes.includes("LOW_DELTA_E_SEPARATION")) {
     return {
-      message: `${check.parameter} is close to a non-adjacent chart color, so the match is uncertain.`,
+      message: `${check.parameter} result is close to multiple reference colors.`,
       action: "Verify with a retest before large adjustments."
     };
   }
@@ -608,7 +608,7 @@ function evaluatePadEvidence(vals, key, check, scanQuality) {
         code: "LOW_DELTA_E_SEPARATION",
         penalty: 0.16,
         severity: "Caution",
-        status: "Ambiguous",
+        status: "Retest Recommended",
         note: `Best Delta-E ${best}; second-best Delta-E ${second}.`
       });
     }
@@ -860,7 +860,7 @@ function groupedLowConfidenceFinding(checks) {
   const low = checks.filter(check => check.adjustedConfidence === "Low" && check.key !== "waterAppearance" && !check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH"));
   if (low.length < 3) return null;
   return {
-    parameter: "Scan Confidence",
+    parameter: "Scan Quality",
     key: "groupedLowConfidence",
     measuredValue: `${low.length} readings`,
     unit: "",
@@ -868,11 +868,11 @@ function groupedLowConfidenceFinding(checks) {
     adjustedConfidence: "Low",
     rawScore: 0.4,
     adjustedScore: 0.4,
-    status: "Retest recommended",
+    status: "Retest Recommended",
     severity: "Caution",
     reasonCodes: ["LOW_IMAGE_QUALITY"],
-    message: "Several readings have reduced confidence due to scan conditions.",
-    recommendedAction: "Use readings cautiously and verify before large adjustments.",
+    message: "Several readings need a cleaner scan before large adjustments.",
+    recommendedAction: "Retest in indirect daylight, avoid glare, and keep markers centered on each pad.",
     notes: low.map(check => check.parameter),
     safetyImpact: 9
   };
