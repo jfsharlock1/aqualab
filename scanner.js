@@ -3545,13 +3545,20 @@ export function initPoolTestScanner(root) {
       && !evidence.requiresRetest
       && !evidence.lowSample
       && !evidence.lowScanScore
-      && !evidence.lowConfidence
       && !evidence.lowWarning;
   }
 
   function isTrueLowConfidenceHistory(item) {
     if (isLegacyBadLowConfidenceFlag(item)) return false;
     const evidence = lowQualityEvidence(item);
+    const sanity = item?.sanityCheck || item?.__sanityCheck || {};
+    const explicitNoRetest = item?.requiresRetest === false || sanity.requiresRetest === false;
+    const hasUsableGoodContext = hasApproximateRanges(item)
+      || (historyHealthScore(item) ?? 0) >= 70
+      || valueMostlyInRange(item);
+    if (explicitNoRetest && hasUsableGoodContext && !evidence.lowSample && !evidence.lowScanScore && !evidence.lowWarning) {
+      return false;
+    }
     if (item?.scanConfidenceType === "low_confidence") {
       return evidence.requiresRetest || evidence.lowSample || evidence.lowScanScore || evidence.lowConfidence || evidence.lowWarning;
     }
@@ -4524,7 +4531,14 @@ export function initPoolTestScanner(root) {
     if (!history.length) return history;
     let changed = false;
     const repaired = history.map(item => {
-      if (!isLegacyBadLowConfidenceFlag(item)) return item;
+      const score = historyHealthScore(item);
+      const staleRetestStatus = item?.displayStatus === "Retest Recommended"
+        && !isTrueLowConfidenceHistory(item)
+        && score != null
+        && score >= 85
+        && historyWaterIsClear(item)
+        && valueMostlyInRange(item);
+      if (!isLegacyBadLowConfidenceFlag(item) && !staleRetestStatus) return item;
       const fixed = {
         ...item,
         scanConfidenceType: hasApproximateRanges(item) ? "estimated" : "clear",
