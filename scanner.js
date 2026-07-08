@@ -3680,7 +3680,7 @@ export function initPoolTestScanner(root) {
       : ({ High: 88, Medium: 71, Low: 52 }[sanity.scoreConfidence] || 50);
     const userScanStatus = sanity.scoreConfidence === "High"
       ? "Reliable"
-      : sanity.scoreConfidence === "Medium" ? "Approximate" : "Retest Recommended";
+      : sanity.scoreConfidence === "Medium" ? "Approximate Reading" : "Retest Recommended";
     const findings = sanity.topFindings || [];
 
     if (els.sanitySummary) {
@@ -3881,7 +3881,7 @@ export function initPoolTestScanner(root) {
     if (review.length >= 3) {
       explanation = "Several readings are approximate because some pads were close to multiple reference colors.";
     } else if (approximateRanges.length) {
-      explanation = "Some pads were close to adjacent reference colors, so AquaLab is showing approximate ranges.";
+      explanation = "Some values fall between color blocks. AquaLab estimated the closest range.";
     } else if (review.length > 0) {
       explanation = "Some pads were close to multiple reference colors, so a few results are approximate.";
     }

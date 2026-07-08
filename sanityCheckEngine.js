@@ -556,8 +556,8 @@ function buildMessage(check, context) {
   }
   if (check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")) {
     return {
-      message: `${check.parameter} is an approximate range (${valueText}).`,
-      action: "Use the displayed range for guidance; avoid large exact-dose changes from this value alone."
+      message: `${check.parameter} is an approximate reading (${valueText}).`,
+      action: "Color falls between adjacent reference blocks, so AquaLab estimated the closest range."
     };
   }
   if (check.reasonCodes.includes("LOW_DELTA_E_SEPARATION")) {
@@ -590,9 +590,9 @@ function evaluatePadEvidence(vals, key, check, scanQuality) {
     if (debug.usableAmbiguous || debug.reasonCode === "AMBIGUOUS_ADJACENT_MATCH") {
       applyAdjustment(check, {
         code: "AMBIGUOUS_ADJACENT_MATCH",
-        penalty: 0.04,
+        penalty: 0,
         severity: "Info",
-        status: "Approximate range",
+        status: "Approximate Reading",
         note: `Best Delta-E ${best}; second-best Delta-E ${second}; gap ${debug.deltaEGap ?? Math.round((second - best) * 100) / 100}.`
       });
     } else if (debug.reasonCode === "LOW_SAMPLE_QUALITY" || debug.sampleQuality === "Low") {
@@ -973,7 +973,12 @@ export function runStripSanityCheck(vals, context = {}) {
   const trueLowCount = checks.filter(check => check.adjustedConfidence === "Low" && !check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")).length;
   const ambiguousCount = checks.filter(check => check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")).length;
   let scoreConfidence = confidenceLabel(avgConfidence);
+  if (trueLowCount === 0 && ambiguousCount > 0 && scoreConfidence === "Low") scoreConfidence = "Medium";
   if (manualSelection && geometryConfidence >= 0.99 && colorConfidence >= 0.75 && trueLowCount === 0 && scoreConfidence === "Low") scoreConfidence = ambiguousCount > 2 ? "Medium" : "High";
+  const scoreConfidencePercent = Math.max(
+    Math.round(clamp(avgConfidence, 0, 1) * 100),
+    scoreConfidence === "High" ? 86 : scoreConfidence === "Medium" ? 70 : 0
+  );
   const reasonCodes = Array.from(new Set(checks.flatMap(check => check.reasonCodes)));
   const asksForContext = reasonCodes.includes("UNLIKELY_HISTORY_JUMP") && !recentActions.length;
   const summaryState = buildSummaryState(Math.round(health.score), scoreConfidence, allFindings, scanQuality);
@@ -987,7 +992,7 @@ export function runStripSanityCheck(vals, context = {}) {
     chemistryScore: Math.round(health.chemistryScore),
     appearanceAdjustment: health.appearanceAdjustment,
     scoreConfidence,
-    scoreConfidencePercent: Math.round(clamp(avgConfidence, 0, 1) * 100),
+    scoreConfidencePercent,
     summaryState,
     summary: summary.summary,
     nextAction: summary.nextAction,
