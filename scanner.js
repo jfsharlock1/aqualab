@@ -631,10 +631,11 @@ export function initPoolTestScanner(root) {
       const status = readingStatus(key, value);
       const cls = status === "Good" || status === "Recorded" ? "ok" : status === "Not tested" ? "" : "warn";
       if (card) card.className = `home-status-card ${cls}`.trim();
-      if (valueEl) valueEl.textContent = value == null ? "-" : `${value}${unit}`;
+      if (valueEl) valueEl.textContent = value == null ? "-" : dashboardValueText(latest, key, value, unit.trim());
       if (statusEl) {
         if (status === "Good") statusEl.textContent = "✓ GOOD";
         else if (status === "Not tested") statusEl.textContent = "NOT TESTED";
+        else if (getResultRange(latest, key)) statusEl.textContent = "APPROXIMATE";
         else statusEl.textContent = `! ${status.toUpperCase()}`;
       }
     };
@@ -712,9 +713,9 @@ export function initPoolTestScanner(root) {
     if (els.homeNextAction) els.homeNextAction.textContent = rec.action;
 
     setStatusCard(els.homePhCard, els.homePh, els.homePhStatus, "ph", latest.ph);
-    setStatusCard(els.homeSanitizerCard, els.homeFreeCl, els.homeFreeClStatus, "freeCl", latest.freeCl, latest.freeCl == null ? "" : " ppm");
-    setStatusCard(els.homeAlkCard, els.homeAlk, els.homeAlkStatus, "alk", latest.alk, latest.alk == null ? "" : " ppm");
-    setStatusCard(els.homeStabilityCard, els.homeCya, els.homeCyaStatus, "cya", latest.cya, latest.cya == null ? "" : " ppm");
+    setStatusCard(els.homeSanitizerCard, els.homeFreeCl, els.homeFreeClStatus, "freeCl", latest.freeCl, latest.freeCl == null ? "" : "ppm");
+    setStatusCard(els.homeAlkCard, els.homeAlk, els.homeAlkStatus, "alk", latest.alk, latest.alk == null ? "" : "ppm");
+    setStatusCard(els.homeStabilityCard, els.homeCya, els.homeCyaStatus, "cya", latest.cya, latest.cya == null ? "" : "ppm");
 
     const scored = history
       .filter(item => item?.sanityCheck?.poolHealthScore != null)
@@ -3433,12 +3434,20 @@ export function initPoolTestScanner(root) {
       alk: vals?.__alkRange,
       cya: vals?.__cyaRange
     })[key] || null;
-    const range = vals?.__padRanges?.[key] || legacyRange;
+    const range = vals?.__padRanges?.[key] || vals?.resultRanges?.[key] || legacyRange;
     if (!Array.isArray(range) || range.length < 2) return null;
     const a = Number(range[0]);
     const b = Number(range[1]);
     if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
     return [Math.min(a, b), Math.max(a, b)];
+  }
+
+  function formatDashboardNumber(key, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return `${value}`;
+    if (key === "ph") return n.toFixed(1);
+    if (Math.abs(n) < 10 && !Number.isInteger(n)) return `${Number(n.toFixed(1))}`;
+    return `${Number(n.toFixed(0))}`;
   }
 
   function formatDisplayNumber(value) {
@@ -3456,6 +3465,16 @@ export function initPoolTestScanner(root) {
   function displayValueText(vals, key, value, unit = "") {
     const range = getResultRange(vals, key);
     if (range) return formatResultRange(range, unit);
+    return unit ? `${formatDisplayNumber(value)} ${unit}` : formatDisplayNumber(value);
+  }
+
+  function dashboardValueText(vals, key, value, unit = "") {
+    const range = getResultRange(vals, key);
+    if (range) {
+      const midpoint = (Number(range[0]) + Number(range[1])) / 2;
+      const text = `~${formatDashboardNumber(key, midpoint)}`;
+      return unit ? `${text} ${unit}` : text;
+    }
     return unit ? `${formatDisplayNumber(value)} ${unit}` : formatDisplayNumber(value);
   }
 
@@ -4427,6 +4446,7 @@ export function initPoolTestScanner(root) {
       hardness: item.hardness,
       alk: item.alk,
       cya: item.cya,
+      resultRanges: item.resultRanges || item.__padRanges || null,
       chlorineCorrected: !!item.chlorineCorrected,
       scanQuality: item.scanQuality ? {
         score: item.scanQuality.score ?? null,
@@ -4511,6 +4531,7 @@ export function initPoolTestScanner(root) {
       hardness: vals.hardness,
       alk: vals.alk,
       cya: vals.cya,
+      resultRanges: vals.__padRanges || null,
       chlorineCorrected: !!vals.__chlorineCorrected,
       scanQuality: vals.__scanQuality || null,
       confidence: {
