@@ -3499,9 +3499,19 @@ export function initPoolTestScanner(root) {
     return checks.filter(Boolean).length >= 4;
   }
 
-  function isTrueLowConfidenceHistory(item) {
+  function historyHealthScore(item) {
     const sanity = item?.sanityCheck || item?.__sanityCheck || {};
-    if (item?.scanConfidenceType === "low_confidence" || item?.requiresRetest === true || sanity.requiresRetest === true || String(item?.sampleQuality || "").toLowerCase() === "low") return true;
+    const score = Number(sanity.poolHealthScore ?? item?.healthScore);
+    return Number.isFinite(score) ? score : null;
+  }
+
+  function historyWaterIsClear(item) {
+    const appearance = item?.waterAppearance || item?.__poolContext?.waterAppearance || "";
+    return appearance === "clear" || appearance === "crystalClear";
+  }
+
+  function lowQualityEvidence(item) {
+    const sanity = item?.sanityCheck || item?.__sanityCheck || {};
     const scanQuality = item?.scanQuality || item?.__scanQuality || {};
     const confidenceValues = Object.values(item?.confidence || {})
       .filter(value => Number.isFinite(Number(value)))
@@ -3514,17 +3524,44 @@ export function initPoolTestScanner(root) {
       ...(Array.isArray(scanQuality.warnings) ? scanQuality.warnings : []),
       ...(Array.isArray(sanity.reasonCodes) ? sanity.reasonCodes : [])
     ].join(" ");
-    return Number(scanQuality.score ?? 100) < 55
-      || minConfidence < 0.5
-      || /LOW_SAMPLE_QUALITY|LOW_IMAGE_QUALITY|LOW_DELTA_E_SEPARATION|contamination|glare|shadow|pad detection|detected/i.test(warnings);
+    return {
+      requiresRetest: item?.requiresRetest === true || sanity.requiresRetest === true,
+      lowSample: String(item?.sampleQuality || "").toLowerCase() === "low",
+      lowScanScore: Number(scanQuality.score ?? 100) < 55,
+      lowConfidence: minConfidence < 0.5,
+      lowWarning: /LOW_SAMPLE_QUALITY|LOW_IMAGE_QUALITY|LOW_DELTA_E_SEPARATION|contamination|glare|shadow|pad detection|detected|missing pad|unreadable/i.test(warnings),
+      warningText: warnings
+    };
+  }
+
+  function isLegacyBadLowConfidenceFlag(item) {
+    if (item?.scanConfidenceType !== "low_confidence") return false;
+    const evidence = lowQualityEvidence(item);
+    const score = historyHealthScore(item);
+    return score != null
+      && score >= 85
+      && historyWaterIsClear(item)
+      && valueMostlyInRange(item)
+      && !evidence.requiresRetest
+      && !evidence.lowSample
+      && !evidence.lowScanScore
+      && !evidence.lowConfidence
+      && !evidence.lowWarning;
+  }
+
+  function isTrueLowConfidenceHistory(item) {
+    if (isLegacyBadLowConfidenceFlag(item)) return false;
+    const evidence = lowQualityEvidence(item);
+    if (item?.scanConfidenceType === "low_confidence") {
+      return evidence.requiresRetest || evidence.lowSample || evidence.lowScanScore || evidence.lowConfidence || evidence.lowWarning;
+    }
+    return evidence.requiresRetest || evidence.lowSample || evidence.lowScanScore || evidence.lowConfidence || evidence.lowWarning;
   }
 
   function historyDisplayStatus(item) {
     if (isTrueLowConfidenceHistory(item)) return "Retest Recommended";
-    const sanity = item?.sanityCheck || item?.__sanityCheck || {};
-    const score = Number(sanity.poolHealthScore ?? item?.healthScore);
-    const appearance = item?.waterAppearance || item?.__poolContext?.waterAppearance || "";
-    const clearWater = appearance === "clear" || appearance === "crystalClear";
+    const score = historyHealthScore(item);
+    const clearWater = historyWaterIsClear(item);
     if (Number.isFinite(score) && score >= 85 && hasApproximateRanges(item)) return clearWater ? "Healthy / Estimated" : "Good / Approximate";
     if (Number.isFinite(score) && score >= 85) return "Healthy";
     if (Number.isFinite(score) && score >= 70) return "Review / Monitor";
@@ -4482,6 +4519,29 @@ export function initPoolTestScanner(root) {
     }
   }
 
+  function repairLegacyHistoryConfidence() {
+    const history = loadHistory();
+    if (!history.length) return history;
+    let changed = false;
+    const repaired = history.map(item => {
+      if (!isLegacyBadLowConfidenceFlag(item)) return item;
+      const fixed = {
+        ...item,
+        scanConfidenceType: hasApproximateRanges(item) ? "estimated" : "clear",
+        requiresRetest: false,
+        displayStatus: hasApproximateRanges(item) ? "Healthy / Estimated" : "Healthy"
+      };
+      if (fixed.sanityCheck) fixed.sanityCheck = { ...fixed.sanityCheck, requiresRetest: false };
+      changed = true;
+      return fixed;
+    });
+    if (changed) {
+      saveHistory(repaired);
+      console.info("[AquaLab] repaired legacy low-confidence history records", { key: HISTORY_KEY });
+    }
+    return repaired;
+  }
+
   function compactSanityCheck(sanity) {
     if (!sanity) return null;
     return {
@@ -5084,6 +5144,7 @@ export function initPoolTestScanner(root) {
   applyViewportLayout();
   applyEngineerMode((() => { try { return localStorage.getItem(ENGINEER_MODE_KEY) === "1"; } catch { return false; } })());
   setAppView((() => { try { return localStorage.getItem("pt_active_view_v1") || "home"; } catch { return "home"; } })());
+  repairLegacyHistoryConfidence();
   renderHistoryCharts();
   renderHistoryLog();
   renderBetaStats();
