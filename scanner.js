@@ -699,8 +699,9 @@ export function initPoolTestScanner(root) {
     if (els.homeSecondaryAction) els.homeSecondaryAction.textContent = "View History";
     els.homeSecondaryAction?.setAttribute("data-app-nav", "history");
     if (els.homeHealthBadge) {
-      els.homeHealthBadge.className = `tag ${cls}`;
-      els.homeHealthBadge.textContent = statusText(score);
+      const requiresRetest = !!(sanity?.requiresRetest ?? latest.requiresRetest);
+      els.homeHealthBadge.className = `tag ${requiresRetest ? "warn" : cls}`;
+      els.homeHealthBadge.textContent = requiresRetest ? "Retest Recommended" : statusText(score);
     }
     if (els.homeLastSummary) {
       const when = latest.t ? new Date(latest.t).toLocaleString() : "Current scan";
@@ -3499,7 +3500,8 @@ export function initPoolTestScanner(root) {
   }
 
   function isTrueLowConfidenceHistory(item) {
-    if (item?.scanConfidenceType === "low_confidence" || item?.requiresRetest === true || String(item?.sampleQuality || "").toLowerCase() === "low") return true;
+    const sanity = item?.sanityCheck || item?.__sanityCheck || {};
+    if (item?.scanConfidenceType === "low_confidence" || item?.requiresRetest === true || sanity.requiresRetest === true || String(item?.sampleQuality || "").toLowerCase() === "low") return true;
     const scanQuality = item?.scanQuality || item?.__scanQuality || {};
     const confidenceValues = Object.values(item?.confidence || {})
       .filter(value => Number.isFinite(Number(value)))
@@ -3508,7 +3510,6 @@ export function initPoolTestScanner(root) {
       if (Number.isFinite(Number(item?.[key]))) confidenceValues.push(Number(item[key]));
     });
     const minConfidence = confidenceValues.length ? Math.min(...confidenceValues) : 1;
-    const sanity = item?.sanityCheck || item?.__sanityCheck || {};
     const warnings = [
       ...(Array.isArray(scanQuality.warnings) ? scanQuality.warnings : []),
       ...(Array.isArray(sanity.reasonCodes) ? sanity.reasonCodes : [])
@@ -3736,20 +3737,21 @@ export function initPoolTestScanner(root) {
 
     if (els.poolContextPanel) els.poolContextPanel.hidden = false;
     const context = lastVals?.__poolContext || loadPoolContext();
-    const scoreClass = sanity.scoreConfidence === "High" ? "ok" : sanity.scoreConfidence === "Medium" ? "warn" : "bad";
+    const requiresRetest = !!sanity.requiresRetest;
+    const hasApproximateValues = !!sanity.hasApproximateValues;
+    const scoreValue = Number(sanity.poolHealthScore);
+    const scoreClass = requiresRetest ? "bad" : scoreValue >= 80 ? "ok" : scoreValue >= 70 ? "warn" : "bad";
     const scoreConfidencePercent = Number.isFinite(Number(sanity.scoreConfidencePercent))
       ? Number(sanity.scoreConfidencePercent)
       : ({ High: 88, Medium: 71, Low: 52 }[sanity.scoreConfidence] || 50);
-    const userScanStatus = sanity.scoreConfidence === "High"
-      ? "Reliable"
-      : sanity.scoreConfidence === "Medium" ? "Approximate Reading" : "Retest Recommended";
+    const userScanStatus = requiresRetest ? "Retest Recommended" : "Good Scan";
     const findings = sanity.topFindings || [];
 
     if (els.sanitySummary) {
       els.sanitySummary.innerHTML = `
         <article class="smart-review-hero ${scoreClass}">
           <div>
-            <span class="section-eyebrow">${escapeHtml(sanity.summaryState || "Pool Health Analysis")}</span>
+            <span class="section-eyebrow">${escapeHtml(userScanStatus)}</span>
             <h3>Pool Health: ${escapeHtml(sanity.poolHealthScore)} / 100</h3>
           </div>
           <div class="smart-review-meta">
@@ -3757,6 +3759,7 @@ export function initPoolTestScanner(root) {
             <span class="tag">Water Appearance: ${escapeHtml(sanity.waterAppearanceLabel || poolContextLabel("waterAppearance", context.waterAppearance))}</span>
           </div>
           <p>${escapeHtml(sanity.summary)}</p>
+          ${hasApproximateValues && !requiresRetest ? `<p class="muted">Some readings are approximate.</p>` : ""}
           <p><strong>Next Action:</strong> ${escapeHtml(sanity.nextAction || "Review findings before dosing.")}</p>
           <small class="muted">Retest timing: ${escapeHtml(sanity.retestTiming || "Use normal retest timing.")}</small>
         </article>
@@ -4487,6 +4490,8 @@ export function initPoolTestScanner(root) {
       scoreConfidence: sanity.scoreConfidence ?? null,
       scoreConfidencePercent: sanity.scoreConfidencePercent ?? null,
       summaryState: sanity.summaryState ?? null,
+      hasApproximateValues: !!sanity.hasApproximateValues,
+      requiresRetest: !!sanity.requiresRetest,
       summary: sanity.summary ?? null,
       nextAction: sanity.nextAction ?? null,
       retestTiming: sanity.retestTiming ?? null,
@@ -4497,7 +4502,7 @@ export function initPoolTestScanner(root) {
   function compactHistoryEntry(item) {
     const withRanges = item.resultRanges || item.__padRanges ? { ...item, resultRanges: item.resultRanges || item.__padRanges } : item;
     const displayStatus = historyDisplayStatus(withRanges);
-    const scanConfidenceType = item.scanConfidenceType || (isTrueLowConfidenceHistory(withRanges) ? "low_confidence" : hasApproximateRanges(withRanges) ? "estimated" : "clear");
+    const scanConfidenceType = item.scanConfidenceType || (displayStatus === "Retest Recommended" ? "low_confidence" : hasApproximateRanges(withRanges) ? "estimated" : "clear");
     return {
       scanId: item.scanId || null,
       scanHash: item.scanHash || null,
@@ -4512,6 +4517,8 @@ export function initPoolTestScanner(root) {
       alk: item.alk,
       cya: item.cya,
       resultRanges: item.resultRanges || item.__padRanges || null,
+      hasApproximateValues: item.hasApproximateValues ?? hasApproximateRanges(withRanges),
+      requiresRetest: !!(item.requiresRetest ?? item.sanityCheck?.requiresRetest),
       displayPh: item.displayPh || dashboardValueText(withRanges, "ph", item.ph),
       displayFreeCl: item.displayFreeCl || dashboardValueText(withRanges, "freeCl", item.freeCl, "ppm"),
       displayTotalCl: item.displayTotalCl || dashboardValueText(withRanges, "totalCl", item.totalCl, "ppm"),
@@ -4603,12 +4610,14 @@ export function initPoolTestScanner(root) {
       alk: vals.alk,
       cya: vals.cya,
       resultRanges: vals.__padRanges || null,
+      hasApproximateValues: hasApproximateRanges(vals),
+      requiresRetest: !!vals.__sanityCheck?.requiresRetest,
       displayPh: dashboardValueText(vals, "ph", vals.ph),
       displayFreeCl: dashboardValueText(vals, "freeCl", vals.freeCl, "ppm"),
       displayTotalCl: dashboardValueText(vals, "totalCl", vals.totalCl, "ppm"),
       displayCya: dashboardValueText(vals, "cya", vals.cya, "ppm"),
       displayStatus: historyDisplayStatus(vals),
-      scanConfidenceType: isTrueLowConfidenceHistory(vals) ? "low_confidence" : hasApproximateRanges(vals) ? "estimated" : "clear",
+      scanConfidenceType: vals.__sanityCheck?.requiresRetest ? "low_confidence" : hasApproximateRanges(vals) ? "estimated" : "clear",
       chlorineCorrected: !!vals.__chlorineCorrected,
       scanQuality: vals.__scanQuality || null,
       confidence: {
