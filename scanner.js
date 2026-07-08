@@ -3482,7 +3482,24 @@ export function initPoolTestScanner(root) {
     return !!Object.keys(item?.resultRanges || item?.__padRanges || {}).length;
   }
 
+  function valueMostlyInRange(item) {
+    const ph = Number(item?.ph);
+    const freeCl = Number(item?.freeCl);
+    const totalCl = Number(item?.totalCl);
+    const alk = Number(item?.alk);
+    const cya = Number(item?.cya);
+    const checks = [
+      !Number.isFinite(ph) || (ph >= 7.0 && ph <= 8.0),
+      !Number.isFinite(freeCl) || (freeCl >= 0.5 && freeCl <= 5),
+      !Number.isFinite(totalCl) || (totalCl >= 0.5 && totalCl <= 5),
+      !Number.isFinite(alk) || (alk >= 70 && alk <= 140),
+      !Number.isFinite(cya) || (cya >= 20 && cya <= 100)
+    ];
+    return checks.filter(Boolean).length >= 4;
+  }
+
   function isTrueLowConfidenceHistory(item) {
+    if (item?.scanConfidenceType === "low_confidence" || item?.requiresRetest === true || String(item?.sampleQuality || "").toLowerCase() === "low") return true;
     const scanQuality = item?.scanQuality || item?.__scanQuality || {};
     const confidenceValues = Object.values(item?.confidence || {})
       .filter(value => Number.isFinite(Number(value)))
@@ -3502,7 +3519,6 @@ export function initPoolTestScanner(root) {
   }
 
   function historyDisplayStatus(item) {
-    if (item?.displayStatus) return item.displayStatus;
     if (isTrueLowConfidenceHistory(item)) return "Retest Recommended";
     const sanity = item?.sanityCheck || item?.__sanityCheck || {};
     const score = Number(sanity.poolHealthScore ?? item?.healthScore);
@@ -3512,7 +3528,8 @@ export function initPoolTestScanner(root) {
     if (Number.isFinite(score) && score >= 85) return "Healthy";
     if (Number.isFinite(score) && score >= 70) return "Review / Monitor";
     if (Number.isFinite(score) && score < 70) return "Needs Attention";
-    return hasApproximateRanges(item) ? "Good / Approximate" : "Saved";
+    if (clearWater && valueMostlyInRange(item)) return hasApproximateRanges(item) ? "Healthy / Estimated" : "Healthy";
+    return hasApproximateRanges(item) ? "Good / Approximate" : "Review / Monitor";
   }
 
   function historyStatusClass(label) {
@@ -3546,21 +3563,24 @@ export function initPoolTestScanner(root) {
     els.barCya && (els.barCya.style.width = pct(vals.cya, 0, 240) + "%");
 
     const phText = resultRangeText(vals, "ph", vals.ph);
+    const phPrimaryText = dashboardValueText(vals, "ph", vals.ph);
     const phState = rangeState(vals, "ph", vals.ph, 7.2, 7.8);
-    if (getResultRange(vals, "ph")) tag(els.tagPh, phState === "good" ? "ok" : "warn", `Approximate range (${phText})`);
+    if (getResultRange(vals, "ph")) tag(els.tagPh, phState === "good" ? "ok" : "warn", `Approximate (${phPrimaryText}; range ${phText})`);
     else if (vals.ph < 7.2) tag(els.tagPh, "warn", `Low (${phText})`);
     else if (vals.ph > 7.8) tag(els.tagPh, "warn", `High (${phText})`);
     else tag(els.tagPh, "ok", `Good (${phText})`);
 
     const freeClText = resultRangeText(vals, "freeCl", vals.freeCl, "ppm");
+    const freeClPrimaryText = dashboardValueText(vals, "freeCl", vals.freeCl, "ppm");
     const freeClState = rangeState(vals, "freeCl", vals.freeCl, 1, 3);
-    if (getResultRange(vals, "freeCl")) tag(els.tagFCl, freeClState === "good" ? "ok" : "warn", `Approximate range (${freeClText})`);
+    if (getResultRange(vals, "freeCl")) tag(els.tagFCl, freeClState === "good" ? "ok" : "warn", `Approximate (${freeClPrimaryText}; range ${freeClText})`);
     else if (vals.freeCl < 1) tag(els.tagFCl, "warn", `Low (${freeClText})`);
     else if (vals.freeCl > 3) tag(els.tagFCl, "warn", `High (${freeClText})`);
     else tag(els.tagFCl, "ok", `Good (${freeClText})`);
 
     const totalClText = resultRangeText(vals, "totalCl", vals.totalCl, "ppm");
-    tag(els.tagTCl, getResultRange(vals, "totalCl") ? "warn" : "ok", getResultRange(vals, "totalCl") ? `Approximate range (${totalClText})` : totalClText);
+    const totalClPrimaryText = dashboardValueText(vals, "totalCl", vals.totalCl, "ppm");
+    tag(els.tagTCl, getResultRange(vals, "totalCl") ? "warn" : "ok", getResultRange(vals, "totalCl") ? `Approximate (${totalClPrimaryText}; range ${totalClText})` : totalClText);
 
     const bromineText = resultRangeText(vals, "bromine", vals.bromine, "ppm");
     const bromineState = rangeState(vals, "bromine", vals.bromine, 2, 6);
@@ -4476,7 +4496,7 @@ export function initPoolTestScanner(root) {
 
   function compactHistoryEntry(item) {
     const withRanges = item.resultRanges || item.__padRanges ? { ...item, resultRanges: item.resultRanges || item.__padRanges } : item;
-    const displayStatus = item.displayStatus || historyDisplayStatus(withRanges);
+    const displayStatus = historyDisplayStatus(withRanges);
     const scanConfidenceType = item.scanConfidenceType || (isTrueLowConfidenceHistory(withRanges) ? "low_confidence" : hasApproximateRanges(withRanges) ? "estimated" : "clear");
     return {
       scanId: item.scanId || null,
