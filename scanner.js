@@ -3478,6 +3478,48 @@ export function initPoolTestScanner(root) {
     return unit ? `${formatDisplayNumber(value)} ${unit}` : formatDisplayNumber(value);
   }
 
+  function hasApproximateRanges(item) {
+    return !!Object.keys(item?.resultRanges || item?.__padRanges || {}).length;
+  }
+
+  function isTrueLowConfidenceHistory(item) {
+    const scanQuality = item?.scanQuality || item?.__scanQuality || {};
+    const confidenceValues = Object.values(item?.confidence || {})
+      .filter(value => Number.isFinite(Number(value)))
+      .map(Number);
+    ["__phConfidence", "__freeClConfidence", "__totalClConfidence", "__alkConfidence", "__cyaConfidence", "__hardnessConfidence"].forEach(key => {
+      if (Number.isFinite(Number(item?.[key]))) confidenceValues.push(Number(item[key]));
+    });
+    const minConfidence = confidenceValues.length ? Math.min(...confidenceValues) : 1;
+    const sanity = item?.sanityCheck || item?.__sanityCheck || {};
+    const warnings = [
+      ...(Array.isArray(scanQuality.warnings) ? scanQuality.warnings : []),
+      ...(Array.isArray(sanity.reasonCodes) ? sanity.reasonCodes : [])
+    ].join(" ");
+    return Number(scanQuality.score ?? 100) < 55
+      || minConfidence < 0.5
+      || /LOW_SAMPLE_QUALITY|LOW_IMAGE_QUALITY|LOW_DELTA_E_SEPARATION|contamination|glare|shadow|pad detection|detected/i.test(warnings);
+  }
+
+  function historyDisplayStatus(item) {
+    if (item?.displayStatus) return item.displayStatus;
+    if (isTrueLowConfidenceHistory(item)) return "Retest Recommended";
+    const sanity = item?.sanityCheck || item?.__sanityCheck || {};
+    const score = Number(sanity.poolHealthScore ?? item?.healthScore);
+    const appearance = item?.waterAppearance || item?.__poolContext?.waterAppearance || "";
+    const clearWater = appearance === "clear" || appearance === "crystalClear";
+    if (Number.isFinite(score) && score >= 85 && hasApproximateRanges(item)) return clearWater ? "Healthy / Estimated" : "Good / Approximate";
+    if (Number.isFinite(score) && score >= 85) return "Healthy";
+    if (Number.isFinite(score) && score >= 70) return "Review / Monitor";
+    if (Number.isFinite(score) && score < 70) return "Needs Attention";
+    return hasApproximateRanges(item) ? "Good / Approximate" : "Saved";
+  }
+
+  function historyStatusClass(label) {
+    if (/Retest|Needs Attention/i.test(label)) return "warn";
+    return "ok";
+  }
+
   function rangeState(vals, key, value, min, max) {
     const range = getResultRange(vals, key) || [Number(value), Number(value)];
     const low = Number(range[0]);
@@ -4433,6 +4475,9 @@ export function initPoolTestScanner(root) {
   }
 
   function compactHistoryEntry(item) {
+    const withRanges = item.resultRanges || item.__padRanges ? { ...item, resultRanges: item.resultRanges || item.__padRanges } : item;
+    const displayStatus = item.displayStatus || historyDisplayStatus(withRanges);
+    const scanConfidenceType = item.scanConfidenceType || (isTrueLowConfidenceHistory(withRanges) ? "low_confidence" : hasApproximateRanges(withRanges) ? "estimated" : "clear");
     return {
       scanId: item.scanId || null,
       scanHash: item.scanHash || null,
@@ -4447,6 +4492,12 @@ export function initPoolTestScanner(root) {
       alk: item.alk,
       cya: item.cya,
       resultRanges: item.resultRanges || item.__padRanges || null,
+      displayPh: item.displayPh || dashboardValueText(withRanges, "ph", item.ph),
+      displayFreeCl: item.displayFreeCl || dashboardValueText(withRanges, "freeCl", item.freeCl, "ppm"),
+      displayTotalCl: item.displayTotalCl || dashboardValueText(withRanges, "totalCl", item.totalCl, "ppm"),
+      displayCya: item.displayCya || dashboardValueText(withRanges, "cya", item.cya, "ppm"),
+      displayStatus,
+      scanConfidenceType,
       chlorineCorrected: !!item.chlorineCorrected,
       scanQuality: item.scanQuality ? {
         score: item.scanQuality.score ?? null,
@@ -4532,6 +4583,12 @@ export function initPoolTestScanner(root) {
       alk: vals.alk,
       cya: vals.cya,
       resultRanges: vals.__padRanges || null,
+      displayPh: dashboardValueText(vals, "ph", vals.ph),
+      displayFreeCl: dashboardValueText(vals, "freeCl", vals.freeCl, "ppm"),
+      displayTotalCl: dashboardValueText(vals, "totalCl", vals.totalCl, "ppm"),
+      displayCya: dashboardValueText(vals, "cya", vals.cya, "ppm"),
+      displayStatus: historyDisplayStatus(vals),
+      scanConfidenceType: isTrueLowConfidenceHistory(vals) ? "low_confidence" : hasApproximateRanges(vals) ? "estimated" : "clear",
       chlorineCorrected: !!vals.__chlorineCorrected,
       scanQuality: vals.__scanQuality || null,
       confidence: {
@@ -4589,17 +4646,25 @@ export function initPoolTestScanner(root) {
     els.historyLog.innerHTML = `
       <h3>Recent Tests</h3>
       <div class="history-log-list">
-        ${recent.map(item => `
+        ${recent.map(item => {
+          const displayStatus = historyDisplayStatus(item);
+          const displayPh = item.displayPh || dashboardValueText(item, "ph", item.ph);
+          const displayFreeCl = item.displayFreeCl || dashboardValueText(item, "freeCl", item.freeCl, "ppm");
+          const displayTotalCl = item.displayTotalCl || dashboardValueText(item, "totalCl", item.totalCl, "ppm");
+          const displayCya = item.displayCya || dashboardValueText(item, "cya", item.cya, "ppm");
+          const displayAlk = dashboardValueText(item, "alk", item.alk, "ppm");
+          const displayHardness = dashboardValueText(item, "hardness", item.hardness, "ppm");
+          return `
           <article class="history-log-item">
             <div class="history-log-head">
               <strong>${escapeHtml(new Date(item.t || Date.now()).toLocaleString())}</strong>
-              <span class="tag ${Number(item.sanityCheck?.poolHealthScore ?? 0) >= 80 ? "ok" : "warn"}">${escapeHtml(item.sanityCheck?.summaryState || "Saved")}</span>
+              <span class="tag ${historyStatusClass(displayStatus)}">${escapeHtml(displayStatus)}</span>
             </div>
-            <span>pH ${escapeHtml(item.ph ?? "-")} | FC ${escapeHtml(item.freeCl ?? "-")} ppm | TC ${escapeHtml(item.totalCl ?? "-")} ppm</span>
-            <span>Alk ${escapeHtml(item.alk ?? "-")} ppm | CYA ${escapeHtml(item.cya ?? "-")} ppm | Hardness ${escapeHtml(item.hardness ?? "-")} ppm</span>
+            <span>pH ${escapeHtml(displayPh)} | FC ${escapeHtml(displayFreeCl)} | TC ${escapeHtml(displayTotalCl)}</span>
+            <span>Alk ${escapeHtml(displayAlk)} | CYA ${escapeHtml(displayCya)} | Hardness ${escapeHtml(displayHardness)}</span>
             <span>${escapeHtml(poolContextLabel("waterAppearance", item.waterAppearance))}</span>
           </article>
-        `).join("")}
+        `; }).join("")}
       </div>
     `;
   }
