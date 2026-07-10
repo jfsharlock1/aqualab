@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=38" />
+  <link rel="stylesheet" href="pooltest.css?v=39" />
 </head>
 
 <body>
@@ -295,16 +295,15 @@
         <canvas data-pt="canvas" hidden></canvas>
 
         <div class="scan-frame">
-          <div class="scan-frame-label">Line strip up in this box</div>
+          <div class="scan-frame-label">Capture the strip clearly</div>
         </div>
       </div>
 
-      <!-- ✅ Preview + Crop UI (BELOW camera box) -->
+      <!-- Preview + manual pad selection -->
       <div data-pt="previewWrap" class="preview-wrap" style="display:none; margin-top:12px;">
         <div data-pt="previewHeader" class="preview-header">
-          <strong>Preview (drag/resize the box around the strip)</strong>
+          <strong>Manual Pad Selection</strong>
           <div class="preview-actions">
-            <button type="button" data-pt="btnUseCrop">Use Crop</button>
             <button type="button" class="btn-ghost" data-pt="btnManualPads">Manual Pads</button>
             <button type="button" class="btn-ghost" data-pt="btnResetManualPads">Reset</button>
             <button type="button" class="btn-ghost" data-pt="btnUndoManualPad" hidden>Undo Last</button>
@@ -316,14 +315,10 @@
         <div data-pt="previewStage" class="preview-stage">
           <canvas data-pt="previewCanvas" class="preview-canvas"></canvas>
           <div data-pt="manualPadLayer" class="manual-pad-layer" hidden></div>
-
-          <div data-pt="cropBox" class="cropbox">
-            <div data-pt="cropHandle" class="crophandle"></div>
-          </div>
         </div>
 
         <div data-pt="previewTip" class="preview-tip">
-          Use the crop box, or tap Manual Pads for precise pad sampling.
+          Tap each pad center from top to bottom for the selected strip profile.
         </div>
       </div>
 
@@ -533,7 +528,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev52";
+    import { initPoolTestScanner } from "./scanner.js?v=dev53";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>

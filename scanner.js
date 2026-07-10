@@ -1,9 +1,9 @@
-// scanner.js (EasyTest-only)
-// Reverted UX: Preview + Crop shows BELOW the camera box (not overlaid)
+// scanner.js
+// Manual pad selection drives strip analysis; automatic pad detection is disabled.
 // Features:
-// - EasyTest 7-in-1 swatches
-// - Upload/Take Photo -> Preview crop -> Use Crop -> Analyze (iOS reliable orientation handling)
-// - Live camera capture (optional) + ROI crop attempt
+// - EasyTest 7-in-1 and HTH hard-coded strip profiles
+// - Upload/Take Photo -> manual pad selection -> Analyze (iOS reliable orientation handling)
+// - Live camera capture (optional) -> manual pad selection
 // - White balance supported
 // - Multiple camera selection + remembers device
 // - Stabilization: pH/Alk/CYA range + snap
@@ -530,9 +530,6 @@ export function initPoolTestScanner(root) {
     previewWrap: root.querySelector('[data-pt="previewWrap"]'),
     previewStage: root.querySelector('[data-pt="previewStage"]'),
     previewCanvas: root.querySelector('[data-pt="previewCanvas"]'),
-    cropBox: root.querySelector('[data-pt="cropBox"]'),
-    cropHandle: root.querySelector('[data-pt="cropHandle"]'),
-    btnUseCrop: root.querySelector('[data-pt="btnUseCrop"]'),
     btnManualPads: root.querySelector('[data-pt="btnManualPads"]'),
     btnResetManualPads: root.querySelector('[data-pt="btnResetManualPads"]'),
     btnUndoManualPad: root.querySelector('[data-pt="btnUndoManualPad"]'),
@@ -1084,21 +1081,6 @@ export function initPoolTestScanner(root) {
     saveJson(MANUAL_PAD_POSITIONS_KEY, cache);
   }
 
-  function restoreManualPadPositions(hash = currentPreviewHash) {
-    const key = manualPositionCacheKey(hash);
-    if (!key || !previewFit) return false;
-    const saved = loadJson(MANUAL_PAD_POSITIONS_KEY, {})?.[key]?.markers;
-    if (!Array.isArray(saved) || !saved.length) return false;
-    manualPadMarkers = saved.slice(0, activeStripProfile().pads.length).map(marker => ({
-      imageX: Number(marker.imageX),
-      imageY: Number(marker.imageY)
-    })).filter(marker => Number.isFinite(marker.imageX) && Number.isFinite(marker.imageY));
-    manualPadMode = true;
-    renderManualPadMarkers();
-    setStatus(`Restored ${manualPadMarkers.length} saved manual pad marker${manualPadMarkers.length === 1 ? "" : "s"} for this image. Adjust if needed, then Analyze.`);
-    return true;
-  }
-
   function recordFingerprint(hash, padColors, avgRgb, vals = null) {
     const arr = loadJson(FP_KEY, []);
     const pads = {};
@@ -1356,81 +1338,10 @@ export function initPoolTestScanner(root) {
       els.btnWB && (els.btnWB.disabled = false);
 
       await listCameras();
-      setStatus("Live camera ready. Line the strip up inside the dashed box.");
+      setStatus(`Live camera ready. Capture a clear ${activeStripProfile().name} strip photo, then select pads manually.`);
     } catch {
       setStatus("Couldn’t start live camera. Use Upload/Take Photo instead.");
     }
-  }
-
-  // Simple ROI crop attempt (camera mode only)
-  function cropToStripROI() {
-    if (!els.canvas) return;
-    const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
-    const W = els.canvas.width, H = els.canvas.height;
-
-    const targetW = 220;
-    const s = Math.min(1, targetW / W);
-    const w = Math.max(60, Math.round(W * s));
-    const h = Math.max(60, Math.round(H * s));
-
-    const off = document.createElement("canvas");
-    off.width = w; off.height = h;
-    const octx = off.getContext("2d", { willReadFrequently: true });
-    octx.drawImage(els.canvas, 0, 0, W, H, 0, 0, w, h);
-
-    const img = octx.getImageData(0, 0, w, h);
-    const d = img.data;
-
-    let minX = w, minY = h, maxX = 0, maxY = 0;
-    let hits = 0;
-
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = (y * w + x) * 4;
-        const r = d[i], g = d[i + 1], b = d[i + 2];
-        const mx = Math.max(r, g, b);
-        const mn = Math.min(r, g, b);
-        const v = mx;
-        const sat = mx === 0 ? 0 : (mx - mn) / mx;
-
-        if (v >= 190 && sat <= 0.25) {
-          hits++;
-          if (x < minX) minX = x;
-          if (y < minY) minY = y;
-          if (x > maxX) maxX = x;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-
-    const hitFrac = hits / (w * h);
-    if (hits < 300 || hitFrac < 0.004) return;
-
-    const padX = Math.round((maxX - minX) * 0.35) + 10;
-    const padY = Math.round((maxY - minY) * 0.10) + 10;
-
-    minX = Math.max(0, minX - padX);
-    maxX = Math.min(w - 1, maxX + padX);
-    minY = Math.max(0, minY - padY);
-    maxY = Math.min(h - 1, maxY + padY);
-
-    const scaleUp = 1 / s;
-    const rx = Math.round(minX * scaleUp);
-    const ry = Math.round(minY * scaleUp);
-    const rw = Math.round((maxX - minX + 1) * scaleUp);
-    const rh = Math.round((maxY - minY + 1) * scaleUp);
-
-    const cx = Math.max(0, Math.min(W - 1, rx));
-    const cy = Math.max(0, Math.min(H - 1, ry));
-    const cw = Math.max(20, Math.min(rw, W - cx));
-    const ch = Math.max(20, Math.min(rh, H - cy));
-
-    try {
-      const src = ctx.getImageData(cx, cy, cw, ch);
-      els.canvas.width = cw;
-      els.canvas.height = ch;
-      els.canvas.getContext("2d", { willReadFrequently: true }).putImageData(src, 0, 0);
-    } catch {}
   }
 
   function drawFromVideo() {
@@ -1440,12 +1351,11 @@ export function initPoolTestScanner(root) {
     els.canvas.height = h;
     const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
     ctx.drawImage(els.video, 0, 0, w, h);
-    cropToStripROI();
     return els.canvas.getContext("2d", { willReadFrequently: true });
   }
 
   // ================================================================
-  // 8) Preview + manual crop (BELOW camera box)
+  // 8) Preview + manual pad selection
   // ================================================================
 
   let previewImg = null;   // Image()
@@ -1455,14 +1365,6 @@ export function initPoolTestScanner(root) {
   let manualPadMarkers = [];
   let chartCalibrationMode = false;
   let chartCalibrationSamples = [];
-
-  function setDefaultCropBox() {
-    if (!els.cropBox) return;
-    els.cropBox.style.left = "32%";
-    els.cropBox.style.top = "6%";
-    els.cropBox.style.width = "36%";
-    els.cropBox.style.height = "88%";
-  }
 
   function chartCalibrationOrder() {
     return EASYTEST_CFG.pads.flatMap(pad => (EASYTEST_SWATCHES[pad.key] || []).map((swatch, swatchIndex) => ({
@@ -1481,27 +1383,28 @@ export function initPoolTestScanner(root) {
 
   function showPreview(img) {
     previewImg = img;
-    if (!els.previewWrap || !els.previewCanvas || !els.previewStage || !els.cropBox) return;
+    if (!els.previewWrap || !els.previewCanvas || !els.previewStage) return;
 
     els.previewWrap.style.display = "block";
 
-    resetManualPadSelection(false);
-    setDefaultCropBox();
-
+    resetManualPadSelection(true);
     requestAnimationFrame(() => {
       drawPreviewCanvas();
       try {
         const previewCtx = fullPreviewImageContext();
         currentPreviewHash = previewCtx ? hashCanvas(previewCtx) : null;
-        restoreManualPadPositions(currentPreviewHash);
       } catch {
         currentPreviewHash = null;
       }
+      manualPadMode = true;
+      manualPadMarkers = [];
+      renderManualPadMarkers();
+      setManualPadButtons();
       try { els.previewWrap.scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
     });
 
     updatePreviewInstruction();
-    setStatus("Crop box is ready. Adjust if needed, or tap Manual Pads for precise sampling.");
+    setStatus(`Manual pad mode: tap each ${activeStripProfile().name} pad center from top to bottom.`);
   }
 
   function hidePreview() {
@@ -1556,20 +1459,20 @@ export function initPoolTestScanner(root) {
   function updatePreviewInstruction() {
     if (!els.previewTip) return;
     if (!manualPadMode) {
-      els.previewTip.innerHTML = "Crop box is ready. Drag or resize it around the strip, or tap <strong>Manual Pads</strong> for precise pad sampling.";
+      els.previewTip.innerHTML = "Tap <strong>Manual Pads</strong> to select each pad center from top to bottom.";
       return;
     }
     const profile = activeStripProfile();
     const next = Math.min(manualPadMarkers.length + 1, profile.pads.length);
     const complete = manualPadMarkers.length === profile.pads.length;
+    const nextPad = profile.pads[manualPadMarkers.length];
     els.previewTip.innerHTML = complete
       ? `<strong>Pad ${profile.pads.length} of ${profile.pads.length}</strong> selected. Tap <strong>Analyze</strong> to read the strip.`
-      : `<strong>Tap each pad center from top to bottom.</strong> Pad ${next} of ${profile.pads.length}.`;
+      : `<strong>Tap each pad center from top to bottom.</strong> Pad ${next} of ${profile.pads.length}: <strong>${escapeHtml(nextPad?.label || "Next pad")}</strong>.`;
   }
 
   function setManualPadButtons() {
     const active = manualPadMode;
-    if (els.btnUseCrop) els.btnUseCrop.hidden = active;
     if (els.btnManualPads) {
       els.btnManualPads.hidden = active;
       els.btnManualPads.textContent = "Manual Pads";
@@ -1584,7 +1487,6 @@ export function initPoolTestScanner(root) {
       els.btnUseManualPads.disabled = manualPadMarkers.length !== activeStripProfile().pads.length;
       els.btnUseManualPads.textContent = "Analyze";
     }
-    if (els.cropBox) els.cropBox.style.display = active ? "none" : "";
     if (els.manualPadLayer) els.manualPadLayer.hidden = !active;
     updatePreviewInstruction();
   }
@@ -1603,14 +1505,8 @@ export function initPoolTestScanner(root) {
   }
 
   function resetPreviewControls() {
-    if (manualPadMode) {
-      resetManualPadSelection(true);
-      setStatus("Manual pads reset. Tap each pad center from top to bottom.");
-      return;
-    }
-    resetManualPadSelection(false);
-    setDefaultCropBox();
-    setStatus("Preview reset. Adjust the crop box or tap Manual Pads.");
+    resetManualPadSelection(true);
+    setStatus(`Manual pads reset. Tap each ${activeStripProfile().name} pad center from top to bottom.`);
   }
 
   function renderManualPadMarkers() {
@@ -1646,7 +1542,7 @@ export function initPoolTestScanner(root) {
     if (!previewImg) return;
     manualPadMode = true;
     manualPadMarkers = [];
-    setStatus("Manual pad mode: tap each pad center from top to bottom.");
+    setStatus(`Manual pad mode: tap each ${activeStripProfile().name} pad center from top to bottom.`);
     renderManualPadMarkers();
     setManualPadButtons();
   }
@@ -1658,41 +1554,23 @@ export function initPoolTestScanner(root) {
       setStatus("Tap directly on the photo area for manual pad selection.");
       return;
     }
-    const ctx = fullPreviewImageContext();
-    let snapped = point;
-    let wasCentered = false;
-    if (ctx) {
-      const sampled = sampleManualPadRegion(ctx, point, {
-        outerWidth: 31,
-        outerHeight: 31,
-        innerScale: 0.72,
-        searchRadius: 10,
-        searchStep: 3,
-        nearWhiteFriendly: true
-      });
-      const sample = sampled.__manualSample;
-      if (sample) {
-        const imageX = sample.selectedCenterX ?? point.imageX;
-        let imageY = sample.selectedCenterY ?? point.imageY;
-        const prevY = manualPadMarkers[manualPadMarkers.length - 1]?.imageY;
-        if (Number.isFinite(prevY)) imageY = Math.max(prevY + 10, imageY);
-        imageY = clampNumber(imageY, 0, (previewImg.naturalHeight || previewImg.height || imageY));
-        snapped = {
-          imageX,
-          imageY,
-          stageX: previewFit.dx + imageX * previewFit.scale,
-          stageY: previewFit.dy + imageY * previewFit.scale
-        };
-        wasCentered = Math.hypot(imageX - point.imageX, imageY - point.imageY) >= 2;
-      }
+    const prev = manualPadMarkers[manualPadMarkers.length - 1];
+    if (prev && point.imageY <= prev.imageY) {
+      setStatus(`Pad order must be top to bottom. Tap ${nextManualPadLabel()} below the previous marker.`);
+      return;
     }
-    manualPadMarkers.push(snapped);
+    const tooClose = manualPadMarkers.some(marker => Math.hypot(marker.imageX - point.imageX, marker.imageY - point.imageY) < 8);
+    if (tooClose) {
+      setStatus("That marker is too close to an existing pad. Tap the next pad center.");
+      return;
+    }
+    manualPadMarkers.push(point);
     renderManualPadMarkers();
     saveManualPadPositions();
     updatePreviewInstruction();
     setStatus(manualPadMarkers.length === activeStripProfile().pads.length
-      ? `Manual pad markers complete. ${wasCentered ? "Pad centered automatically. " : ""}Tap Analyze to read the strip.`
-      : `${wasCentered ? "Pad centered automatically. " : ""}Tap ${nextManualPadLabel()}.`);
+      ? "Manual pad markers complete. Tap Analyze to read the strip."
+      : `Tap ${nextManualPadLabel()}.`);
   }
 
   function removeManualPadMarker(index = manualPadMarkers.length - 1) {
@@ -1705,42 +1583,27 @@ export function initPoolTestScanner(root) {
     updatePreviewInstruction();
     setStatus(`${pad?.label || "Pad"} marker removed. Tap ${nextManualPadLabel()}.`);
   }
-  function getCropRectInImagePixels() {
-    if (!previewFit || !els.cropBox || !els.previewStage) return null;
 
-    const stageRect = els.previewStage.getBoundingClientRect();
-    const boxRect = els.cropBox.getBoundingClientRect();
-
-    const bx = boxRect.left - stageRect.left;
-    const by = boxRect.top - stageRect.top;
-    const bw = boxRect.width;
-    const bh = boxRect.height;
-
-    const { scale, dx, dy, iw, ih } = previewFit;
-
-    // clamp crop to drawn image area
-    const imgX1 = dx, imgY1 = dy;
-    const imgX2 = dx + iw * scale;
-    const imgY2 = dy + ih * scale;
-
-    const x1 = Math.max(imgX1, bx);
-    const y1 = Math.max(imgY1, by);
-    const x2 = Math.min(imgX2, bx + bw);
-    const y2 = Math.min(imgY2, by + bh);
-
-    const sw = (x2 - x1) / scale;
-    const sh = (y2 - y1) / scale;
-    if (sw < 10 || sh < 10) return null;
-
-    const sx = (x1 - dx) / scale;
-    const sy = (y1 - dy) / scale;
-
-    return {
-      sx: Math.max(0, Math.round(sx)),
-      sy: Math.max(0, Math.round(sy)),
-      sw: Math.min(iw, Math.round(sw)),
-      sh: Math.min(ih, Math.round(sh))
-    };
+  function validateManualPadSelection() {
+    const profile = activeStripProfile();
+    if (!previewImg) return { ok: false, message: "Load a strip photo before selecting pads." };
+    if (manualPadMarkers.length !== profile.pads.length) {
+      return { ok: false, message: `Select all ${profile.pads.length} ${profile.name} pads from top to bottom before analysis.` };
+    }
+    for (let index = 0; index < manualPadMarkers.length; index++) {
+      const marker = manualPadMarkers[index];
+      if (!Number.isFinite(Number(marker.imageX)) || !Number.isFinite(Number(marker.imageY))) {
+        return { ok: false, message: `Pad ${index + 1} marker is invalid. Reset and select pads again.` };
+      }
+      if (index > 0 && Number(marker.imageY) <= Number(manualPadMarkers[index - 1].imageY)) {
+        return { ok: false, message: `Pad ${index + 1} is not below pad ${index}. Reset and select pads top to bottom.` };
+      }
+      const duplicate = manualPadMarkers.some((other, otherIndex) => otherIndex !== index && Math.hypot(other.imageX - marker.imageX, other.imageY - marker.imageY) < 8);
+      if (duplicate) {
+        return { ok: false, message: `Pad ${index + 1} overlaps another marker. Reset and select each pad once.` };
+      }
+    }
+    return { ok: true };
   }
 
   function medianFromSorted(vals) {
@@ -2020,7 +1883,6 @@ export function initPoolTestScanner(root) {
     chartCalibrationSamples = [];
     manualPadMode = false;
     manualPadMarkers = [];
-    if (els.cropBox) els.cropBox.style.display = "none";
     if (els.manualPadLayer) els.manualPadLayer.hidden = false;
     renderChartCalibrationMarkers();
     setManualPadButtons();
@@ -2106,8 +1968,9 @@ export function initPoolTestScanner(root) {
   }
   function analyzeFromManualPads() {
     const profile = activeStripProfile();
-    if (!previewImg || manualPadMarkers.length !== profile.pads.length) {
-      setStatus(`Select all ${profile.pads.length} manual pad markers first.`);
+    const validation = validateManualPadSelection();
+    if (!validation.ok) {
+      setStatus(validation.message);
       return null;
     }
 
@@ -2127,7 +1990,7 @@ export function initPoolTestScanner(root) {
       outerWidth: 40,
       outerHeight,
       innerScale: 0.55,
-      searchRadius: 10,
+      searchRadius: 0,
       searchStep: 4
     };
     const padColors = {};
@@ -2142,13 +2005,6 @@ export function initPoolTestScanner(root) {
         minCenterY: Number.isFinite(prevY) && Number.isFinite(curY) ? (prevY + curY) / 2 : 0,
         maxCenterY: Number.isFinite(nextY) && Number.isFinite(curY) ? (curY + nextY) / 2 : ih
       });
-      const sample = padColors[pad.key]?.__manualSample;
-      if (sample?.selectedCenterX != null && sample?.selectedCenterY != null) {
-        manualPadMarkers[index] = {
-          imageX: Number(sample.selectedCenterX),
-          imageY: Number(sample.selectedCenterY)
-        };
-      }
     });
     saveManualPadPositions();
     renderManualPadMarkers();
@@ -2198,7 +2054,7 @@ export function initPoolTestScanner(root) {
     scanQuality.details.frameCount = 1;
     scanQuality.details.detectedPadCenters = padColors.__samplingDiagnostics.detectedPadCenters;
     scanQuality.details.samplingOverlayDataUrl = padColors.__samplingDiagnostics.overlayDataUrl;
-    scanQuality.details.manualSampleRegion = `40x${outerHeight} pad box with 55% inner-core median LAB; offset search +/-10px`;
+    scanQuality.details.manualSampleRegion = `40x${outerHeight} pad box with 55% inner-core median LAB; manual center, no offset search`;
     scanQuality.details.geometryConfidence = 1;
     scanQuality.details.colorConfidence = Number(clamp01(colorQualityScore - sampleQualityPenalty).toFixed(2));
     scanQuality.details.manualAverageSampleVariance = Number(manualAvgVariance.toFixed(2));
@@ -2228,126 +2084,6 @@ export function initPoolTestScanner(root) {
     hidePreview();
     return vals;
   }
-  function analyzeFromPreviewCrop() {
-    const r = getCropRectInImagePixels();
-    if (!r || !previewImg) {
-      setStatus("Crop box is not over the image (or too small).");
-      return null;
-    }
-
-    const maxW = 1600;
-    const s = Math.min(1, maxW / r.sw);
-
-    els.canvas.width = Math.round(r.sw * s);
-    els.canvas.height = Math.round(r.sh * s);
-
-    const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
-    ctx.drawImage(previewImg, r.sx, r.sy, r.sw, r.sh, 0, 0, els.canvas.width, els.canvas.height);
-
-    hidePreview();
-    return analyze(ctx);
-  }
-
-  // Crop box drag + resize (pointer-friendly)
-  (function wireCropBox() {
-    if (!els.cropBox || !els.cropHandle || !els.previewStage) return;
-
-    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-    let mode = null; // "drag" | "resize"
-    let start = null;
-    let captureEl = null;
-
-    function pctFromPx(x, y, w, h) {
-      const stage = els.previewStage.getBoundingClientRect();
-      return {
-        left: (x / stage.width) * 100,
-        top: (y / stage.height) * 100,
-        width: (w / stage.width) * 100,
-        height: (h / stage.height) * 100
-      };
-    }
-
-    function boxPx() {
-      const stage = els.previewStage.getBoundingClientRect();
-      const box = els.cropBox.getBoundingClientRect();
-      return {
-        x: box.left - stage.left,
-        y: box.top - stage.top,
-        w: box.width,
-        h: box.height,
-        sw: stage.width,
-        sh: stage.height
-      };
-    }
-
-    function down(ev, which) {
-      ev.preventDefault();
-      ev.stopPropagation();
-      mode = which;
-      captureEl = ev.currentTarget;
-
-      const b = boxPx();
-      start = {
-        pid: ev.pointerId,
-        px: ev.clientX,
-        py: ev.clientY,
-        x: b.x, y: b.y, w: b.w, h: b.h, sw: b.sw, sh: b.sh
-      };
-
-      try { captureEl?.setPointerCapture?.(ev.pointerId); } catch {}
-    }
-
-    function move(ev) {
-      if (!mode || !start) return;
-      ev.preventDefault();
-
-      const dx = ev.clientX - start.px;
-      const dy = ev.clientY - start.py;
-
-      let x = start.x, y = start.y, w = start.w, h = start.h;
-
-      if (mode === "drag") {
-        x = clamp(start.x + dx, 0, start.sw - start.w);
-        y = clamp(start.y + dy, 0, start.sh - start.h);
-      } else {
-        const minW = 40, minH = 80;
-        w = clamp(start.w + dx, minW, start.sw - start.x);
-        h = clamp(start.h + dy, minH, start.sh - start.y);
-      }
-
-      const p = pctFromPx(x, y, w, h);
-      els.cropBox.style.left = `${p.left}%`;
-      els.cropBox.style.top = `${p.top}%`;
-      els.cropBox.style.width = `${p.width}%`;
-      els.cropBox.style.height = `${p.height}%`;
-    }
-
-    function up(ev) {
-      if (!mode) return;
-      mode = null;
-      start = null;
-
-      try {
-        if (captureEl?.hasPointerCapture?.(ev.pointerId)) {
-          captureEl.releasePointerCapture(ev.pointerId);
-        }
-      } catch {} finally {
-        captureEl = null;
-      }
-    }
-
-    els.cropBox.addEventListener("pointerdown", (ev) => {
-      if (ev.target === els.cropHandle) return;
-      down(ev, "drag");
-    });
-
-    els.cropHandle.addEventListener("pointerdown", (ev) => down(ev, "resize"));
-
-    window.addEventListener("pointermove", move, { passive: false });
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", up);
-  })();
-
   window.addEventListener("resize", () => {
     if (!previewImg) return;
     drawPreviewCanvas();
@@ -2356,27 +2092,6 @@ export function initPoolTestScanner(root) {
   // ================================================================
   // 9) Sampling
   // ================================================================
-
-  function sampleStripe(ctx) {
-    const w = ctx.canvas.width;
-    const h = ctx.canvas.height;
-    const roi = {
-      x: Math.round(w * 0.2),
-      y: Math.round(h * 0.45),
-      w: Math.round(w * 0.6),
-      h: Math.round(h * 0.1)
-    };
-    const data = ctx.getImageData(roi.x, roi.y, roi.w, roi.h).data;
-
-    let r = 0, g = 0, b = 0, c = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      r += data[i] / whiteBalance.r;
-      g += data[i + 1] / whiteBalance.g;
-      b += data[i + 2] / whiteBalance.b;
-      c++;
-    }
-    return { r: r / c, g: g / c, b: b / c };
-  }
 
   function sampleNeutralReference(ctx) {
     const w = ctx.canvas.width;
@@ -2781,247 +2496,6 @@ export function initPoolTestScanner(root) {
     try { return out.toDataURL("image/png"); } catch { return null; }
   }
 
-  // Robust pad sampling: find plausible pad-width color blobs, then sample only their inner pixels.
-  function samplePadsEasyTest(ctx) {
-    const w = ctx.canvas.width;
-    const h = ctx.canvas.height;
-    const img = ctx.getImageData(0, 0, w, h).data;
-
-    function getPixel(x, y) {
-      const xx = clampNumber(Math.round(x), 0, w - 1);
-      const yy = clampNumber(Math.round(y), 0, h - 1);
-      const i = (yy * w + xx) * 4;
-      const r = img[i], g = img[i + 1], b = img[i + 2];
-      const v = Math.max(r, g, b);
-      const sat = v === 0 ? 0 : (v - Math.min(r, g, b)) / v;
-      const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-      return { r, g, b, v, sat, luma };
-    }
-
-    function estimatePaperLab() {
-      const samples = [];
-      const step = Math.max(3, Math.floor(Math.min(w, h) / 95));
-      for (let y = 0; y < h; y += step) {
-        for (let x = 0; x < w; x += step) {
-          const p = getPixel(x, y);
-          if (p.v > 120 && p.v < 252 && p.sat < 0.16) {
-            samples.push({ r: p.r, g: p.g, b: p.b, luma: p.luma });
-          }
-        }
-      }
-      if (samples.length < 25) return null;
-      samples.sort((a, b) => b.luma - a.luma);
-      const bright = samples.slice(0, Math.max(25, Math.floor(samples.length * 0.35)));
-      return rgbToLab({
-        r: medianNumber(bright.map(p => p.r)),
-        g: medianNumber(bright.map(p => p.g)),
-        b: medianNumber(bright.map(p => p.b))
-      });
-    }
-
-    const paperLab = estimatePaperLab();
-
-    function candidateEvidence(p) {
-      const lab = rgbToLab({ r: p.r, g: p.g, b: p.b });
-      const paperDeltaE = paperLab ? deltaE2000(lab, paperLab) : 0;
-      return { lab, paperDeltaE };
-    }
-
-    function isCandidatePixel(p) {
-      if (p.v < 42 || p.v > 248) return false;
-      const evidence = candidateEvidence(p);
-      if (paperLab && evidence.paperDeltaE < 7.5) return false;
-      if (evidence.paperDeltaE >= 10) return true;
-      if (p.sat > 0.18) return true;
-      return p.sat > 0.115 && p.luma < 210;
-    }
-
-    const xStep = Math.max(1, Math.floor(w / 260));
-    const yStep = Math.max(1, Math.floor(h / 900));
-    const minRunW = Math.max(10, Math.floor(w * 0.025));
-    const maxRunW = Math.max(minRunW + 4, Math.floor(w * 0.18));
-    const minSegH = Math.max(10, Math.floor(h * 0.012));
-    const maxSegH = Math.max(minSegH + 8, Math.floor(h * 0.12));
-    const rows = [];
-
-    for (let y = 0; y < h; y += yStep) {
-      const runs = [];
-      let inRun = false;
-      let startX = 0;
-      let satSum = 0;
-      let count = 0;
-
-      for (let x = 0; x < w; x += xStep) {
-        const p = getPixel(x, y);
-        const candidate = isCandidatePixel(p);
-        if (candidate && !inRun) {
-          inRun = true;
-          startX = x;
-          satSum = 0;
-          count = 0;
-        }
-        if (candidate && inRun) {
-          satSum += p.sat;
-          count++;
-        }
-        if ((!candidate || x + xStep >= w) && inRun) {
-          const endX = candidate && x + xStep >= w ? x : x - xStep;
-          const runW = endX - startX + xStep;
-          if (runW >= minRunW && runW <= maxRunW) {
-            runs.push({ x1: startX, x2: endX, width: runW, centerX: (startX + endX) / 2, score: runW * (count ? satSum / count : 0) });
-          }
-          inRun = false;
-        }
-      }
-
-      if (!runs.length) continue;
-      runs.sort((a, b) => {
-        const centerA = Math.abs(a.centerX - w * 0.5) / w;
-        const centerB = Math.abs(b.centerX - w * 0.5) / w;
-        return (b.score - centerB * 8) - (a.score - centerA * 8);
-      });
-      rows.push({ y, ...runs[0] });
-    }
-
-    const segments = [];
-    let active = null;
-    const maxGap = yStep * 3;
-    rows.forEach(row => {
-      if (!active || row.y - active.lastY > maxGap || Math.abs(row.centerX - active.centerXs[active.centerXs.length - 1]) > maxRunW) {
-        if (active) segments.push(active);
-        active = { start: row.y, end: row.y, lastY: row.y, centerXs: [row.centerX], widths: [row.width], x1s: [row.x1], x2s: [row.x2], rowCount: 1 };
-      } else {
-        active.end = row.y;
-        active.lastY = row.y;
-        active.centerXs.push(row.centerX);
-        active.widths.push(row.width);
-        active.x1s.push(row.x1);
-        active.x2s.push(row.x2);
-        active.rowCount++;
-      }
-    });
-    if (active) segments.push(active);
-
-    const plausible = segments
-      .map(seg => ({
-        start: seg.start,
-        end: seg.end,
-        height: seg.end - seg.start + yStep,
-        centerX: medianNumber(seg.centerXs),
-        width: medianNumber(seg.widths),
-        x1: medianNumber(seg.x1s),
-        x2: medianNumber(seg.x2s),
-        rowCount: seg.rowCount
-      }))
-      .filter(seg => seg.height >= minSegH && seg.height <= maxSegH && seg.width >= minRunW && seg.width <= maxRunW)
-      .sort((a, b) => a.start - b.start);
-
-    const profile = activeStripProfile();
-    const expectedPads = profile.pads.length;
-    if (plausible.length < expectedPads) {
-      const empty = {};
-      Object.defineProperty(empty, "__samplingDiagnostics", {
-        enumerable: false,
-        value: {
-          detectionMethod: "row-runs",
-          detectedPadCenters: [],
-          padSpacingConsistency: 0,
-          padSpacingVariance: null,
-          detectedSegments: plausible,
-          sampledPixels: {},
-          paperLab,
-          samplingWarning: `Only found ${plausible.length}/${expectedPads} plausible pad blobs for ${profile.name}. The crop may include too much background or the pad colors may be washed out.`
-        }
-      });
-      return empty;
-    }
-
-    const top7 = plausible.slice(0, expectedPads);
-    const padCenters = top7.map(seg => ({ x: Math.round(seg.centerX), y: Math.round((seg.start + seg.end) / 2) }));
-    const spacings = [];
-    for (let i = 1; i < padCenters.length; i++) spacings.push(padCenters[i].y - padCenters[i - 1].y);
-    const avgSpacing = spacings.length ? spacings.reduce((sum, v) => sum + v, 0) / spacings.length : 0;
-    const spacingVariance = spacings.length && avgSpacing
-      ? spacings.reduce((sum, v) => sum + Math.abs(v - avgSpacing), 0) / (spacings.length * avgSpacing)
-      : null;
-
-    const padColors = {};
-    const sampledPixels = {};
-
-    function median(vals) {
-      const a = vals.slice().sort((p, q) => p - q);
-      return a[Math.floor(a.length / 2)];
-    }
-    function mad(vals, m) {
-      const a = vals.map(v => Math.abs(v - m)).sort((p, q) => p - q);
-      return a[Math.floor(a.length / 2)];
-    }
-
-    for (let i = 0; i < expectedPads; i++) {
-      const seg = top7[i];
-      const centerX = Math.round(seg.centerX);
-      const centerY = Math.round((seg.start + seg.end) / 2);
-      const sampleW = Math.max(8, Math.floor(seg.width * 0.42));
-      const sampleH = Math.max(8, Math.floor(seg.height * 0.42));
-      const x1 = clampNumber(centerX - Math.floor(sampleW / 2), 0, w - 1);
-      const y1 = clampNumber(centerY - Math.floor(sampleH / 2), 0, h - 1);
-      const x2 = clampNumber(centerX + Math.floor(sampleW / 2), 0, w - 1);
-      const y2 = clampNumber(centerY + Math.floor(sampleH / 2), 0, h - 1);
-
-      const samples = [];
-      const points = [];
-      const gx = 9, gy = 9;
-
-      for (let yy = 0; yy < gy; yy++) {
-        const py = Math.round(y1 + (yy + 0.5) * ((y2 - y1) / gy));
-        for (let xx = 0; xx < gx; xx++) {
-          const px = Math.round(x1 + (xx + 0.5) * ((x2 - x1) / gx));
-          const p = getPixel(px, py);
-          const rr = p.r / whiteBalance.r;
-          const gg = p.g / whiteBalance.g;
-          const bb = p.b / whiteBalance.b;
-          samples.push([rr, gg, bb]);
-          points.push({ x: px, y: py, r: Math.round(p.r), g: Math.round(p.g), b: Math.round(p.b) });
-        }
-      }
-
-      const rs = samples.map(sv => sv[0]);
-      const gs = samples.map(sv => sv[1]);
-      const bs = samples.map(sv => sv[2]);
-
-      const mr = median(rs), mg = median(gs), mb = median(bs);
-      const vr = mad(rs, mr), vg = mad(gs, mg), vb = mad(bs, mb);
-
-      const key = profile.pads[i].key;
-      sampledPixels[key] = points;
-      padColors[key] = { r: mr, g: mg, b: mb, __var: (vr + vg + vb) / 3 };
-    }
-
-    const diagnostics = {
-      detectionMethod: "row-runs",
-      detectedPadCenters: padCenters,
-      padSpacingConsistency: spacingVariance == null ? null : Number(Math.max(0, 1 - spacingVariance).toFixed(2)),
-      padSpacingVariance: spacingVariance == null ? null : Number(spacingVariance.toFixed(3)),
-      detectedSegments: top7.map(seg => ({
-        start: Math.round(seg.start),
-        end: Math.round(seg.end),
-        x1: Math.round(seg.x1),
-        x2: Math.round(seg.x2),
-        width: Math.round(seg.width),
-        height: Math.round(seg.height)
-      })),
-      sampledPixels,
-      paperLab
-    };
-    diagnostics.overlayDataUrl = buildSamplingDebugOverlay(ctx, diagnostics);
-
-    Object.defineProperty(padColors, "__samplingDiagnostics", {
-      enumerable: false,
-      value: diagnostics
-    });
-
-    return padColors;
-  }
   function setWBAt(x, y) {
     const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
     const size = 21;
@@ -4425,158 +3899,6 @@ export function initPoolTestScanner(root) {
     };
   }
 
-  function averageFrameSamples(frameContexts) {
-    const frames = frameContexts.length ? frameContexts : [];
-    const sampled = frames.map(frameCtx => {
-      const leveled = autoLevelFrameContext(frameCtx);
-      const padColors = samplePadsEasyTest(leveled.ctx);
-      const samplingDiagnostics = padColors.__samplingDiagnostics || null;
-      return {
-        ctx: leveled.ctx,
-        originalCtx: frameCtx,
-        padColors,
-        avgRgb: sampleStripe(leveled.ctx),
-        neutral: sampleNeutralReference(leveled.ctx),
-        correction: {
-          ...leveled.diagnostics,
-          detectedPadCenters: samplingDiagnostics?.detectedPadCenters || [],
-          padSpacingConsistency: samplingDiagnostics?.padSpacingConsistency ?? null,
-          padSpacingVariance: samplingDiagnostics?.padSpacingVariance ?? null,
-          detectedSegments: samplingDiagnostics?.detectedSegments || [],
-          sampledPixels: samplingDiagnostics?.sampledPixels || {},
-          samplingPaperLab: samplingDiagnostics?.paperLab || null,
-          samplingOverlayDataUrl: samplingDiagnostics?.overlayDataUrl || null,
-          samplingWarning: samplingDiagnostics?.samplingWarning || ""
-        }
-      };
-    });
-    const profile = activeStripProfile();
-    const complete = sampled.filter(frame => Object.keys(frame.padColors || {}).filter(k => k !== "__avg").length === profile.pads.length);
-    const source = complete.length ? complete : sampled;
-    const padColors = {};
-
-    profile.pads.forEach(pad => {
-      const colors = source.map(frame => frame.padColors?.[pad.key]).filter(Boolean);
-      if (!colors.length) return;
-      const avg = averageRgbList(colors);
-      const frameVariance = colors.reduce((sum, color) => {
-        return sum + Math.abs(color.r - avg.r) + Math.abs(color.g - avg.g) + Math.abs(color.b - avg.b);
-      }, 0) / (colors.length * 3);
-      const internalVariance = colors.reduce((sum, color) => sum + Number(color.__var || 0), 0) / colors.length;
-      padColors[pad.key] = {
-        ...avg,
-        __var: internalVariance + frameVariance,
-        __frameVariance: frameVariance,
-        __frameCount: colors.length
-      };
-    });
-
-    const correctionSource = source[source.length - 1]?.correction || sampled[sampled.length - 1]?.correction || null;
-    const rotationCount = source.filter(frame => frame.correction?.rotationCorrected).length;
-    const lowCorrectionConfidence = source.some(frame => (frame.correction?.correctionConfidence ?? 1) < 0.34);
-
-    return {
-      ctx: source[source.length - 1]?.ctx || frames[frames.length - 1],
-      padColors,
-      avgRgb: averageRgbList(source.map(frame => frame.avgRgb)) || { r: 0, g: 0, b: 0 },
-      neutralReference: averageRgbList(source.map(frame => frame.neutral).filter(Boolean)),
-      frameCount: source.length,
-      correctionDiagnostics: correctionSource ? {
-        ...correctionSource,
-        rotationCorrected: rotationCount > 0,
-        correctedFrameCount: rotationCount,
-        lowCorrectionConfidence
-      } : null
-    };
-  }
-
-  function cloneCanvasContext() {
-    const off = document.createElement("canvas");
-    off.width = els.canvas.width;
-    off.height = els.canvas.height;
-    const offCtx = off.getContext("2d", { willReadFrequently: true });
-    offCtx.drawImage(els.canvas, 0, 0);
-    return offCtx;
-  }
-
-  const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
-
-  async function analyzeLiveMultiFrame() {
-    const frames = [];
-    for (let i = 0; i < 5; i++) {
-      drawFromVideo();
-      frames.push(cloneCanvasContext());
-      if (i < 4) await wait(90);
-    }
-    return analyze(frames[frames.length - 1], frames);
-  }
-
-  function analyze(ctx, frameContexts = null) {
-    let imgHash = null;
-    try { imgHash = hashCanvas(ctx); } catch { imgHash = null; }
-    const cacheKey = imgHash ? `${imgHash}:${calibrationFingerprint()}` : null;
-    const scanSource = frameContexts?.length ? "camera" : "image";
-
-    if (cacheKey) {
-      const hit = cacheGet(cacheKey);
-      if (hit?.vals) {
-        attachScanIdentity(hit.vals, imgHash, "cached");
-        lastVals = hit.vals;
-        const sanity = runSanityCheck(hit.vals);
-        renderBars(hit.vals);
-        renderSanityCheck(sanity);
-        renderRecs(hit.vals);
-        renderScanDiagnostics(hit.vals);
-        setStatus(`${activeStripProfile().name} scan (cached) | id=${imgHash}`);
-        els.canvas && (els.canvas.hidden = true);
-        finalizeSuccessfulScan(hit.vals, { scanHash: imgHash, scanSource: "cached" });
-        return hit.vals;
-      }
-    }
-
-    const frameSample = averageFrameSamples(frameContexts?.length ? frameContexts : [ctx]);
-    const padColors = frameSample.padColors;
-    const avgRgb = frameSample.avgRgb;
-    padColors.__avg = avgRgb;
-
-    const padCount = Object.keys(padColors).filter(k => k !== "__avg").length;
-    const expectedPadCount = activeStripProfile().pads.length;
-    if (padCount < expectedPadCount) {
-      lastVals = null;
-      renderScanDiagnostics(null);
-      setStatus(`Scan quality issue: only detected ${padCount}/${expectedPadCount} pads for ${activeStripProfile().name}. Retake photo in bright indirect light, straight-on, avoiding glare.`);
-      els.canvas && (els.canvas.hidden = true);
-      return null;
-    }
-
-    const neutralReference = frameSample.neutralReference;
-    const scanQuality = evaluateScanQuality(frameSample.ctx || ctx, padColors, avgRgb, neutralReference, frameSample.correctionDiagnostics);
-    scanQuality.details.frameCount = frameSample.frameCount || 1;
-    scanQuality.correction = frameSample.correctionDiagnostics || null;
-    const vals = rgbToChemistryEasyTest(padColors, scanQuality, neutralReference);
-    attachScanIdentity(vals, imgHash, scanSource);
-    lastVals = vals;
-    const sanity = runSanityCheck(vals);
-
-    renderBars(vals);
-    renderSanityCheck(sanity);
-    renderRecs(vals);
-    renderScanDiagnostics(vals);
-    let statusPrefix = scanQuality.score < 55
-      ? "Low scan quality. Move to indirect daylight and rescan."
-      : `${activeStripProfile().name} scan`;
-    if (scanQuality.correction?.rotationCorrected && scanQuality.score >= 55) statusPrefix = `${activeStripProfile().name} scan | Strip was auto-leveled.`;
-    else if ((scanQuality.correction?.correctionConfidence ?? 1) < 0.34) statusPrefix = "Low correction confidence. Try placing the strip straighter in the frame.";
-    setStatus(`${statusPrefix} | Avg RGB ≈ (${avgRgb.r | 0}, ${avgRgb.g | 0}, ${avgRgb.b | 0}) | quality ${scanQuality.score}/100${imgHash ? ` | id=${imgHash}` : ""}`);
-
-    els.canvas && (els.canvas.hidden = true);
-
-    if (cacheKey) cachePut(cacheKey, vals);
-    recordFingerprint(imgHash, padColors, avgRgb, vals);
-    finalizeSuccessfulScan(vals, { scanHash: imgHash, scanSource });
-    return vals;
-  }
-
   // ================================================================
   // 13) Pool setup persistence
   // ================================================================
@@ -5135,8 +4457,11 @@ export function initPoolTestScanner(root) {
 
   els.btnStart?.addEventListener("click", startCamera);
   els.btnCapture?.addEventListener("click", async () => {
-    setStatus("Capturing 5 frames for a steadier reading...");
-    await analyzeLiveMultiFrame();
+    setStatus("Captured frame. Select each pad manually from top to bottom.");
+    const ctx = drawFromVideo();
+    const img = new Image();
+    img.onload = () => showPreview(img);
+    img.src = ctx.canvas.toDataURL("image/jpeg", 0.95);
   });
 
   // Phone-first buttons
@@ -5192,10 +4517,6 @@ export function initPoolTestScanner(root) {
   els.fileInput?.addEventListener("change", handlePickedFile);
   els.takeInput?.addEventListener("change", handlePickedFile);
   els.chartInput?.addEventListener("change", handleChartCalibrationFile);
-
-  els.btnUseCrop?.addEventListener("click", () => {
-    analyzeFromPreviewCrop();
-  });
 
   els.btnManualPads?.addEventListener("click", toggleManualPadMode);
   els.btnResetManualPads?.addEventListener("click", () => {
