@@ -940,15 +940,20 @@ export function runStripSanityCheck(vals, context = {}) {
   const recentActions = Array.isArray(context.recentActions) ? context.recentActions : [];
   const scanQuality = vals?.__scanQuality || null;
   const checks = [];
+  const supports = key => !Array.isArray(vals?.__supportedTests) || vals.__supportedTests.includes(key);
+  const totalClValue = supports("totalCl") ? vals.totalCl : null;
+  const combinedClValue = supports("combinedCl") && totalClValue != null && vals.freeCl != null
+    ? Math.max(0, (toNumber(totalClValue) || 0) - (toNumber(vals.freeCl) || 0))
+    : null;
   const values = {
     ph: vals.ph,
     freeCl: vals.freeCl,
-    totalCl: vals.totalCl,
-    combinedCl: Math.max(0, (toNumber(vals.totalCl) || 0) - (toNumber(vals.freeCl) || 0)),
+    totalCl: totalClValue,
+    combinedCl: combinedClValue,
     alk: vals.alk,
     cya: vals.cya,
     hardness: vals.hardness,
-    bromine: vals.bromine
+    bromine: supports("bromine") ? vals.bromine : null
   };
 
   Object.entries(values).forEach(([key, measuredValue]) => {

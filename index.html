@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=37" />
+  <link rel="stylesheet" href="pooltest.css?v=38" />
 </head>
 
 <body>
@@ -239,7 +239,7 @@
           <span class="section-eyebrow">Scan</span>
           <h2>New Test Strip Reading</h2>
         </div>
-        <span class="tag ok">EasyTest 7-in-1</span>
+        <span class="tag ok" data-pt="stripProfileTag">EasyTest 7-in-1</span>
       </div>
 
       <div class="scan-step-card">
@@ -249,6 +249,15 @@
           <label><input type="radio" checked><span>Test Strip</span></label>
           <label><input type="radio" disabled><span>Sensor Array Coming Soon</span></label>
         </div>
+      </div>
+
+      <div class="field">
+        <label>Strip Profile</label>
+        <select data-pt="stripProfileSelect">
+          <option value="easytest-7in1">EasyTest 7-in-1</option>
+          <option value="hth-6way">HTH 6-Way</option>
+        </select>
+        <small class="muted">Profiles define pad order, supported tests, and reference colors.</small>
       </div>
 
       <!-- Camera chooser (desktop/tablet) -->
@@ -524,7 +533,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev51";
+    import { initPoolTestScanner } from "./scanner.js?v=dev52";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>
