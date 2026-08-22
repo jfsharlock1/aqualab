@@ -2467,3 +2467,169 @@ body {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Water platform / Sensor Array IA refresh */
+.segmented-control .segmented-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid rgba(148,163,184,0.38);
+  border-radius: 10px;
+  color: var(--fg);
+  background: rgba(8,15,24,0.45);
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.segmented-control .segmented-link:hover,
+.home-sensor-link:hover {
+  border-color: rgba(45,212,191,0.72);
+  color: #ccfbf1;
+}
+
+.home-sensor-link {
+  margin-top: 12px;
+  width: fit-content;
+  text-decoration: none;
+}
+
+.sensor-shell {
+  display: grid;
+  gap: 14px;
+}
+
+.sensor-subnav {
+  position: sticky;
+  top: calc(68px + env(safe-area-inset-top));
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px;
+  border: 1px solid rgba(125,154,176,0.28);
+  border-radius: 12px;
+  background: rgba(5,13,21,0.92);
+  backdrop-filter: blur(12px);
+}
+
+.sensor-subnav button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(148,163,184,0.28);
+  background: rgba(8,15,24,0.48);
+  color: var(--fg-muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sensor-subnav button.active {
+  border-color: rgba(45,212,191,0.72);
+  background: rgba(20,184,166,0.18);
+  color: #ccfbf1;
+}
+
+.sensor-section[hidden] {
+  display: none !important;
+}
+
+.sensor-section {
+  min-width: 0;
+}
+
+.sensor-overview-card {
+  display: grid;
+  gap: 12px;
+}
+
+.sensor-overview-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.sensor-overview-grid .sensor-reading {
+  min-height: 112px;
+}
+
+.sensor-overview-grid .overview-primary strong {
+  color: #f8fafc;
+  font-size: clamp(1.75rem, 5vw, 2.6rem);
+}
+
+.compact-status-grid {
+  margin: 0;
+}
+
+.location-detail-grid,
+.history-filter-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.location-detail-grid span {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(51,65,85,0.9);
+  border-radius: 10px;
+  background: rgba(15,23,42,0.55);
+  color: var(--fg-muted);
+  font-size: 0.76rem;
+}
+
+.location-detail-grid strong {
+  color: var(--fg);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.sensor-history-charts.is-empty > div {
+  display: none;
+}
+
+body {
+  padding-bottom: calc(78px + env(safe-area-inset-bottom));
+}
+
+.pt-header.app-header,
+.pt-header {
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-left: max(clamp(14px, 3vw, 28px), env(safe-area-inset-left));
+  padding-right: max(clamp(14px, 3vw, 28px), env(safe-area-inset-right));
+}
+
+@media (max-width: 900px) {
+  .sensor-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .sensor-subnav {
+    top: calc(96px + env(safe-area-inset-top));
+    margin-inline: -2px;
+  }
+
+  .sensor-overview-grid,
+  .location-detail-grid,
+  .history-filter-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .segmented-control .segmented-link {
+    width: 100%;
+  }
+}
+
+@media (max-width: 767px) {
+  body.layout-phone {
+    padding-bottom: calc(88px + env(safe-area-inset-bottom));
+  }
+}

@@ -455,6 +455,11 @@ export function initPoolTestScanner(root) {
     homeWeeklyAverage: root.querySelector('[data-pt="homeWeeklyAverage"]'),
     homeBestScore: root.querySelector('[data-pt="homeBestScore"]'),
     homeLowestScore: root.querySelector('[data-pt="homeLowestScore"]'),
+    homeSensorStatus: root.querySelector('[data-pt="homeSensorStatus"]'),
+    homeSensorTemp: root.querySelector('[data-pt="homeSensorTemp"]'),
+    homeSensorTurbidity: root.querySelector('[data-pt="homeSensorTurbidity"]'),
+    homeSensorPh: root.querySelector('[data-pt="homeSensorPh"]'),
+    homeSensorLast: root.querySelector('[data-pt="homeSensorLast"]'),
     homeEmptyHelp: root.querySelector('[data-pt="homeEmptyHelp"]'),
     betaStats: root.querySelector('[data-pt="betaStats"]'),
 
@@ -682,6 +687,46 @@ export function initPoolTestScanner(root) {
         else statusEl.textContent = `! ${status.toUpperCase()}`;
       }
     };
+    const updateHomeSensorSummary = () => {
+      let readings = [];
+      try {
+        const parsed = JSON.parse(localStorage.getItem("aqualab_sensor_readings") || "[]");
+        readings = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        readings = [];
+      }
+      const latestSensor = readings
+        .filter(Boolean)
+        .sort((a, b) => new Date(a?.createdAt || a?.sensorData?.sensorTimestamp || 0).getTime() - new Date(b?.createdAt || b?.sensorData?.sensorTimestamp || 0).getTime())
+        .pop();
+      const data = latestSensor?.sensorData || {};
+      const tempF = Number(data.temperatureF);
+      const turbidityRaw = Number(data.turbidityRaw);
+      const turbidityNtu = Number(data.turbidityNtu);
+      const ph = Number(data.ph ?? data.pH);
+      const source = data.sensorSource || latestSensor?.connectivity?.connectionMethod || "Sensor";
+      const createdAt = latestSensor?.createdAt || data.sensorTimestamp || null;
+
+      if (els.homeSensorStatus) {
+        els.homeSensorStatus.className = `tag ${latestSensor ? "ok" : "warn"}`;
+        els.homeSensorStatus.textContent = latestSensor ? `${source} saved` : "No saved reading";
+      }
+      if (els.homeSensorTemp) els.homeSensorTemp.textContent = Number.isFinite(tempF) ? `${tempF.toFixed(1)} F` : "--";
+      if (els.homeSensorTurbidity) {
+        els.homeSensorTurbidity.textContent = Number.isFinite(turbidityNtu)
+          ? `${turbidityNtu.toFixed(2)} est.`
+          : Number.isFinite(turbidityRaw)
+          ? `${Math.round(turbidityRaw)} raw`
+          : "--";
+      }
+      if (els.homeSensorPh) els.homeSensorPh.textContent = Number.isFinite(ph) ? ph.toFixed(1) : "--";
+      if (els.homeSensorLast) {
+        els.homeSensorLast.textContent = createdAt
+          ? `Last sensor update: ${new Date(createdAt).toLocaleString()}`
+          : "Last sensor update: No saved reading";
+      }
+      if (els.homeWaterTemp && Number.isFinite(tempF)) els.homeWaterTemp.textContent = `${tempF.toFixed(1)} F from Sensor Array`;
+    };
     const context = latest?.poolContext || latest?.__poolContext || loadPoolContext();
     const appearanceLabel = poolContextLabel("waterAppearance", context.waterAppearance);
     const typeLabel = { inGround: "In-ground", aboveGround: "Above-ground", spa: "Spa / hot tub" }[els.poolType?.value] || "Pool";
@@ -694,6 +739,7 @@ export function initPoolTestScanner(root) {
     if (els.homeSiteMeta) els.homeSiteMeta.textContent = dimension;
     if (els.homeWaterAppearance) els.homeWaterAppearance.textContent = appearanceLabel;
     if (els.homeWaterTemp) els.homeWaterTemp.textContent = "Temp not connected";
+    updateHomeSensorSummary();
 
     if (!latest) {
       homeScreen?.classList.remove("has-test");

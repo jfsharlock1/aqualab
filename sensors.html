@@ -12,7 +12,7 @@
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="pooltest.css?v=16" />
+  <link rel="stylesheet" href="pooltest.css?v=41" />
 </head>
 
 <body>
@@ -21,7 +21,7 @@
       <div class="logo"></div>
       <div class="titling">
         <h1>AquaLab</h1>
-        <div class="muted">Pool chemistry scanning and field sensing</div>
+        <div class="muted">Water testing and field sensing</div>
       </div>
     </div>
     <nav class="pt-nav">
@@ -35,7 +35,7 @@
     <section class="mode-hero sensor-hero">
       <div>
         <span class="section-eyebrow">Sensor Array</span>
-        <h2>Sensor Array</h2>
+        <h2>Field Monitoring Dashboard</h2>
         <p class="muted hint">
           Monitor live water readings, location, sessions, diagnostics, and saved history from one field dashboard.
         </p>
@@ -66,269 +66,352 @@
       </div>
     </section>
 
-    <section class="sensor-grid" data-sa="sensorContent" hidden>
-      <section class="card sensor-card sensor-card-primary live-instrument">
-        <span class="section-eyebrow">Live</span>
-        <h2>Live Readings</h2>
-        <div class="sensor-reading-grid live-instrument-readings">
-          <div class="sensor-reading live-primary-reading">
-            <strong class="live-reading-value" data-sa="temperatureF">-</strong>
-            <small class="live-reading-label">Water Temperature</small>
-            <span class="muted" data-sa="temperatureC">-</span>
-          </div>
-          <div class="sensor-reading live-secondary-reading">
-            <strong class="live-reading-value" data-sa="turbidityNtu">-</strong>
-            <small class="live-reading-label">Estimated Turbidity</small>
-            <span class="muted" data-sa="turbidityVoltage">-</span>
-          </div>
-          <div class="sensor-reading live-technical-meta">
-            <small>Turbidity Raw</small>
-            <strong data-sa="turbidityRaw">-</strong>
-            <span class="muted" data-sa="sensorSource">No source</span>
-          </div>
-        </div>
-        <p class="muted hint" data-sa="readingTimestamp">No reading loaded.</p>
-        <p class="muted hint" data-sa="lastUpdate">Last update: never</p>
-        <div class="sensor-classification">
-          <div class="row row-wrap">
-            <span class="tag" data-sa="classificationBadge">Not classified</span>
-            <span class="muted hint" data-sa="confidenceScore">Confidence: -</span>
-          </div>
-          <strong data-sa="estimatedClarity">Estimated clarity: -</strong>
-          <p class="muted hint" data-sa="classificationExplanation">Refresh a reading to classify water condition.</p>
-        </div>
-        <div class="row row-wrap sensor-actions">
-          <button type="button" data-sa="refreshReading">Refresh Reading</button>
-          <button type="button" class="btn-ghost" data-sa="saveReading" disabled>Save Reading</button>
-        </div>
-        <label class="sensor-toggle">
-          <input type="checkbox" data-sa="autoRefresh">
-          <span>Auto-refresh every 5 seconds</span>
-        </label>
-        <p class="muted hint" data-sa="saveStatus">No sensor readings saved yet.</p>
-      </section>
+    <section class="sensor-shell" data-sa="sensorContent" hidden>
+      <nav class="sensor-subnav" aria-label="Sensor Array sections">
+        <button type="button" class="active" data-sensor-tab="overview">Overview</button>
+        <button type="button" data-sensor-tab="live">Live</button>
+        <button type="button" data-sensor-tab="field">Field</button>
+        <button type="button" data-sensor-tab="map">Map</button>
+        <button type="button" data-sensor-tab="history">History</button>
+        <button type="button" data-sensor-tab="setup">Setup</button>
+      </nav>
 
-      <section class="card sensor-card settings-panel">
-        <span class="section-eyebrow">Setup</span>
-        <h2>Connection</h2>
-        <div class="field">
-          <label>Connection method</label>
-          <select data-sa="connectionMethod">
-            <option value="wifi">Wi-Fi HTTP / JSON</option>
-            <option value="mock">Mock Demo</option>
-            <option value="ble">Bluetooth LE</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Connection mode</label>
-          <select data-sa="networkMode">
-            <option value="same-wifi">ESP32 on same Wi-Fi network</option>
-            <option value="esp32-hotspot">ESP32 hotspot / offline mode</option>
-            <option value="phone-hotspot">Phone hotspot field mode</option>
-          </select>
-        </div>
-        <div class="field" data-sa="endpointField">
-          <label>ESP32 endpoint URL</label>
-          <input data-sa="endpointUrl" type="url" placeholder="http://192.168.1.50/readings">
-          <small class="muted">Saved on this device.</small>
-        </div>
-        <div data-sa="bleFields" style="display:none">
-          <div class="field">
-            <label>BLE service UUID</label>
-            <input data-sa="bleServiceUuid" type="text" placeholder="Optional service UUID">
-            <small class="muted">Leave blank to scan by AquaLab device name only.</small>
+      <section class="sensor-section" data-sensor-section="overview">
+        <section class="card sensor-card sensor-overview-card sensor-card-wide">
+          <div class="home-card-header">
+            <div>
+              <span class="section-eyebrow">Overview</span>
+              <h2>Sensor Station</h2>
+            </div>
+            <span class="tag warn" data-sa="overviewConnection">Wi-Fi ready</span>
           </div>
-          <div class="field">
-            <label>BLE characteristic UUID</label>
-            <input data-sa="bleCharacteristicUuid" type="text" placeholder="Optional reading characteristic UUID">
+          <p class="muted hint" data-sa="overviewEmpty">No live sensor reading yet. Refresh a reading or use Mock Demo to try the workflow.</p>
+          <div class="sensor-overview-grid">
+            <article class="sensor-reading overview-primary">
+              <small>Water Temperature</small>
+              <strong data-sa="overviewTemp">-</strong>
+              <span class="muted">Live or last refreshed</span>
+            </article>
+            <article class="sensor-reading">
+              <small>Turbidity</small>
+              <strong data-sa="overviewTurbidity">-</strong>
+              <span class="muted" data-sa="overviewRaw">Raw -</span>
+            </article>
+            <article class="sensor-reading">
+              <small>Active Session</small>
+              <strong data-sa="overviewSession">No active session</strong>
+              <span class="muted">Readings can still be saved</span>
+            </article>
+            <article class="sensor-reading">
+              <small>Location</small>
+              <strong data-sa="overviewLocation">Manual location</strong>
+              <span class="muted">GPS optional</span>
+            </article>
+            <article class="sensor-reading">
+              <small>Last Successful Update</small>
+              <strong data-sa="overviewLastUpdate">Never</strong>
+              <span class="muted">Local device time</span>
+            </article>
+          </div>
+          <div class="status-badge-grid compact-status-grid">
+            <span class="tag warn" data-sa="overviewSensorBadge">Sensor: unknown</span>
+            <span class="tag warn" data-sa="overviewGpsBadge">GPS: manual</span>
+            <span class="tag warn" data-sa="overviewInternetBadge">Internet: checking</span>
+            <span class="tag bad" data-sa="overviewWeatherBadge">Weather: unavailable</span>
           </div>
           <div class="row row-wrap sensor-actions">
-            <button type="button" class="btn-ghost" data-sa="connectBluetooth">Connect Bluetooth Sensor</button>
-            <button type="button" class="btn-ghost" data-sa="disconnectBluetooth" disabled>Disconnect Bluetooth Sensor</button>
+            <button type="button" data-sa="overviewRefreshReading">Refresh Reading</button>
+            <button type="button" class="btn-ghost" data-sa="overviewSaveReading" disabled>Save Reading</button>
+            <button type="button" class="btn-ghost" data-sa="overviewStartSession">Start Field Session</button>
           </div>
-          <p class="muted hint" data-sa="bleStatus">Bluetooth LE is optional and experimental.</p>
-        </div>
-        <div class="row row-wrap sensor-actions">
-          <button type="button" data-sa="testConnection">Test Connection</button>
-        </div>
-        <p class="muted hint" data-sa="connectionStatus">Wi-Fi is selected. Enter the ESP32 JSON endpoint.</p>
+        </section>
       </section>
 
-      <section class="card sensor-card settings-panel location-panel">
-        <span class="section-eyebrow">Context</span>
-        <h2>Location</h2>
-        <div class="field">
-          <label>Location name</label>
-          <input data-sa="locationName" type="text" placeholder="Backyard Pool">
-          <small class="muted">Saved on this device and included with saved readings.</small>
-        </div>
-        <div class="row row-wrap sensor-actions">
-          <button type="button" data-sa="useDeviceLocation">Use This Device Location</button>
-          <button type="button" class="btn-ghost" disabled>Use GPS from sensor array</button>
-        </div>
-        <p class="muted hint" data-sa="locationStatus">Manual location is available. GPS is optional.</p>
-      </section>
-
-      <section class="card sensor-card weather-summary-panel">
-        <span class="section-eyebrow">Context</span>
-        <h2>Weather</h2>
-        <div class="status-badge-grid">
-          <span class="tag warn" data-sa="weatherSource">Mock weather mode</span>
-          <span class="tag warn" data-sa="weatherUpdated">Not refreshed</span>
-        </div>
-        <div class="weather-reading-grid weather-summary">
-          <div class="sensor-reading weather-primary">
-            <small>Air Temperature</small>
-            <strong data-sa="weatherTempF">-</strong>
-            <span class="muted" data-sa="weatherTempC">-</span>
+      <section class="sensor-grid sensor-section" data-sensor-section="live" hidden>
+        <section class="card sensor-card sensor-card-primary live-instrument sensor-card-wide">
+          <span class="section-eyebrow">Live</span>
+          <h2>Live Readings</h2>
+          <div class="sensor-reading-grid live-instrument-readings">
+            <div class="sensor-reading live-primary-reading">
+              <strong class="live-reading-value" data-sa="temperatureF">-</strong>
+              <small class="live-reading-label">Water Temperature</small>
+              <span class="muted" data-sa="temperatureC">-</span>
+            </div>
+            <div class="sensor-reading live-secondary-reading">
+              <strong class="live-reading-value" data-sa="turbidityNtu">-</strong>
+              <small class="live-reading-label">Estimated Turbidity</small>
+              <span class="muted" data-sa="turbidityVoltage">-</span>
+            </div>
+            <div class="sensor-reading live-technical-meta">
+              <small>Turbidity Raw</small>
+              <strong data-sa="turbidityRaw">-</strong>
+              <span class="muted" data-sa="sensorSource">No source</span>
+            </div>
           </div>
-          <div class="sensor-reading weather-meta">
-            <small>Humidity</small>
-            <strong data-sa="weatherHumidity">-</strong>
-            <span class="muted" data-sa="weatherPressure">-</span>
+          <p class="muted hint" data-sa="readingTimestamp">No live sensor reading.</p>
+          <p class="muted hint" data-sa="lastUpdate">Last update: never</p>
+          <div class="sensor-classification">
+            <div class="row row-wrap">
+              <span class="tag" data-sa="classificationBadge">Not classified</span>
+              <span class="muted hint" data-sa="confidenceScore">Confidence: -</span>
+            </div>
+            <strong data-sa="estimatedClarity">Estimated clarity: -</strong>
+            <p class="muted hint" data-sa="classificationExplanation">Refresh a reading to classify water condition.</p>
           </div>
-          <div class="sensor-reading weather-meta">
-            <small>Wind</small>
-            <strong data-sa="weatherWind">-</strong>
-            <span class="muted" data-sa="weatherCondition">-</span>
+          <div class="row row-wrap sensor-actions">
+            <button type="button" data-sa="refreshReading">Refresh Reading</button>
+            <button type="button" class="btn-ghost" data-sa="saveReading" disabled>Save Reading</button>
           </div>
-        </div>
-        <div class="row row-wrap sensor-actions">
-          <button type="button" class="btn-ghost" data-sa="refreshWeather">Refresh Weather</button>
-        </div>
-        <label class="sensor-toggle">
-          <input type="checkbox" data-sa="includeWeather">
-          <span>Include Weather With Reading</span>
-        </label>
-        <p class="muted hint" data-sa="weatherStatus">No weather API is configured, so mock weather will be used when refreshed.</p>
-      </section>
-
-      <section class="card sensor-card calibration-panel">
-        <span class="section-eyebrow">Quality</span>
-        <h2>Calibration</h2>
-        <p class="muted hint">Use raw prototype readings to tune estimated clarity. These are not lab-grade NTU values.</p>
-        <div class="sensor-calibration-values">
-          <div class="sensor-reading">
-            <small>Clear Baseline</small>
-            <strong data-sa="clearBaseline">-</strong>
-          </div>
-          <div class="sensor-reading">
-            <small>Cloudy Baseline</small>
-            <strong data-sa="cloudyBaseline">-</strong>
-          </div>
-        </div>
-        <div class="row row-wrap sensor-actions">
-          <button type="button" class="btn-ghost" data-sa="captureClearBaseline">Capture Clear Baseline</button>
-          <button type="button" class="btn-ghost" data-sa="captureCloudyBaseline">Capture Cloudy Baseline</button>
-        </div>
-        <p class="muted hint" data-sa="calibrationStatus">Using prototype defaults: clear water around 2170-2190 raw, cloudy/milk water around 1890-2000 raw.</p>
-      </section>
-
-      <section class="card sensor-card diagnostics-panel">
-        <span class="section-eyebrow">System</span>
-        <h2>Diagnostics</h2>
-        <div class="status-badge-grid">
-          <span class="tag warn" data-sa="sensorBadge">Sensor: unknown</span>
-          <span class="tag warn" data-sa="internetBadge">Internet: checking</span>
-          <span class="tag bad" data-sa="weatherBadge">Weather: unavailable</span>
-          <span class="tag bad" data-sa="mapBadge">Map: unavailable</span>
-          <span class="tag warn" data-sa="gpsBadge">GPS: manual</span>
-        </div>
-        <div class="diagnostic-list">
-          <div><strong>Last successful update</strong><span data-sa="lastSuccessfulUpdate">Never</span></div>
-          <div><strong>API response time</strong><span data-sa="apiResponseTime">-</span></div>
-          <div><strong>Consecutive read failures</strong><span data-sa="consecutiveFailures">0</span></div>
-        </div>
-        <ul class="muted diagnostic-warnings" data-sa="diagnosticWarnings">
-          <li>No diagnostics yet.</li>
-        </ul>
-      </section>
-
-      <section class="card sensor-card session-workflow-panel">
-        <span class="section-eyebrow">Field Work</span>
-        <h2>Sessions</h2>
-        <div class="field">
-          <label>Session name</label>
-          <input data-sa="sessionName" type="text" placeholder="Backyard Pool Test">
-        </div>
-        <div class="field">
-          <label>Session notes</label>
-          <textarea data-sa="sessionNotes" rows="3" placeholder="Optional notes"></textarea>
-        </div>
-        <div class="row row-wrap sensor-actions">
-          <button type="button" data-sa="startSession">Start Session</button>
-          <button type="button" class="btn-ghost" data-sa="endSession" disabled>End Session</button>
-        </div>
-        <div class="session-indicator" data-sa="activeSessionIndicator">
-          <span class="tag warn">No active session</span>
-          <p class="muted hint">Readings can still be saved without a session.</p>
-        </div>
-      </section>
-
-      <section class="card sensor-card">
-        <span class="section-eyebrow">History</span>
-        <h2>Charts</h2>
-        <div class="field">
-          <label>Time range</label>
-          <select data-sa="historyRange">
-            <option value="1h">Last hour</option>
-            <option value="24h" selected>Last 24 hours</option>
-            <option value="7d">Last 7 days</option>
-            <option value="all">All readings</option>
-          </select>
-        </div>
-        <p class="muted hint" data-sa="historyStatus">No saved sensor readings yet.</p>
-        <div class="sensor-history-charts">
-          <div>
-            <h3>Water Temperature</h3>
-            <canvas data-sa="temperatureChart"></canvas>
-          </div>
-          <div>
-            <h3>Turbidity</h3>
-            <canvas data-sa="turbidityChart"></canvas>
-          </div>
-        </div>
-      </section>
-
-      <section class="card sensor-card sensor-card-wide">
-        <span class="section-eyebrow">Map</span>
-        <h2>Map View</h2>
-        <div class="map-controls">
-          <button type="button" class="btn-ghost" data-sa="centerDeviceLocation">Center on current device location</button>
-          <button type="button" class="btn-ghost" data-sa="showAllMapped">Show all mapped readings</button>
-          <label>
-            <span>Session</span>
-            <select data-sa="mapSessionFilter">
-              <option value="all">All sessions</option>
-            </select>
+          <label class="sensor-toggle">
+            <input type="checkbox" data-sa="autoRefresh">
+            <span>Auto-refresh every 5 seconds</span>
           </label>
-          <label>
-            <span>Classification</span>
-            <select data-sa="mapClassificationFilter">
-              <option value="all">All classifications</option>
-              <option value="Excellent">Excellent</option>
-              <option value="Good">Good</option>
-              <option value="Fair">Fair</option>
-              <option value="Poor">Poor</option>
-              <option value="unclassified">Unclassified</option>
-            </select>
-          </label>
-        </div>
-        <p class="muted hint" data-sa="mapStatus">Map is waiting for saved readings with GPS coordinates.</p>
-        <div class="sensor-map" data-sa="sensorMap"></div>
-        <div class="unmapped-panel">
-          <h3>Unmapped Readings</h3>
-          <div class="unmapped-list" data-sa="unmappedReadings">
-            <p class="muted hint">No unmapped readings yet.</p>
+          <p class="muted hint" data-sa="saveStatus">No sensor readings saved yet.</p>
+        </section>
+      </section>
+
+      <section class="sensor-grid sensor-section" data-sensor-section="field" hidden>
+        <section class="card sensor-card session-workflow-panel">
+          <span class="section-eyebrow">Field Work</span>
+          <h2>Sessions</h2>
+          <div class="field">
+            <label>Session name</label>
+            <input data-sa="sessionName" type="text" placeholder="Backyard Pool Test">
           </div>
-        </div>
+          <div class="field">
+            <label>Session notes</label>
+            <textarea data-sa="sessionNotes" rows="3" placeholder="Optional notes"></textarea>
+          </div>
+          <div class="row row-wrap sensor-actions">
+            <button type="button" data-sa="startSession">Start Session</button>
+            <button type="button" class="btn-ghost" data-sa="endSession" disabled>End Session</button>
+          </div>
+          <div class="session-indicator" data-sa="activeSessionIndicator">
+            <span class="tag warn">No active session</span>
+            <p class="muted hint">Readings can still be saved without a session.</p>
+          </div>
+        </section>
+
+        <section class="card sensor-card settings-panel location-panel">
+          <span class="section-eyebrow">Context</span>
+          <h2>Location</h2>
+          <div class="field">
+            <label>Location name</label>
+            <input data-sa="locationName" type="text" placeholder="Backyard Pool">
+            <small class="muted">Saved on this device and included with saved readings.</small>
+          </div>
+          <div class="row row-wrap sensor-actions">
+            <button type="button" data-sa="useDeviceLocation">Use This Device Location</button>
+            <button type="button" class="btn-ghost" disabled>Use GPS from sensor array</button>
+          </div>
+          <p class="muted hint" data-sa="locationStatus">Manual location is available. GPS is optional.</p>
+          <div class="location-detail-grid">
+            <span>Source<strong data-sa="locationSourceDetail">Manual</strong></span>
+            <span>Coordinates<strong data-sa="locationCoordsDetail">Unavailable</strong></span>
+            <span>Accuracy<strong data-sa="locationAccuracyDetail">-</strong></span>
+          </div>
+        </section>
+
+        <section class="card sensor-card weather-summary-panel sensor-card-wide">
+          <span class="section-eyebrow">Context</span>
+          <h2>Weather</h2>
+          <div class="status-badge-grid">
+            <span class="tag warn" data-sa="weatherSource">Mock weather mode</span>
+            <span class="tag warn" data-sa="weatherUpdated">Not refreshed</span>
+          </div>
+          <div class="weather-reading-grid weather-summary">
+            <div class="sensor-reading weather-primary">
+              <small>Air Temperature</small>
+              <strong data-sa="weatherTempF">-</strong>
+              <span class="muted" data-sa="weatherTempC">-</span>
+            </div>
+            <div class="sensor-reading weather-meta">
+              <small>Humidity</small>
+              <strong data-sa="weatherHumidity">-</strong>
+              <span class="muted" data-sa="weatherPressure">-</span>
+            </div>
+            <div class="sensor-reading weather-meta">
+              <small>Wind</small>
+              <strong data-sa="weatherWind">-</strong>
+              <span class="muted" data-sa="weatherCondition">-</span>
+            </div>
+          </div>
+          <div class="row row-wrap sensor-actions">
+            <button type="button" class="btn-ghost" data-sa="refreshWeather">Refresh Weather</button>
+          </div>
+          <label class="sensor-toggle">
+            <input type="checkbox" data-sa="includeWeather">
+            <span>Include Weather With Reading</span>
+          </label>
+          <p class="muted hint" data-sa="weatherStatus">No weather API is configured, so mock weather will be used when refreshed.</p>
+        </section>
+      </section>
+
+      <section class="sensor-grid sensor-section" data-sensor-section="map" hidden>
+        <section class="card sensor-card sensor-card-wide">
+          <span class="section-eyebrow">Map</span>
+          <h2>Map View</h2>
+          <div class="map-controls">
+            <button type="button" class="btn-ghost" data-sa="centerDeviceLocation">Center on current device location</button>
+            <button type="button" class="btn-ghost" data-sa="showAllMapped">Show all mapped readings</button>
+            <label>
+              <span>Session</span>
+              <select data-sa="mapSessionFilter">
+                <option value="all">All sessions</option>
+              </select>
+            </label>
+            <label>
+              <span>Classification</span>
+              <select data-sa="mapClassificationFilter">
+                <option value="all">All classifications</option>
+                <option value="Excellent">Excellent</option>
+                <option value="Good">Good</option>
+                <option value="Fair">Fair</option>
+                <option value="Poor">Poor</option>
+                <option value="unclassified">Unclassified</option>
+              </select>
+            </label>
+          </div>
+          <p class="muted hint" data-sa="mapStatus">Map is waiting for saved readings with GPS coordinates.</p>
+          <div class="sensor-map" data-sa="sensorMap"></div>
+          <div class="unmapped-panel">
+            <h3>Unmapped Readings</h3>
+            <div class="unmapped-list" data-sa="unmappedReadings">
+              <p class="muted hint">No unmapped readings yet.</p>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="sensor-grid sensor-section" data-sensor-section="history" hidden>
+        <section class="card sensor-card sensor-card-wide">
+          <span class="section-eyebrow">History</span>
+          <h2>Charts</h2>
+          <div class="history-filter-grid">
+            <div class="field">
+              <label>Time range</label>
+              <select data-sa="historyRange">
+                <option value="1h">Last hour</option>
+                <option value="24h" selected>Last 24 hours</option>
+                <option value="7d">Last 7 days</option>
+                <option value="all">All readings</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Session</label>
+              <select data-sa="historySessionFilter">
+                <option value="all">All sessions</option>
+              </select>
+            </div>
+          </div>
+          <p class="muted hint" data-sa="historyStatus">No saved sensor readings yet.</p>
+          <div class="sensor-history-charts" data-sa="historyChartWrap">
+            <div>
+              <h3>Water Temperature</h3>
+              <canvas data-sa="temperatureChart"></canvas>
+            </div>
+            <div>
+              <h3>Turbidity</h3>
+              <canvas data-sa="turbidityChart"></canvas>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="sensor-grid sensor-section" data-sensor-section="setup" hidden>
+        <section class="card sensor-card settings-panel">
+          <span class="section-eyebrow">Setup</span>
+          <h2>Connection</h2>
+          <div class="field">
+            <label>Connection method</label>
+            <select data-sa="connectionMethod">
+              <option value="wifi">Wi-Fi HTTP / JSON</option>
+              <option value="mock">Mock Demo</option>
+              <option value="ble">Bluetooth LE</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Connection mode</label>
+            <select data-sa="networkMode">
+              <option value="same-wifi">ESP32 on same Wi-Fi network</option>
+              <option value="esp32-hotspot">ESP32 hotspot / offline mode</option>
+              <option value="phone-hotspot">Phone hotspot field mode</option>
+            </select>
+          </div>
+          <div class="field" data-sa="endpointField">
+            <label>ESP32 endpoint URL</label>
+            <input data-sa="endpointUrl" type="url" placeholder="http://192.168.1.50/readings">
+            <small class="muted">Saved on this device.</small>
+          </div>
+          <div data-sa="bleFields" style="display:none">
+            <div class="field">
+              <label>BLE service UUID</label>
+              <input data-sa="bleServiceUuid" type="text" placeholder="Optional service UUID">
+              <small class="muted">Leave blank to scan by AquaLab device name only.</small>
+            </div>
+            <div class="field">
+              <label>BLE characteristic UUID</label>
+              <input data-sa="bleCharacteristicUuid" type="text" placeholder="Optional reading characteristic UUID">
+            </div>
+            <div class="row row-wrap sensor-actions">
+              <button type="button" class="btn-ghost" data-sa="connectBluetooth">Connect Bluetooth Sensor</button>
+              <button type="button" class="btn-ghost" data-sa="disconnectBluetooth" disabled>Disconnect Bluetooth Sensor</button>
+            </div>
+            <p class="muted hint" data-sa="bleStatus">Bluetooth LE is optional and experimental.</p>
+          </div>
+          <div class="row row-wrap sensor-actions">
+            <button type="button" data-sa="testConnection">Test Connection</button>
+          </div>
+          <p class="muted hint" data-sa="connectionStatus">Wi-Fi is selected. Enter the ESP32 JSON endpoint.</p>
+        </section>
+
+        <section class="card sensor-card calibration-panel">
+          <span class="section-eyebrow">Quality</span>
+          <h2>Calibration</h2>
+          <p class="muted hint">Use raw prototype readings to tune estimated clarity. These are not lab-grade NTU values.</p>
+          <div class="sensor-calibration-values">
+            <div class="sensor-reading">
+              <small>Clear Baseline</small>
+              <strong data-sa="clearBaseline">-</strong>
+            </div>
+            <div class="sensor-reading">
+              <small>Cloudy Baseline</small>
+              <strong data-sa="cloudyBaseline">-</strong>
+            </div>
+          </div>
+          <div class="row row-wrap sensor-actions">
+            <button type="button" class="btn-ghost" data-sa="captureClearBaseline">Capture Clear Baseline</button>
+            <button type="button" class="btn-ghost" data-sa="captureCloudyBaseline">Capture Cloudy Baseline</button>
+          </div>
+          <p class="muted hint" data-sa="calibrationStatus">Using prototype defaults: clear water around 2170-2190 raw, cloudy/milk water around 1890-2000 raw.</p>
+        </section>
+
+        <section class="card sensor-card diagnostics-panel sensor-card-wide">
+          <span class="section-eyebrow">System</span>
+          <h2>Diagnostics</h2>
+          <div class="status-badge-grid">
+            <span class="tag warn" data-sa="sensorBadge">Sensor: unknown</span>
+            <span class="tag warn" data-sa="internetBadge">Internet: checking</span>
+            <span class="tag bad" data-sa="weatherBadge">Weather: unavailable</span>
+            <span class="tag bad" data-sa="mapBadge">Map: unavailable</span>
+            <span class="tag warn" data-sa="gpsBadge">GPS: manual</span>
+          </div>
+          <div class="diagnostic-list">
+            <div><strong>Last successful update</strong><span data-sa="lastSuccessfulUpdate">Never</span></div>
+            <div><strong>API response time</strong><span data-sa="apiResponseTime">-</span></div>
+            <div><strong>Consecutive read failures</strong><span data-sa="consecutiveFailures">0</span></div>
+          </div>
+          <ul class="muted diagnostic-warnings" data-sa="diagnosticWarnings">
+            <li>No diagnostics yet.</li>
+          </ul>
+        </section>
       </section>
     </section>
   </main>
 
   <footer class="pt-footer">
     <small class="muted">
-      Sensor Array prototype mode is not collecting live cloud data yet.
+      Sensor Array data is saved locally first. Live Wi-Fi, BLE, and Mock Demo modes are managed from Setup.
     </small>
   </footer>
 
@@ -339,6 +422,6 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script type="module" src="./sensors.js?v=12"></script>
+  <script type="module" src="./sensors.js?v=13"></script>
 </body>
 </html>

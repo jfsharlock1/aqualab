@@ -98,7 +98,29 @@ const els = {
   weatherCondition: document.querySelector('[data-sa="weatherCondition"]'),
   refreshWeather: document.querySelector('[data-sa="refreshWeather"]'),
   includeWeather: document.querySelector('[data-sa="includeWeather"]'),
-  weatherStatus: document.querySelector('[data-sa="weatherStatus"]')
+  weatherStatus: document.querySelector('[data-sa="weatherStatus"]'),
+  sensorTabs: Array.from(document.querySelectorAll('[data-sensor-tab]')),
+  sensorSections: Array.from(document.querySelectorAll('[data-sensor-section]')),
+  overviewConnection: document.querySelector('[data-sa="overviewConnection"]'),
+  overviewEmpty: document.querySelector('[data-sa="overviewEmpty"]'),
+  overviewTemp: document.querySelector('[data-sa="overviewTemp"]'),
+  overviewTurbidity: document.querySelector('[data-sa="overviewTurbidity"]'),
+  overviewRaw: document.querySelector('[data-sa="overviewRaw"]'),
+  overviewSession: document.querySelector('[data-sa="overviewSession"]'),
+  overviewLocation: document.querySelector('[data-sa="overviewLocation"]'),
+  overviewLastUpdate: document.querySelector('[data-sa="overviewLastUpdate"]'),
+  overviewSensorBadge: document.querySelector('[data-sa="overviewSensorBadge"]'),
+  overviewGpsBadge: document.querySelector('[data-sa="overviewGpsBadge"]'),
+  overviewInternetBadge: document.querySelector('[data-sa="overviewInternetBadge"]'),
+  overviewWeatherBadge: document.querySelector('[data-sa="overviewWeatherBadge"]'),
+  overviewRefreshReading: document.querySelector('[data-sa="overviewRefreshReading"]'),
+  overviewSaveReading: document.querySelector('[data-sa="overviewSaveReading"]'),
+  overviewStartSession: document.querySelector('[data-sa="overviewStartSession"]'),
+  locationSourceDetail: document.querySelector('[data-sa="locationSourceDetail"]'),
+  locationCoordsDetail: document.querySelector('[data-sa="locationCoordsDetail"]'),
+  locationAccuracyDetail: document.querySelector('[data-sa="locationAccuracyDetail"]'),
+  historySessionFilter: document.querySelector('[data-sa="historySessionFilter"]'),
+  historyChartWrap: document.querySelector('[data-sa="historyChartWrap"]')
 };
 
 const sensorService = createSensorService();
@@ -256,6 +278,7 @@ function renderWeather(weather, statusMessage = "") {
     els.weatherStatus.classList.toggle("location-ok", Boolean(weather));
   }
   renderDiagnostics();
+  renderOverview();
 }
 
 function loadInitialWeather() {
@@ -302,6 +325,66 @@ function getActiveSession() {
   return getSavedSessions().find(session => session && session.endedAt == null) || null;
 }
 
+function setSensorSection(section = "overview") {
+  const next = ["overview", "live", "field", "map", "history", "setup"].includes(section) ? section : "overview";
+  els.sensorTabs.forEach(tab => {
+    const isActive = tab.dataset.sensorTab === next;
+    tab.classList.toggle("active", isActive);
+    tab.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  els.sensorSections.forEach(panel => {
+    panel.hidden = panel.dataset.sensorSection !== next;
+  });
+  if (next === "map") window.setTimeout(() => sensorMap?.invalidateSize(), 80);
+  if (next === "history") renderHistoryCharts();
+}
+
+function getSessionReadingCount(sessionId) {
+  if (!sessionId) return 0;
+  return getSavedSensorReadings().filter(reading => reading?.sessionId === sessionId).length;
+}
+
+function renderOverview() {
+  const method = currentMethod();
+  const methodLabel = method === "wifi" ? "Wi-Fi" : method === "ble" ? "Bluetooth LE" : "Mock Demo";
+  const hasMockReading = method === "mock" && latestReading;
+
+  if (els.overviewConnection) {
+    els.overviewConnection.textContent = hasMockReading ? "Mock Demo" : sensorConnected ? `${methodLabel} online` : `${methodLabel} ready`;
+    els.overviewConnection.classList.toggle("ok", !hasMockReading && sensorConnected);
+    els.overviewConnection.classList.toggle("warn", hasMockReading || !sensorConnected);
+    els.overviewConnection.classList.toggle("bad", false);
+  }
+  if (els.overviewEmpty) {
+    els.overviewEmpty.textContent = latestReading
+      ? `Latest reading source: ${latestReading.sensorSource || methodLabel}.`
+      : "No live sensor reading yet. Refresh a reading or use Mock Demo to try the workflow.";
+  }
+  if (els.overviewTemp) els.overviewTemp.textContent = formatNumber(latestReading?.temperatureF, " F", 1);
+  if (els.overviewTurbidity) els.overviewTurbidity.textContent = formatNumber(latestReading?.turbidityNtu, " estimated", 2);
+  if (els.overviewRaw) els.overviewRaw.textContent = `Raw ${formatInteger(latestReading?.turbidityRaw)}`;
+  if (els.overviewSession) {
+    els.overviewSession.textContent = activeSession
+      ? `${activeSession.name || "Untitled Session"} (${getSessionReadingCount(activeSession.id)} readings)`
+      : "No active session";
+  }
+  if (els.overviewLocation) {
+    els.overviewLocation.textContent = currentLocation.gps
+      ? currentLocation.locationName || "Device GPS"
+      : currentLocation.locationName || "Manual location";
+  }
+  if (els.overviewLastUpdate) {
+    els.overviewLastUpdate.textContent = lastSuccessfulUpdate ? new Date(lastSuccessfulUpdate).toLocaleString() : "Never";
+  }
+
+  const internetOnline = navigator.onLine !== false;
+  const gpsReady = Boolean(currentLocation.gps);
+  setBadge(els.overviewSensorBadge, `Sensor: ${hasMockReading ? "mock" : sensorConnected ? "online" : "offline"}`, hasMockReading ? "warn" : sensorConnected ? "ok" : "bad");
+  setBadge(els.overviewGpsBadge, `GPS: ${gpsReady ? "ready" : "manual"}`, gpsReady ? "ok" : "warn");
+  setBadge(els.overviewInternetBadge, `Internet: ${internetOnline ? "online" : "offline"}`, internetOnline ? "ok" : "bad");
+  setBadge(els.overviewWeatherBadge, `Weather: ${weatherMode === "unavailable" ? "unavailable" : weatherMode}`, weatherMode === "unavailable" ? "bad" : weatherMode === "cached" || weatherMode === "mock" ? "warn" : "ok");
+}
+
 function renderActiveSession() {
   if (els.startSession) els.startSession.disabled = Boolean(activeSession);
   if (els.endSession) els.endSession.disabled = !activeSession;
@@ -313,6 +396,7 @@ function renderActiveSession() {
       <span class="tag warn">No active session</span>
       <p class="muted hint">Readings can still be saved without a session.</p>
     `;
+    renderOverview();
     return;
   }
 
@@ -320,8 +404,10 @@ function renderActiveSession() {
   els.activeSessionIndicator.innerHTML = `
     <span class="tag ok">Active session</span>
     <strong>${escapeHtml(activeSession.name || "Untitled Session")}</strong>
-    <p class="muted hint">Started ${escapeHtml(started)}</p>
+    <p class="muted hint">Started ${escapeHtml(started)} · ${getSessionReadingCount(activeSession.id)} saved readings</p>
+    <p class="muted hint">${escapeHtml(activeSession.locationName || "Manual location")}</p>
   `;
+  renderOverview();
 }
 
 function startSession() {
@@ -374,16 +460,29 @@ function updateLocationStatus(message, state = "warn") {
 }
 
 function renderLocationStatus() {
+  if (els.locationSourceDetail) els.locationSourceDetail.textContent = currentLocation.gps ? "Device GPS" : "Manual";
+  if (els.locationCoordsDetail) {
+    els.locationCoordsDetail.textContent = currentLocation.gps
+      ? `${currentLocation.gps.latitude.toFixed(5)}, ${currentLocation.gps.longitude.toFixed(5)}`
+      : "Unavailable";
+  }
+  if (els.locationAccuracyDetail) {
+    els.locationAccuracyDetail.textContent = currentLocation.gps?.accuracyMeters != null
+      ? `${Math.round(currentLocation.gps.accuracyMeters)} m`
+      : "-";
+  }
   if (currentLocation.gps) {
     const { latitude, longitude, accuracyMeters } = currentLocation.gps;
     updateLocationStatus(
       `Using this device GPS: ${latitude.toFixed(5)}, ${longitude.toFixed(5)} (${Math.round(accuracyMeters || 0)} m accuracy).`,
       "ok"
     );
+    renderOverview();
     return;
   }
 
   updateLocationStatus("Manual location is available. GPS is optional.", "warn");
+  renderOverview();
 }
 
 function syncLocationName() {
@@ -403,7 +502,10 @@ function getLocationForSave() {
 function setStatus(message, state = "warn") {
   if (els.connectionStatus) els.connectionStatus.textContent = message || "";
   if (els.connectionTag) {
-    els.connectionTag.textContent = state === "ok" ? "Connected" : state === "bad" ? "Needs attention" : "Ready";
+    const method = currentMethod();
+    els.connectionTag.textContent = state === "ok"
+      ? method === "mock" ? "Mock Demo" : method === "ble" ? "BLE connected" : "Connected"
+      : state === "bad" ? "Needs attention" : method === "mock" ? "Mock Demo" : "Ready";
     els.connectionTag.classList.toggle("ok", state === "ok");
     els.connectionTag.classList.toggle("bad", state === "bad");
     els.connectionTag.classList.toggle("warn", state !== "ok" && state !== "bad");
@@ -413,10 +515,12 @@ function setStatus(message, state = "warn") {
 function setBusy(isBusy) {
   if (els.testConnection) els.testConnection.disabled = isBusy;
   if (els.refreshReading) els.refreshReading.disabled = isBusy;
+  if (els.overviewRefreshReading) els.overviewRefreshReading.disabled = isBusy;
 }
 
 function setSaveEnabled(isEnabled) {
   if (els.saveReading) els.saveReading.disabled = !isEnabled;
+  if (els.overviewSaveReading) els.overviewSaveReading.disabled = !isEnabled;
 }
 
 function setBleStatus(message, state = "warn") {
@@ -527,6 +631,7 @@ function renderReading(reading) {
   latestClassification = classifyWaterCondition(reading, turbidityCalibration);
   renderClassification(latestClassification);
   setSaveEnabled(true);
+  renderOverview();
 }
 
 function getReadingWarnings(reading) {
@@ -614,6 +719,7 @@ function renderDiagnostics() {
   }
 
   latestConnectivity = currentConnectivity();
+  renderOverview();
 }
 
 function escapeHtml(value) {
@@ -655,6 +761,7 @@ function updateSavedCount() {
       ? `${count} sensor reading${count === 1 ? "" : "s"} saved on this device.`
       : "No sensor readings saved yet.";
   }
+  renderOverview();
 }
 
 function getHistoryCutoff(range) {
@@ -668,12 +775,17 @@ function getHistoryCutoff(range) {
 function getSavedSensorChartRows() {
   const list = getSavedSensorReadings();
   const cutoff = getHistoryCutoff(els.historyRange?.value || "24h");
+  const sessionFilter = els.historySessionFilter?.value || "all";
 
   return list
     .map(reading => {
       const createdAtMs = new Date(reading?.createdAt || reading?.sensorData?.sensorTimestamp || "").getTime();
       if (!Number.isFinite(createdAtMs)) return null;
       if (cutoff && createdAtMs < cutoff) return null;
+      if (sessionFilter !== "all") {
+        if (sessionFilter === "none" && reading?.sessionId) return null;
+        if (sessionFilter !== "none" && reading?.sessionId !== sessionFilter) return null;
+      }
 
       const temperatureF = Number(reading?.sensorData?.temperatureF);
       const turbidityRaw = Number(reading?.sensorData?.turbidityRaw);
@@ -696,7 +808,31 @@ function getSavedSensorChartRows() {
     .sort((a, b) => a.t - b.t);
 }
 
+function populateHistorySessionFilter() {
+  if (!els.historySessionFilter) return;
+  const current = els.historySessionFilter.value || "all";
+  const readings = getSavedSensorReadings();
+  const sessions = getSavedSessions();
+  const sessionIds = Array.from(new Set(readings.map(reading => reading?.sessionId).filter(Boolean)));
+  els.historySessionFilter.innerHTML = [
+    `<option value="all">All sessions</option>`,
+    `<option value="none">No session</option>`,
+    ...sessionIds.map(sessionId => {
+      const session = sessions.find(item => item?.id === sessionId);
+      return `<option value="${escapeHtml(sessionId)}">${escapeHtml(session?.name || "Unknown session")}</option>`;
+    })
+  ].join("");
+  els.historySessionFilter.value = [...sessionIds, "all", "none"].includes(current) ? current : "all";
+}
+
+function destroyHistoryChart(key) {
+  if (!historyCharts[key]) return;
+  historyCharts[key].destroy();
+  historyCharts[key] = null;
+}
+
 function renderHistoryCharts() {
+  populateHistorySessionFilter();
   if (typeof Chart === "undefined") {
     if (els.historyStatus) els.historyStatus.textContent = "Chart.js is unavailable. Saved readings are still stored.";
     return;
@@ -705,6 +841,7 @@ function renderHistoryCharts() {
   const rows = getSavedSensorChartRows();
   const tempRows = rows.filter(row => row.temperatureF != null);
   const turbidityRows = rows.filter(row => row.turbidityRaw != null || row.turbidityNtu != null);
+  if (els.historyChartWrap) els.historyChartWrap.classList.toggle("is-empty", !rows.length);
 
   if (els.historyStatus) {
     if (!rows.length) {
@@ -712,6 +849,12 @@ function renderHistoryCharts() {
     } else {
       els.historyStatus.textContent = `${rows.length} saved reading${rows.length === 1 ? "" : "s"} in this range.`;
     }
+  }
+
+  if (!rows.length) {
+    destroyHistoryChart("temperature");
+    destroyHistoryChart("turbidity");
+    return;
   }
 
   upsertHistoryChart(
@@ -1061,6 +1204,8 @@ function saveCurrentReading() {
   updateSavedCount();
   renderHistoryCharts();
   renderMapView();
+  renderActiveSession();
+  renderOverview();
   if (els.saveStatus) {
     els.saveStatus.textContent = `Saved reading at ${new Date(savedWithSync.createdAt).toLocaleString()} (${savedWithSync.syncStatus}).`;
   }
@@ -1386,6 +1531,8 @@ function init() {
   renderActiveSession();
   loadInitialWeather();
   renderMapView();
+  setSensorSection((location.hash || "").replace("#", "") || "overview");
+  renderOverview();
 
   els.connectionMethod?.addEventListener("change", () => {
     saveText(METHOD_KEY, currentMethod());
@@ -1414,15 +1561,19 @@ function init() {
 
   els.testConnection?.addEventListener("click", () => runSensorAction("test"));
   els.refreshReading?.addEventListener("click", () => runSensorAction("refresh"));
+  els.overviewRefreshReading?.addEventListener("click", () => runSensorAction("refresh"));
   els.connectBluetooth?.addEventListener("click", connectBluetoothSensor);
   els.disconnectBluetooth?.addEventListener("click", disconnectBluetoothSensor);
   els.saveReading?.addEventListener("click", saveCurrentReading);
+  els.overviewSaveReading?.addEventListener("click", saveCurrentReading);
+  els.overviewStartSession?.addEventListener("click", () => { setSensorSection("field"); startSession(); });
   els.autoRefresh?.addEventListener("change", applyAutoRefresh);
   els.locationName?.addEventListener("input", syncLocationName);
   els.useDeviceLocation?.addEventListener("click", useDeviceLocation);
   els.captureClearBaseline?.addEventListener("click", () => captureTurbidityBaseline("clear"));
   els.captureCloudyBaseline?.addEventListener("click", () => captureTurbidityBaseline("cloudy"));
   els.historyRange?.addEventListener("change", renderHistoryCharts);
+  els.historySessionFilter?.addEventListener("change", renderHistoryCharts);
   els.startSession?.addEventListener("click", startSession);
   els.endSession?.addEventListener("click", endSession);
   els.centerDeviceLocation?.addEventListener("click", centerOnDeviceLocation);
@@ -1435,6 +1586,7 @@ function init() {
   });
   window.addEventListener("online", handleNetworkChange);
   window.addEventListener("offline", handleNetworkChange);
+  els.sensorTabs.forEach(tab => tab.addEventListener("click", () => setSensorSection(tab.dataset.sensorTab)));
   window.addEventListener("pagehide", stopAutoRefresh);
 }
 
