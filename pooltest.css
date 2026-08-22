@@ -2148,3 +2148,322 @@ body {
   border: 2px dashed rgba(14,165,233,0.95);
   background: rgba(14,165,233,0.08);
 }
+
+/* Purpose-built AquaLab surfaces */
+.chemistry-list {
+  border: 1px solid rgba(125,154,176,0.26);
+  border-radius: 10px;
+  background: rgba(3,10,17,0.48);
+  overflow: hidden;
+}
+
+.chemistry-list .row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 68px;
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid rgba(125,154,176,0.18);
+  border-radius: 0;
+  background: transparent;
+}
+
+.chemistry-list .row:first-child {
+  border-top: 0;
+}
+
+.chemistry-list h3 {
+  margin: 0;
+  color: #dbeafe;
+  font-size: 0.94rem;
+  font-weight: 750;
+}
+
+.chemistry-result {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  min-width: 118px;
+  text-align: right;
+}
+
+.chemistry-result strong {
+  color: var(--fg);
+  font-size: 1.08rem;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+.chemistry-result .tag {
+  max-width: 190px;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  text-align: right;
+  white-space: normal;
+}
+
+.chemistry-list .bar {
+  height: 2px;
+  margin: -4px 0 0;
+  background: rgba(30,41,59,0.5);
+}
+
+.chemistry-list .bar span {
+  background: linear-gradient(90deg, rgba(14,165,233,0.65), rgba(34,197,94,0.8));
+}
+
+.live-instrument {
+  border-color: rgba(45,212,191,0.36);
+  background:
+    linear-gradient(180deg, rgba(3,10,17,0.96), rgba(8,15,24,0.9)),
+    radial-gradient(circle at 18% 10%, rgba(45,212,191,0.16), transparent 34%);
+}
+
+.live-instrument-readings {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 18px 24px;
+  margin: 14px 0;
+}
+
+.live-instrument .sensor-reading,
+.weather-summary-panel .sensor-reading {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.live-primary-reading {
+  grid-row: span 2;
+  align-self: stretch;
+  padding-right: 18px;
+  border-right: 1px solid rgba(125,154,176,0.24) !important;
+}
+
+.live-primary-reading .live-reading-value {
+  margin: 0 0 8px;
+  color: #f8fafc;
+  font-size: clamp(2.8rem, 12vw, 5.4rem);
+  line-height: 0.9;
+  letter-spacing: 0;
+}
+
+.live-secondary-reading .live-reading-value {
+  margin: 0 0 6px;
+  color: #e0f2fe;
+  font-size: clamp(1.9rem, 7vw, 3.1rem);
+  line-height: 0.95;
+}
+
+.live-reading-label,
+.live-instrument .sensor-reading small {
+  color: #67e8f9;
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live-instrument .sensor-reading span {
+  margin-top: 4px;
+  color: var(--fg-muted);
+}
+
+.live-technical-meta {
+  display: grid;
+  align-content: end;
+  gap: 4px;
+  padding-top: 16px !important;
+  border-top: 1px solid rgba(125,154,176,0.18) !important;
+}
+
+.live-technical-meta strong {
+  color: #cbd5e1;
+  font-size: 1.25rem;
+}
+
+.sensor-classification {
+  border-width: 1px 0 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 0 0;
+}
+
+.diagnostics-panel {
+  background: linear-gradient(180deg, rgba(5,12,20,0.96), rgba(2,6,23,0.94));
+}
+
+.diagnostics-panel .status-badge-grid {
+  gap: 6px;
+}
+
+.diagnostic-list {
+  border-top: 1px solid rgba(125,154,176,0.2);
+}
+
+.diagnostic-list div {
+  padding: 9px 0;
+  border-bottom-color: rgba(125,154,176,0.18);
+}
+
+.diagnostic-list strong {
+  color: #bae6fd;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.diagnostic-list span {
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.diagnostic-warnings {
+  border-left: 2px solid rgba(249,115,22,0.55);
+  padding-left: 14px;
+}
+
+.settings-panel .field,
+.location-panel .field,
+.session-workflow-panel .field {
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(125,154,176,0.14);
+}
+
+.weather-summary-panel {
+  background: linear-gradient(180deg, rgba(8,20,28,0.92), rgba(5,12,20,0.96));
+}
+
+.weather-summary {
+  grid-template-columns: 1.15fr 1fr 1fr;
+  align-items: end;
+  gap: 12px 18px;
+  padding: 10px 0 12px;
+  border-top: 1px solid rgba(125,154,176,0.18);
+  border-bottom: 1px solid rgba(125,154,176,0.18);
+}
+
+.weather-primary strong {
+  color: #f8fafc;
+  font-size: 2rem;
+}
+
+.weather-meta strong {
+  color: #dbeafe;
+  font-size: 1.15rem;
+}
+
+.session-indicator {
+  border-radius: 8px;
+  background: rgba(2,6,23,0.32);
+}
+
+.guidance-section {
+  border-radius: 10px;
+}
+
+.treatment-section {
+  background: rgba(3,10,17,0.5);
+}
+
+.treatment-card-list {
+  gap: 0;
+  border: 1px solid rgba(125,154,176,0.22);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.treatment-card {
+  border-width: 0 0 1px;
+  border-radius: 0;
+  background: rgba(15,23,42,0.34);
+}
+
+.treatment-card:last-child {
+  border-bottom: 0;
+}
+
+.treatment-card.high {
+  background: linear-gradient(90deg, rgba(239,68,68,0.13), rgba(15,23,42,0.3));
+}
+
+.treatment-card.low {
+  background: rgba(15,23,42,0.22);
+}
+
+.treatment-card-head strong {
+  font-size: 1rem;
+}
+
+.treatment-card dl {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.treatment-card dt {
+  color: #67e8f9;
+  font-size: 0.68rem;
+}
+
+.reliability-list,
+.scan-reliability-action,
+.weather-context-card,
+.pool-context-grid label {
+  border-radius: 10px;
+}
+
+.calibration-workspace .card,
+.calibration-workspace .workflow-card {
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(12,23,34,0.96), rgba(7,14,22,0.98));
+}
+
+@media (min-width: 900px) {
+  .chemistry-list {
+    padding: 2px 14px 6px;
+  }
+}
+
+@media (max-width: 700px) {
+  .chemistry-list .row {
+    grid-template-columns: minmax(0, 1fr) minmax(112px, auto);
+    gap: 10px;
+    min-height: 64px;
+    padding: 11px 0;
+  }
+
+  .chemistry-result {
+    min-width: 104px;
+  }
+
+  .chemistry-result strong {
+    font-size: 1rem;
+  }
+
+  .live-instrument-readings,
+  .weather-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .live-primary-reading {
+    grid-row: auto;
+    padding-right: 0;
+    padding-bottom: 16px !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid rgba(125,154,176,0.24) !important;
+  }
+
+  .live-primary-reading .live-reading-value {
+    font-size: clamp(3.1rem, 17vw, 4.6rem);
+  }
+
+  .treatment-card dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

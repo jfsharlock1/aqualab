@@ -506,6 +506,14 @@ export function initPoolTestScanner(root) {
     barAlk: root.querySelector('[data-pt="barAlk"]'),
     barCya: root.querySelector('[data-pt="barCya"]'),
 
+    valuePh: root.querySelector('[data-pt="valuePh"]'),
+    valueFCl: root.querySelector('[data-pt="valueFCl"]'),
+    valueTCl: root.querySelector('[data-pt="valueTCl"]'),
+    valueBr: root.querySelector('[data-pt="valueBr"]'),
+    valueHard: root.querySelector('[data-pt="valueHard"]'),
+    valueAlk: root.querySelector('[data-pt="valueAlk"]'),
+    valueCya: root.querySelector('[data-pt="valueCya"]'),
+
     tagPh: root.querySelector('[data-pt="tagPh"]'),
     tagFCl: root.querySelector('[data-pt="tagFCl"]'),
     tagTCl: root.querySelector('[data-pt="tagTCl"]'),
@@ -2981,6 +2989,11 @@ export function initPoolTestScanner(root) {
     el.textContent = text;
   }
 
+  function setReadingValue(el, text) {
+    if (!el) return;
+    el.textContent = text || "-";
+  }
+
   function getResultRange(vals, key) {
     const legacyRange = ({
       ph: vals?.__phRange,
@@ -3181,52 +3194,59 @@ export function initPoolTestScanner(root) {
     const phText = resultRangeText(vals, "ph", vals.ph);
     const phPrimaryText = dashboardValueText(vals, "ph", vals.ph);
     const phState = rangeState(vals, "ph", vals.ph, 7.2, 7.8);
-    if (getResultRange(vals, "ph")) tag(els.tagPh, phState === "good" ? "ok" : "warn", `Approximate (${phPrimaryText}; range ${phText})`);
-    else if (vals.ph < 7.2) tag(els.tagPh, "warn", `Low (${phText})`);
-    else if (vals.ph > 7.8) tag(els.tagPh, "warn", `High (${phText})`);
-    else tag(els.tagPh, "ok", `Good (${phText})`);
+    setReadingValue(els.valuePh, getResultRange(vals, "ph") ? phPrimaryText : phText);
+    if (getResultRange(vals, "ph")) tag(els.tagPh, phState === "good" ? "ok" : "warn", `Approximate range ${phText}`);
+    else if (vals.ph < 7.2) tag(els.tagPh, "warn", "Low");
+    else if (vals.ph > 7.8) tag(els.tagPh, "warn", "High");
+    else tag(els.tagPh, "ok", "Good");
 
     const freeClText = resultRangeText(vals, "freeCl", vals.freeCl, "ppm");
     const freeClPrimaryText = dashboardValueText(vals, "freeCl", vals.freeCl, "ppm");
     const freeClState = rangeState(vals, "freeCl", vals.freeCl, 1, 3);
-    if (getResultRange(vals, "freeCl")) tag(els.tagFCl, freeClState === "good" ? "ok" : "warn", `Approximate (${freeClPrimaryText}; range ${freeClText})`);
-    else if (vals.freeCl < 1) tag(els.tagFCl, "warn", `Low (${freeClText})`);
-    else if (vals.freeCl > 3) tag(els.tagFCl, "warn", `High (${freeClText})`);
-    else tag(els.tagFCl, "ok", `Good (${freeClText})`);
+    setReadingValue(els.valueFCl, getResultRange(vals, "freeCl") ? freeClPrimaryText : freeClText);
+    if (getResultRange(vals, "freeCl")) tag(els.tagFCl, freeClState === "good" ? "ok" : "warn", `Approximate range ${freeClText}`);
+    else if (vals.freeCl < 1) tag(els.tagFCl, "warn", "Low");
+    else if (vals.freeCl > 3) tag(els.tagFCl, "warn", "High");
+    else tag(els.tagFCl, "ok", "Good");
 
     if (supported("totalCl") && vals.totalCl != null) {
       const totalClText = resultRangeText(vals, "totalCl", vals.totalCl, "ppm");
       const totalClPrimaryText = dashboardValueText(vals, "totalCl", vals.totalCl, "ppm");
-      tag(els.tagTCl, getResultRange(vals, "totalCl") ? "warn" : "ok", getResultRange(vals, "totalCl") ? `Approximate (${totalClPrimaryText}; range ${totalClText})` : totalClText);
+      setReadingValue(els.valueTCl, getResultRange(vals, "totalCl") ? totalClPrimaryText : totalClText);
+      tag(els.tagTCl, getResultRange(vals, "totalCl") ? "warn" : "ok", getResultRange(vals, "totalCl") ? `Approximate range ${totalClText}` : "Good");
     }
 
     const bromineText = resultRangeText(vals, "bromine", vals.bromine, "ppm");
     const bromineState = rangeState(vals, "bromine", vals.bromine, 2, 6);
-    if (getResultRange(vals, "bromine")) tag(els.tagBr, bromineState === "good" ? "ok" : "warn", `Approximate range (${bromineText})`);
-    else if (vals.bromine < 2) tag(els.tagBr, "warn", `Low (${bromineText})`);
-    else if (vals.bromine > 6) tag(els.tagBr, "warn", `High (${bromineText})`);
-    else tag(els.tagBr, "ok", `Good (${bromineText})`);
+    setReadingValue(els.valueBr, getResultRange(vals, "bromine") ? dashboardValueText(vals, "bromine", vals.bromine, "ppm") : bromineText);
+    if (getResultRange(vals, "bromine")) tag(els.tagBr, bromineState === "good" ? "ok" : "warn", `Approximate range ${bromineText}`);
+    else if (vals.bromine < 2) tag(els.tagBr, "warn", "Low");
+    else if (vals.bromine > 6) tag(els.tagBr, "warn", "High");
+    else tag(els.tagBr, "ok", "Good");
 
     const hardnessText = resultRangeText(vals, "hardness", vals.hardness, "ppm");
     const hardnessState = rangeState(vals, "hardness", vals.hardness, 150, 300);
-    if (getResultRange(vals, "hardness")) tag(els.tagHard, hardnessState === "good" ? "ok" : "warn", `Approximate range (${hardnessText})`);
-    else if (vals.hardness < 150) tag(els.tagHard, "warn", `Low (${hardnessText})`);
-    else if (vals.hardness > 300) tag(els.tagHard, "warn", `High (${hardnessText})`);
-    else tag(els.tagHard, "ok", `Good (${hardnessText})`);
+    setReadingValue(els.valueHard, getResultRange(vals, "hardness") ? dashboardValueText(vals, "hardness", vals.hardness, "ppm") : hardnessText);
+    if (getResultRange(vals, "hardness")) tag(els.tagHard, hardnessState === "good" ? "ok" : "warn", `Approximate range ${hardnessText}`);
+    else if (vals.hardness < 150) tag(els.tagHard, "warn", "Low");
+    else if (vals.hardness > 300) tag(els.tagHard, "warn", "High");
+    else tag(els.tagHard, "ok", "Good");
 
     const alkText = resultRangeText(vals, "alk", vals.alk, "ppm");
     const alkState = rangeState(vals, "alk", vals.alk, 80, 120);
-    if (getResultRange(vals, "alk")) tag(els.tagAlk, alkState === "good" ? "ok" : "warn", `Approximate range (${alkText})`);
-    else if (vals.alk < 80) tag(els.tagAlk, "warn", `Low (${alkText})`);
-    else if (vals.alk > 120) tag(els.tagAlk, "warn", `High (${alkText})`);
-    else tag(els.tagAlk, "ok", `Good (${alkText})`);
+    setReadingValue(els.valueAlk, getResultRange(vals, "alk") ? dashboardValueText(vals, "alk", vals.alk, "ppm") : alkText);
+    if (getResultRange(vals, "alk")) tag(els.tagAlk, alkState === "good" ? "ok" : "warn", `Approximate range ${alkText}`);
+    else if (vals.alk < 80) tag(els.tagAlk, "warn", "Low");
+    else if (vals.alk > 120) tag(els.tagAlk, "warn", "High");
+    else tag(els.tagAlk, "ok", "Good");
 
     const cyaText = resultRangeText(vals, "cya", vals.cya, "ppm");
     const cyaState = rangeState(vals, "cya", vals.cya, 30, 100);
-    if (getResultRange(vals, "cya")) tag(els.tagCya, cyaState === "good" ? "ok" : "warn", `Approximate range (${cyaText})`);
-    else if (vals.cya < 30) tag(els.tagCya, "warn", `Low (${cyaText})`);
-    else if (vals.cya > 100) tag(els.tagCya, "warn", `High (${cyaText})`);
-    else tag(els.tagCya, "ok", `Good (${cyaText})`);
+    setReadingValue(els.valueCya, getResultRange(vals, "cya") ? dashboardValueText(vals, "cya", vals.cya, "ppm") : cyaText);
+    if (getResultRange(vals, "cya")) tag(els.tagCya, cyaState === "good" ? "ok" : "warn", `Approximate range ${cyaText}`);
+    else if (vals.cya < 30) tag(els.tagCya, "warn", "Low");
+    else if (vals.cya > 100) tag(els.tagCya, "warn", "High");
+    else tag(els.tagCya, "ok", "Good");
   }
 
   function renderScanDiagnostics(vals) {

@@ -12,7 +12,7 @@
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="pooltest.css?v=15" />
+  <link rel="stylesheet" href="pooltest.css?v=16" />
 </head>
 
 <body>
@@ -67,21 +67,21 @@
     </section>
 
     <section class="sensor-grid" data-sa="sensorContent" hidden>
-      <section class="card sensor-card sensor-card-primary">
+      <section class="card sensor-card sensor-card-primary live-instrument">
         <span class="section-eyebrow">Live</span>
         <h2>Live Readings</h2>
-        <div class="sensor-reading-grid">
-          <div class="sensor-reading">
-            <small>Water Temperature</small>
-            <strong data-sa="temperatureF">-</strong>
+        <div class="sensor-reading-grid live-instrument-readings">
+          <div class="sensor-reading live-primary-reading">
+            <strong class="live-reading-value" data-sa="temperatureF">-</strong>
+            <small class="live-reading-label">Water Temperature</small>
             <span class="muted" data-sa="temperatureC">-</span>
           </div>
-          <div class="sensor-reading">
-            <small>Estimated Turbidity</small>
-            <strong data-sa="turbidityNtu">-</strong>
+          <div class="sensor-reading live-secondary-reading">
+            <strong class="live-reading-value" data-sa="turbidityNtu">-</strong>
+            <small class="live-reading-label">Estimated Turbidity</small>
             <span class="muted" data-sa="turbidityVoltage">-</span>
           </div>
-          <div class="sensor-reading">
+          <div class="sensor-reading live-technical-meta">
             <small>Turbidity Raw</small>
             <strong data-sa="turbidityRaw">-</strong>
             <span class="muted" data-sa="sensorSource">No source</span>
@@ -108,7 +108,7 @@
         <p class="muted hint" data-sa="saveStatus">No sensor readings saved yet.</p>
       </section>
 
-      <section class="card sensor-card">
+      <section class="card sensor-card settings-panel">
         <span class="section-eyebrow">Setup</span>
         <h2>Connection</h2>
         <div class="field">
@@ -154,7 +154,7 @@
         <p class="muted hint" data-sa="connectionStatus">Wi-Fi is selected. Enter the ESP32 JSON endpoint.</p>
       </section>
 
-      <section class="card sensor-card">
+      <section class="card sensor-card settings-panel location-panel">
         <span class="section-eyebrow">Context</span>
         <h2>Location</h2>
         <div class="field">
@@ -169,25 +169,25 @@
         <p class="muted hint" data-sa="locationStatus">Manual location is available. GPS is optional.</p>
       </section>
 
-      <section class="card sensor-card">
+      <section class="card sensor-card weather-summary-panel">
         <span class="section-eyebrow">Context</span>
         <h2>Weather</h2>
         <div class="status-badge-grid">
           <span class="tag warn" data-sa="weatherSource">Mock weather mode</span>
           <span class="tag warn" data-sa="weatherUpdated">Not refreshed</span>
         </div>
-        <div class="weather-reading-grid">
-          <div class="sensor-reading">
+        <div class="weather-reading-grid weather-summary">
+          <div class="sensor-reading weather-primary">
             <small>Air Temperature</small>
             <strong data-sa="weatherTempF">-</strong>
             <span class="muted" data-sa="weatherTempC">-</span>
           </div>
-          <div class="sensor-reading">
+          <div class="sensor-reading weather-meta">
             <small>Humidity</small>
             <strong data-sa="weatherHumidity">-</strong>
             <span class="muted" data-sa="weatherPressure">-</span>
           </div>
-          <div class="sensor-reading">
+          <div class="sensor-reading weather-meta">
             <small>Wind</small>
             <strong data-sa="weatherWind">-</strong>
             <span class="muted" data-sa="weatherCondition">-</span>
@@ -203,7 +203,7 @@
         <p class="muted hint" data-sa="weatherStatus">No weather API is configured, so mock weather will be used when refreshed.</p>
       </section>
 
-      <section class="card sensor-card">
+      <section class="card sensor-card calibration-panel">
         <span class="section-eyebrow">Quality</span>
         <h2>Calibration</h2>
         <p class="muted hint">Use raw prototype readings to tune estimated clarity. These are not lab-grade NTU values.</p>
@@ -224,7 +224,7 @@
         <p class="muted hint" data-sa="calibrationStatus">Using prototype defaults: clear water around 2170-2190 raw, cloudy/milk water around 1890-2000 raw.</p>
       </section>
 
-      <section class="card sensor-card">
+      <section class="card sensor-card diagnostics-panel">
         <span class="section-eyebrow">System</span>
         <h2>Diagnostics</h2>
         <div class="status-badge-grid">
@@ -244,7 +244,7 @@
         </ul>
       </section>
 
-      <section class="card sensor-card">
+      <section class="card sensor-card session-workflow-panel">
         <span class="section-eyebrow">Field Work</span>
         <h2>Sessions</h2>
         <div class="field">
@@ -328,7 +328,7 @@
 
   <footer class="pt-footer">
     <small class="muted">
-      Student science project — Sensor Array mode is not collecting data yet.
+      Sensor Array prototype mode is not collecting live cloud data yet.
     </small>
   </footer>
 
