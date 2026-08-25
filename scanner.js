@@ -14,7 +14,79 @@
 // - Low-confidence scan gate (requires all pads for the selected strip profile)
 
 import { runStripSanityCheck } from "./sanityCheckEngine.js";
-import { classifyRecentRain, fetchOpenMeteoWeather, isWeatherFresh, summarizeWeather, weatherFreshnessLabel } from "./weatherService.js";
+const WEATHER_UNAVAILABLE_SUMMARY = "Weather unavailable. Confirm recent conditions manually.";
+const WEATHER_FRESH_MS = 30 * 60 * 1000;
+
+function fallbackClassifyRecentRain(recentRainInches) {
+  const rain = Number(recentRainInches) || 0;
+  if (rain >= 1.25) return "heavy";
+  if (rain >= 0.45) return "moderate";
+  if (rain >= 0.05) return "light";
+  return "none";
+}
+
+function fallbackIsWeatherFresh(weather, maxAgeMs = WEATHER_FRESH_MS) {
+  if (!weather?.weatherTimestamp) return false;
+  const time = new Date(weather.weatherTimestamp).getTime();
+  return Number.isFinite(time) && Date.now() - time <= maxAgeMs;
+}
+
+function fallbackWeatherFreshnessLabel(weather) {
+  if (!weather) return "unavailable";
+  return fallbackIsWeatherFresh(weather) ? "live" : "cached";
+}
+
+function fallbackSummarizeWeather(weather) {
+  if (!weather) return WEATHER_UNAVAILABLE_SUMMARY;
+  const parts = [];
+  if (Number.isFinite(Number(weather.airTemperatureF))) parts.push(`${Number(weather.airTemperatureF).toFixed(0)} F`);
+  if (Number.isFinite(Number(weather.uvIndex))) parts.push(`UV ${Number(weather.uvIndex).toFixed(0)}`);
+  if (Number.isFinite(Number(weather.recentRainInches))) parts.push(`${Number(weather.recentRainInches).toFixed(2)} in rain last 24 hr`);
+  if (Number.isFinite(Number(weather.windSpeedMph))) {
+    parts.push(`${weather.windDirection || "Wind"} wind ${Number(weather.windSpeedMph).toFixed(0)} mph`);
+  }
+  if (weather.forecastStorms) parts.push("storms possible later");
+  return parts.length ? parts.join(" - ") : WEATHER_UNAVAILABLE_SUMMARY;
+}
+
+const WEATHER_SERVICE_FALLBACK = {
+  classifyRecentRain: fallbackClassifyRecentRain,
+  fetchOpenMeteoWeather: async () => { throw new Error("Weather service unavailable."); },
+  isWeatherFresh: fallbackIsWeatherFresh,
+  summarizeWeather: fallbackSummarizeWeather,
+  weatherFreshnessLabel: fallbackWeatherFreshnessLabel
+};
+
+let weatherServiceLoadPromise = null;
+let weatherServiceModule = null;
+
+function getWeatherServiceSync() {
+  return weatherServiceModule || WEATHER_SERVICE_FALLBACK;
+}
+
+async function getWeatherService() {
+  if (weatherServiceModule) return weatherServiceModule;
+  if (!weatherServiceLoadPromise) {
+    weatherServiceLoadPromise = import("./weatherService.js")
+      .then(module => {
+        weatherServiceModule = {
+          classifyRecentRain: typeof module.classifyRecentRain === "function" ? module.classifyRecentRain : fallbackClassifyRecentRain,
+          fetchOpenMeteoWeather: typeof module.fetchOpenMeteoWeather === "function" ? module.fetchOpenMeteoWeather : WEATHER_SERVICE_FALLBACK.fetchOpenMeteoWeather,
+          isWeatherFresh: typeof module.isWeatherFresh === "function" ? module.isWeatherFresh : fallbackIsWeatherFresh,
+          summarizeWeather: typeof module.summarizeWeather === "function" ? module.summarizeWeather : fallbackSummarizeWeather,
+          weatherFreshnessLabel: typeof module.weatherFreshnessLabel === "function" ? module.weatherFreshnessLabel : fallbackWeatherFreshnessLabel
+        };
+        return weatherServiceModule;
+      })
+      .catch(error => {
+        console.warn("AquaLab weather service unavailable; continuing without live weather.", error);
+        weatherServiceLoadPromise = null;
+        return WEATHER_SERVICE_FALLBACK;
+      });
+  }
+  return weatherServiceLoadPromise;
+}
+
 
 // ================================================================
 // 1) EasyTest configuration
@@ -2734,13 +2806,13 @@ export function initPoolTestScanner(root) {
       weather,
       mode,
       available: Boolean(weather),
-      summary: weather ? summarizeWeather(weather) : "Weather unavailable. Confirm recent conditions manually."
+      summary: weather ? getWeatherServiceSync().summarizeWeather(weather) : WEATHER_UNAVAILABLE_SUMMARY
     };
   }
 
   function applyWeatherRainSuggestion(weather) {
     if (!weather || !els.recentRain) return;
-    const suggestedRain = classifyRecentRain(weather.recentRainInches);
+    const suggestedRain = getWeatherServiceSync().classifyRecentRain(weather.recentRainInches);
     const current = loadPoolContext();
     const userHasManualRain = current.recentRainSource === "manual" && current.recentRain !== "none";
     if (userHasManualRain) return;
@@ -2759,30 +2831,32 @@ export function initPoolTestScanner(root) {
       && Math.abs(Number(cached.latitude) - savedLocation.latitude) < 0.05
       && Math.abs(Number(cached.longitude) - savedLocation.longitude) < 0.05;
 
-    if (cached && isWeatherFresh(cached) && (!savedLocation || cachedMatchesSavedLocation)) {
-      return { available: true, mode: "live", weather: cached, summary: summarizeWeather(cached) };
+    const weatherService = await getWeatherService();
+
+    if (cached && weatherService.isWeatherFresh(cached) && (!savedLocation || cachedMatchesSavedLocation)) {
+      return { available: true, mode: "live", weather: cached, summary: weatherService.summarizeWeather(cached) };
     }
     if (cached && (!navigator.onLine || !savedLocation || cachedMatchesSavedLocation) && !allowDeviceLocation) {
-      return { available: true, mode: weatherFreshnessLabel(cached), weather: cached, summary: summarizeWeather(cached) };
+      return { available: true, mode: weatherService.weatherFreshnessLabel(cached), weather: cached, summary: weatherService.summarizeWeather(cached) };
     }
 
     const location = savedLocation || (allowDeviceLocation ? await getDeviceWeatherLocation() : null);
     if (!location || navigator.onLine === false) {
       return {
         available: Boolean(cached),
-        mode: cached ? weatherFreshnessLabel(cached) : "unavailable",
+        mode: cached ? weatherService.weatherFreshnessLabel(cached) : "unavailable",
         weather: cached,
-        summary: cached ? summarizeWeather(cached) : "Weather unavailable. Confirm recent conditions manually."
+        summary: cached ? weatherService.summarizeWeather(cached) : WEATHER_UNAVAILABLE_SUMMARY
       };
     }
 
-    const weather = await fetchOpenMeteoWeather({
+    const weather = await weatherService.fetchOpenMeteoWeather({
       latitude: location.latitude,
       longitude: location.longitude,
       timeoutMs: 8000
     });
     saveJson(SENSOR_WEATHER_CACHE_KEY, weather);
-    return { available: true, mode: "live", weather, summary: summarizeWeather(weather) };
+    return { available: true, mode: "live", weather, summary: weatherService.summarizeWeather(weather) };
   }
 
   function setStripWeatherStatus(mode) {
@@ -2805,13 +2879,14 @@ export function initPoolTestScanner(root) {
       setStripWeatherStatus(context.mode);
       els.weatherSummary.textContent = context.summary;
       if (els.weatherRainNote && context.weather?.recentRainInches != null) {
-        const rainLabel = poolContextLabel("recentRain", classifyRecentRain(context.weather.recentRainInches));
+        const rainLabel = poolContextLabel("recentRain", getWeatherServiceSync().classifyRecentRain(context.weather.recentRainInches));
         els.weatherRainNote.textContent = `Recent rain: ${rainLabel} - ${Number(context.weather.recentRainInches).toFixed(2)} in during the last 24 hr. You can override it below.`;
       }
     } catch {
+      const cachedWeather = getCachedWeatherContext();
       const cachedContext = normalizeStripWeatherState({
-        weather: getCachedWeatherContext(),
-        mode: getCachedWeatherContext() ? weatherFreshnessLabel(getCachedWeatherContext()) : "unavailable"
+        weather: cachedWeather,
+        mode: cachedWeather ? getWeatherServiceSync().weatherFreshnessLabel(cachedWeather) : "unavailable"
       });
       setStripWeatherStatus(cachedContext.mode);
       els.weatherSummary.textContent = cachedContext.summary;
