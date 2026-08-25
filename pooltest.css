@@ -2633,3 +2633,36 @@ body {
     padding-bottom: calc(88px + env(safe-area-inset-bottom));
   }
 }
+
+.local-weather-card {
+  gap: 8px;
+}
+
+.weather-context-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.weather-context-head > div {
+  display: grid;
+  gap: 6px;
+}
+
+.weather-context-head .btn-ghost {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+@media (max-width: 700px) {
+  .weather-context-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .weather-context-head .btn-ghost {
+    width: 100%;
+  }
+}

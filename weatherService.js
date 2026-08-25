@@ -1,5 +1,6 @@
 const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
 const DEFAULT_TIMEOUT_MS = 8000;
+const WEATHER_FRESH_MS = 30 * 60 * 1000;
 const MS_PER_HOUR = 60 * 60 * 1000;
 
 function finiteNumber(value, fallback = null) {
@@ -37,8 +38,8 @@ export function weatherCodeToLabel(code) {
 export function degreesToCardinal(degrees) {
   const value = finiteNumber(degrees);
   if (value == null) return null;
-  const directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
-  return directions[Math.round((((value % 360) + 360) % 360) / 22.5) % 16];
+  const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  return directions[Math.round((((value % 360) + 360) % 360) / 45) % 8];
 }
 
 export function classifyRecentRain(recentRainInches) {
@@ -202,6 +203,17 @@ export async function fetchOpenMeteoWeather({ latitude, longitude, timeoutMs = D
   const url = buildOpenMeteoUrl(coords.latitude, coords.longitude);
   const payload = await fetchWithTimeout(url, timeoutMs);
   return normalizeOpenMeteoWeather(payload, coords.latitude, coords.longitude);
+}
+
+export function isWeatherFresh(weather, maxAgeMs = WEATHER_FRESH_MS) {
+  if (!weather?.weatherTimestamp) return false;
+  const time = new Date(weather.weatherTimestamp).getTime();
+  return Number.isFinite(time) && Date.now() - time <= maxAgeMs;
+}
+
+export function weatherFreshnessLabel(weather, maxAgeMs = WEATHER_FRESH_MS) {
+  if (!weather) return "unavailable";
+  return isWeatherFresh(weather, maxAgeMs) ? "live" : "cached";
 }
 
 export function summarizeWeather(weather) {

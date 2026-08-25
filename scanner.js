@@ -14,7 +14,7 @@
 // - Low-confidence scan gate (requires all pads for the selected strip profile)
 
 import { runStripSanityCheck } from "./sanityCheckEngine.js";
-import { classifyRecentRain, fetchOpenMeteoWeather, summarizeWeather } from "./weatherService.js";
+import { classifyRecentRain, fetchOpenMeteoWeather, isWeatherFresh, summarizeWeather, weatherFreshnessLabel } from "./weatherService.js";
 
 // ================================================================
 // 1) EasyTest configuration
@@ -414,6 +414,9 @@ export function initPoolTestScanner(root) {
     surfaceCondition: root.querySelector('[data-pt="surfaceCondition"]'),
     weatherContext: root.querySelector('[data-pt="weatherContext"]'),
     weatherSummary: root.querySelector('[data-pt="weatherSummary"]'),
+    weatherStatus: root.querySelector('[data-pt="weatherStatus"]'),
+    weatherRainNote: root.querySelector('[data-pt="weatherRainNote"]'),
+    btnRefreshWeather: root.querySelector('[data-pt="btnRefreshWeather"]'),
     historyLog: root.querySelector('[data-pt="historyLog"]'),
     homeGreeting: root.querySelector('[data-pt="homeGreeting"]'),
     homeHeroSubtitle: root.querySelector('[data-pt="homeHeroSubtitle"]'),
@@ -2732,15 +2735,18 @@ export function initPoolTestScanner(root) {
       && Math.abs(Number(cached.latitude) - savedLocation.latitude) < 0.05
       && Math.abs(Number(cached.longitude) - savedLocation.longitude) < 0.05;
 
-    if (cached && (!navigator.onLine || !savedLocation || cachedMatchesSavedLocation)) {
-      return { available: true, mode: "cached", weather: cached, summary: summarizeWeather(cached) };
+    if (cached && isWeatherFresh(cached) && (!savedLocation || cachedMatchesSavedLocation)) {
+      return { available: true, mode: "live", weather: cached, summary: summarizeWeather(cached) };
+    }
+    if (cached && (!navigator.onLine || !savedLocation || cachedMatchesSavedLocation) && !allowDeviceLocation) {
+      return { available: true, mode: weatherFreshnessLabel(cached), weather: cached, summary: summarizeWeather(cached) };
     }
 
     const location = savedLocation || (allowDeviceLocation ? await getDeviceWeatherLocation() : null);
     if (!location || navigator.onLine === false) {
       return {
         available: Boolean(cached),
-        mode: cached ? "cached" : "unavailable",
+        mode: cached ? weatherFreshnessLabel(cached) : "unavailable",
         weather: cached,
         summary: cached ? summarizeWeather(cached) : "Weather unavailable. Confirm recent conditions manually."
       };
@@ -2755,23 +2761,40 @@ export function initPoolTestScanner(root) {
     return { available: true, mode: "live", weather, summary: summarizeWeather(weather) };
   }
 
+  function setStripWeatherStatus(mode) {
+    if (!els.weatherStatus) return;
+    const normalized = mode === "live" ? "live" : mode === "cached" ? "cached" : "unavailable";
+    els.weatherStatus.textContent = normalized === "live" ? "Live Weather" : normalized === "cached" ? "Cached Weather" : "Weather Unavailable";
+    els.weatherStatus.classList.toggle("ok", normalized === "live");
+    els.weatherStatus.classList.toggle("warn", normalized === "cached");
+    els.weatherStatus.classList.toggle("bad", normalized === "unavailable");
+  }
+
   async function renderWeatherContextSuggestion(options = {}) {
     if (!els.weatherSummary || weatherContextRequestInFlight) return;
     weatherContextRequestInFlight = true;
+    if (els.btnRefreshWeather) els.btnRefreshWeather.disabled = true;
     els.weatherSummary.textContent = "Checking weather context...";
     try {
       const context = await getWeatherContextSuggestion(options);
       if (context.weather) applyWeatherRainSuggestion(context.weather);
+      setStripWeatherStatus(context.mode);
       els.weatherSummary.textContent = context.available
         ? context.summary
         : "Weather unavailable. Confirm recent conditions manually.";
+      if (els.weatherRainNote && context.weather?.recentRainInches != null) {
+        const rainLabel = poolContextLabel("recentRain", classifyRecentRain(context.weather.recentRainInches));
+        els.weatherRainNote.textContent = `Recent rain: ${rainLabel} - ${Number(context.weather.recentRainInches).toFixed(2)} in during the last 24 hr. You can override it below.`;
+      }
     } catch {
       const cached = getCachedWeatherContext();
+      setStripWeatherStatus(cached ? weatherFreshnessLabel(cached) : "unavailable");
       els.weatherSummary.textContent = cached
         ? summarizeWeather(cached)
         : "Weather unavailable. Confirm recent conditions manually.";
     } finally {
       weatherContextRequestInFlight = false;
+      if (els.btnRefreshWeather) els.btnRefreshWeather.disabled = false;
     }
   }
 
@@ -4732,9 +4755,15 @@ export function initPoolTestScanner(root) {
   els.poolToggleGlobal?.addEventListener("click", () => { poolCollapsed = !poolCollapsed; applyPoolCollapsed(); savePoolSetup(); });
 
   els.btnRecalc?.addEventListener("click", () => { if (lastVals) renderRecs(lastVals); });
-  [els.waterAppearance, els.recentRain, els.poolUsage, els.surfaceCondition].forEach(input => {
+  [els.waterAppearance, els.poolUsage, els.surfaceCondition].forEach(input => {
     input?.addEventListener("change", updatePoolContextReview);
   });
+  els.recentRain?.addEventListener("change", () => {
+    const context = loadPoolContext();
+    savePoolContext({ ...context, recentRain: els.recentRain.value || "none", recentRainSource: "manual" });
+    updatePoolContextReview();
+  });
+  els.btnRefreshWeather?.addEventListener("click", () => renderWeatherContextSuggestion({ allowDeviceLocation: true, forceRefresh: true }));
   root.addEventListener("click", (event) => {
     if (event.target?.matches?.('[data-pt="sanityApplyContext"]')) {
       rerunSanityWithContext();
