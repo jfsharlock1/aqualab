@@ -2714,6 +2714,30 @@ export function initPoolTestScanner(root) {
     });
   }
 
+  function isUsableWeatherObject(weather) {
+    if (!weather || typeof weather !== "object") return false;
+    return Number.isFinite(Number(weather.airTemperatureF))
+      || Number.isFinite(Number(weather.airTemperatureC))
+      || Number.isFinite(Number(weather.recentRainInches))
+      || Number.isFinite(Number(weather.windSpeedMph))
+      || Boolean(weather.condition);
+  }
+
+  function normalizeStripWeatherState(context = {}) {
+    const weather = isUsableWeatherObject(context.weather) ? context.weather : null;
+    const requestedMode = context.mode === "live" ? "live" : context.mode === "cached" ? "cached" : "unavailable";
+    const mode = weather
+      ? requestedMode === "live" ? "live" : "cached"
+      : "unavailable";
+    return {
+      ...context,
+      weather,
+      mode,
+      available: Boolean(weather),
+      summary: weather ? summarizeWeather(weather) : "Weather unavailable. Confirm recent conditions manually."
+    };
+  }
+
   function applyWeatherRainSuggestion(weather) {
     if (!weather || !els.recentRain) return;
     const suggestedRain = classifyRecentRain(weather.recentRainInches);
@@ -2776,22 +2800,21 @@ export function initPoolTestScanner(root) {
     if (els.btnRefreshWeather) els.btnRefreshWeather.disabled = true;
     els.weatherSummary.textContent = "Checking weather context...";
     try {
-      const context = await getWeatherContextSuggestion(options);
+      const context = normalizeStripWeatherState(await getWeatherContextSuggestion(options));
       if (context.weather) applyWeatherRainSuggestion(context.weather);
       setStripWeatherStatus(context.mode);
-      els.weatherSummary.textContent = context.available
-        ? context.summary
-        : "Weather unavailable. Confirm recent conditions manually.";
+      els.weatherSummary.textContent = context.summary;
       if (els.weatherRainNote && context.weather?.recentRainInches != null) {
         const rainLabel = poolContextLabel("recentRain", classifyRecentRain(context.weather.recentRainInches));
         els.weatherRainNote.textContent = `Recent rain: ${rainLabel} - ${Number(context.weather.recentRainInches).toFixed(2)} in during the last 24 hr. You can override it below.`;
       }
     } catch {
-      const cached = getCachedWeatherContext();
-      setStripWeatherStatus(cached ? weatherFreshnessLabel(cached) : "unavailable");
-      els.weatherSummary.textContent = cached
-        ? summarizeWeather(cached)
-        : "Weather unavailable. Confirm recent conditions manually.";
+      const cachedContext = normalizeStripWeatherState({
+        weather: getCachedWeatherContext(),
+        mode: getCachedWeatherContext() ? weatherFreshnessLabel(getCachedWeatherContext()) : "unavailable"
+      });
+      setStripWeatherStatus(cachedContext.mode);
+      els.weatherSummary.textContent = cachedContext.summary;
     } finally {
       weatherContextRequestInFlight = false;
       if (els.btnRefreshWeather) els.btnRefreshWeather.disabled = false;
