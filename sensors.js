@@ -6,6 +6,7 @@ import {
   getDefaultTurbidityCalibration,
   normalizeTurbidityCalibration
 } from "./waterQuality.js";
+import { fetchOpenMeteoWeather } from "./weatherService.js";
 
 const METHOD_KEY = "pt_sensor_method_v1";
 const NETWORK_MODE_KEY = "pt_sensor_network_mode_v1";
@@ -96,6 +97,8 @@ const els = {
   weatherPressure: document.querySelector('[data-sa="weatherPressure"]'),
   weatherWind: document.querySelector('[data-sa="weatherWind"]'),
   weatherCondition: document.querySelector('[data-sa="weatherCondition"]'),
+  weatherUv: document.querySelector('[data-sa="weatherUv"]'),
+  weatherRain: document.querySelector('[data-sa="weatherRain"]'),
   refreshWeather: document.querySelector('[data-sa="refreshWeather"]'),
   includeWeather: document.querySelector('[data-sa="includeWeather"]'),
   weatherStatus: document.querySelector('[data-sa="weatherStatus"]'),
@@ -203,7 +206,15 @@ function getEmptyWeather(source = null) {
     uvIndex: null,
     cloudCoverPercent: null,
     weatherTimestamp: null,
-    weatherSource: source
+    weatherSource: source,
+    windDirectionDegrees: null,
+    weatherCode: null,
+    precipitationNow: null,
+    recentRainInches: null,
+    precipitationProbability: null,
+    forecastStorms: false,
+    latitude: null,
+    longitude: null
   };
 }
 
@@ -217,43 +228,21 @@ function saveCachedWeather(weather) {
   sensorStorage.saveWeatherCache(weather);
 }
 
-function getWeatherLocationLabel() {
-  if (currentLocation.gps) {
-    const { latitude, longitude } = currentLocation.gps;
-    return `${latitude.toFixed(3)}, ${longitude.toFixed(3)}`;
-  }
-  return currentLocation.locationName || "manual location";
+function weatherModeFor(weather, explicitMode = "") {
+  if (explicitMode) return explicitMode;
+  if (!weather) return "unavailable";
+  return String(weather.weatherSource || "").startsWith("Cached") ? "cached" : "live";
 }
 
-function buildMockWeather() {
-  const base = currentLocation.gps
-    ? Math.abs(currentLocation.gps.latitude * 10 + currentLocation.gps.longitude)
-    : Array.from(currentLocation.locationName || "AquaLab").reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  const wave = Math.sin((Date.now() / 3600000) + base);
-  const airTemperatureF = 76 + wave * 5;
-  const airTemperatureC = (airTemperatureF - 32) * 5 / 9;
-  const humidityPercent = 55 + Math.round(Math.abs(wave) * 25);
-  const windSpeedMph = 4 + Math.abs(wave) * 8;
-  const cloudCoverPercent = Math.round(20 + Math.abs(wave) * 55);
-
-  return {
-    airTemperatureF: Number(airTemperatureF.toFixed(1)),
-    airTemperatureC: Number(airTemperatureC.toFixed(1)),
-    humidityPercent,
-    pressureMb: Number((1012 + wave * 5).toFixed(1)),
-    windSpeedMph: Number(windSpeedMph.toFixed(1)),
-    windDirection: wave > 0 ? "SW" : "NE",
-    condition: cloudCoverPercent > 60 ? "Partly cloudy" : "Clear",
-    uvIndex: Math.max(0, Math.round(5 + wave * 2)),
-    cloudCoverPercent,
-    weatherTimestamp: new Date().toISOString(),
-    weatherSource: `Mock weather (${getWeatherLocationLabel()})`
-  };
+function formatCachedWeather(cached) {
+  if (!cached) return null;
+  const source = String(cached.weatherSource || "weather").replace(/^Cached\s+/i, "");
+  return { ...cached, weatherSource: `Cached ${source}` };
 }
 
-function renderWeather(weather, statusMessage = "") {
+function renderWeather(weather, statusMessage = "", mode = "") {
   latestWeather = weather || null;
-  weatherMode = weather?.weatherSource?.startsWith("Cached") ? "cached" : weather ? "mock" : "unavailable";
+  weatherMode = weatherModeFor(weather, mode);
 
   if (els.weatherTempF) els.weatherTempF.textContent = formatNumber(weather?.airTemperatureF, " F", 1);
   if (els.weatherTempC) els.weatherTempC.textContent = formatNumber(weather?.airTemperatureC, " C", 1);
@@ -261,21 +250,24 @@ function renderWeather(weather, statusMessage = "") {
   if (els.weatherPressure) els.weatherPressure.textContent = Number.isFinite(Number(weather?.pressureMb)) ? `${Number(weather.pressureMb).toFixed(1)} mb` : "-";
   if (els.weatherWind) els.weatherWind.textContent = Number.isFinite(Number(weather?.windSpeedMph)) ? `${Number(weather.windSpeedMph).toFixed(1)} mph ${weather?.windDirection || ""}`.trim() : "-";
   if (els.weatherCondition) els.weatherCondition.textContent = weather?.condition || "-";
+  if (els.weatherUv) els.weatherUv.textContent = Number.isFinite(Number(weather?.uvIndex)) ? Number(weather.uvIndex).toFixed(1) : "-";
+  if (els.weatherRain) els.weatherRain.textContent = Number.isFinite(Number(weather?.recentRainInches)) ? `${Number(weather.recentRainInches).toFixed(2)} in` : "-";
   if (els.weatherSource) {
     els.weatherSource.textContent = weather?.weatherSource || "Weather unavailable";
-    els.weatherSource.classList.toggle("ok", Boolean(weather));
-    els.weatherSource.classList.toggle("warn", !weather);
-    els.weatherSource.classList.toggle("bad", false);
+    els.weatherSource.classList.toggle("ok", weatherMode === "live");
+    els.weatherSource.classList.toggle("warn", weatherMode === "cached");
+    els.weatherSource.classList.toggle("bad", weatherMode === "unavailable");
   }
   if (els.weatherUpdated) {
     els.weatherUpdated.textContent = weather?.weatherTimestamp ? new Date(weather.weatherTimestamp).toLocaleString() : "Not refreshed";
-    els.weatherUpdated.classList.toggle("ok", Boolean(weather));
-    els.weatherUpdated.classList.toggle("warn", !weather);
+    els.weatherUpdated.classList.toggle("ok", weatherMode === "live");
+    els.weatherUpdated.classList.toggle("warn", weatherMode === "cached");
+    els.weatherUpdated.classList.toggle("bad", weatherMode === "unavailable");
   }
   if (els.weatherStatus) {
-    els.weatherStatus.textContent = statusMessage || (weather ? "Mock weather is available for saved readings." : "Weather unavailable.");
-    els.weatherStatus.classList.toggle("location-bad", !weather);
-    els.weatherStatus.classList.toggle("location-ok", Boolean(weather));
+    els.weatherStatus.textContent = statusMessage || (weather ? "Live weather is available for saved readings." : "Weather unavailable.");
+    els.weatherStatus.classList.toggle("location-bad", weatherMode === "unavailable");
+    els.weatherStatus.classList.toggle("location-ok", weatherMode === "live");
   }
   renderDiagnostics();
   renderOverview();
@@ -284,27 +276,47 @@ function renderWeather(weather, statusMessage = "") {
 function loadInitialWeather() {
   const cached = getCachedWeather();
   if (cached) {
-    latestWeather = cached;
-    renderWeather({ ...cached, weatherSource: cached.weatherSource || "Cached weather" }, "Cached weather is available.");
+    renderWeather(formatCachedWeather(cached), "Cached weather is available.", "cached");
     return;
   }
-  renderWeather(null, "No weather API is configured, so mock weather will be used when refreshed.");
+  renderWeather(null, "Refresh weather after setting or enabling device location.", "unavailable");
 }
 
-function refreshWeather() {
+async function refreshWeather() {
   if (navigator.onLine === false) {
     const cached = getCachedWeather();
     if (cached) {
-      renderWeather({ ...cached, weatherSource: cached.weatherSource?.startsWith("Cached") ? cached.weatherSource : `Cached ${cached.weatherSource || "weather"}` }, "Internet is offline. Showing cached weather.");
+      renderWeather(formatCachedWeather(cached), "Internet is offline. Showing cached weather.", "cached");
       return;
     }
-    renderWeather(null, "Weather unavailable offline.");
+    renderWeather(null, "Weather unavailable offline.", "unavailable");
     return;
   }
 
-  const weather = buildMockWeather();
-  saveCachedWeather(weather);
-  renderWeather(weather, "No weather API is configured. Using clearly labeled mock weather.");
+  if (!currentLocation.gps) {
+    renderWeather(latestWeather, "Set or enable device location to retrieve local weather.", weatherMode);
+    return;
+  }
+
+  if (els.refreshWeather) els.refreshWeather.disabled = true;
+  try {
+    const weather = await fetchOpenMeteoWeather({
+      latitude: currentLocation.gps.latitude,
+      longitude: currentLocation.gps.longitude,
+      timeoutMs: 8000
+    });
+    saveCachedWeather(weather);
+    renderWeather(weather, "Live Open-Meteo weather loaded for this location.", "live");
+  } catch (error) {
+    const cached = getCachedWeather();
+    if (cached) {
+      renderWeather(formatCachedWeather(cached), `${error?.message || "Weather refresh failed"}. Showing cached weather.`, "cached");
+      return;
+    }
+    renderWeather(null, error?.message || "Weather refresh failed.", "unavailable");
+  } finally {
+    if (els.refreshWeather) els.refreshWeather.disabled = false;
+  }
 }
 
 function getSavedSessions() {
@@ -382,7 +394,7 @@ function renderOverview() {
   setBadge(els.overviewSensorBadge, `Sensor: ${hasMockReading ? "mock" : sensorConnected ? "online" : "offline"}`, hasMockReading ? "warn" : sensorConnected ? "ok" : "bad");
   setBadge(els.overviewGpsBadge, `GPS: ${gpsReady ? "ready" : "manual"}`, gpsReady ? "ok" : "warn");
   setBadge(els.overviewInternetBadge, `Internet: ${internetOnline ? "online" : "offline"}`, internetOnline ? "ok" : "bad");
-  setBadge(els.overviewWeatherBadge, `Weather: ${weatherMode === "unavailable" ? "unavailable" : weatherMode}`, weatherMode === "unavailable" ? "bad" : weatherMode === "cached" || weatherMode === "mock" ? "warn" : "ok");
+  setBadge(els.overviewWeatherBadge, `Weather: ${weatherMode === "unavailable" ? "unavailable" : weatherMode}`, weatherMode === "unavailable" ? "bad" : weatherMode === "cached" ? "warn" : "ok");
 }
 
 function renderActiveSession() {
@@ -1121,8 +1133,9 @@ function handleNetworkChange() {
     const cached = getCachedWeather();
     if (cached) {
       renderWeather(
-        { ...cached, weatherSource: cached.weatherSource?.startsWith("Cached") ? cached.weatherSource : `Cached ${cached.weatherSource || "weather"}` },
-        "Internet is offline. Showing cached weather."
+        formatCachedWeather(cached),
+        "Internet is offline. Showing cached weather.",
+        "cached"
       );
     } else {
       renderWeather(null, "Weather unavailable offline.");

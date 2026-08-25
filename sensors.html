@@ -216,7 +216,7 @@
           <span class="section-eyebrow">Context</span>
           <h2>Weather</h2>
           <div class="status-badge-grid">
-            <span class="tag warn" data-sa="weatherSource">Mock weather mode</span>
+            <span class="tag warn" data-sa="weatherSource">Weather unavailable</span>
             <span class="tag warn" data-sa="weatherUpdated">Not refreshed</span>
           </div>
           <div class="weather-reading-grid weather-summary">
@@ -235,6 +235,16 @@
               <strong data-sa="weatherWind">-</strong>
               <span class="muted" data-sa="weatherCondition">-</span>
             </div>
+            <div class="sensor-reading weather-meta">
+              <small>UV Index</small>
+              <strong data-sa="weatherUv">-</strong>
+              <span class="muted">Current</span>
+            </div>
+            <div class="sensor-reading weather-meta">
+              <small>Rain</small>
+              <strong data-sa="weatherRain">-</strong>
+              <span class="muted">Last 24 hours</span>
+            </div>
           </div>
           <div class="row row-wrap sensor-actions">
             <button type="button" class="btn-ghost" data-sa="refreshWeather">Refresh Weather</button>
@@ -243,7 +253,7 @@
             <input type="checkbox" data-sa="includeWeather">
             <span>Include Weather With Reading</span>
           </label>
-          <p class="muted hint" data-sa="weatherStatus">No weather API is configured, so mock weather will be used when refreshed.</p>
+          <p class="muted hint" data-sa="weatherStatus">Set or enable device location, then refresh to load live Open-Meteo weather.</p>
         </section>
       </section>
 
@@ -422,6 +432,6 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script type="module" src="./sensors.js?v=13"></script>
+  <script type="module" src="./sensors.js?v=14"></script>
 </body>
 </html>
