@@ -1,0 +1,13 @@
+.git/
+.github/
+.wrangler/
+node_modules/
+.dev.vars*
+.env*
+.gitignore
+.assetsignore
+wrangler.jsonc
+package.json
+package-lock.json
+README.md
+tools/strip-profile-smoke.mjs

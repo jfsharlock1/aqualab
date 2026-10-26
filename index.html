@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>AquaLab — Digital Pool Chemistry</title>
+  <title>AquaLab — Water Analysis Platform</title>
 
   <!-- PWA essentials -->
   <link rel="manifest" href="manifest.webmanifest">
@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-  <link rel="stylesheet" href="pooltest.css?v=30" />
+  <link rel="stylesheet" href="pooltest.css?v=41" />
 </head>
 
 <body>
@@ -23,7 +23,7 @@
       <div class="logo"></div>
       <div class="titling">
         <h1>AquaLab</h1>
-        <div class="muted">Pool chemistry, simplified</div>
+        <div class="muted">Water analysis, simplified</div>
       </div>
     </div>
     <nav class="pt-nav">
@@ -239,7 +239,7 @@
           <span class="section-eyebrow">Scan</span>
           <h2>New Test Strip Reading</h2>
         </div>
-        <span class="tag ok">EasyTest 7-in-1</span>
+        <span class="tag ok" data-pt="stripProfileTag">EasyTest 7-in-1</span>
       </div>
 
       <div class="scan-step-card">
@@ -247,8 +247,17 @@
         <h3>Select Method</h3>
         <div class="segmented-control">
           <label><input type="radio" checked><span>Test Strip</span></label>
-          <label><input type="radio" disabled><span>Sensor Array Coming Soon</span></label>
+          <a class="segmented-link" href="./sensors.html">Sensor Array</a>
         </div>
+      </div>
+
+      <div class="field">
+        <label>Strip Profile</label>
+        <select data-pt="stripProfileSelect">
+          <option value="easytest-7in1">EasyTest 7-in-1</option>
+          <option value="hth-6way">HTH 6-Way</option>
+        </select>
+        <small class="muted">Profiles define pad order, supported tests, and reference colors.</small>
       </div>
 
       <!-- Camera chooser (desktop/tablet) -->
@@ -286,16 +295,15 @@
         <canvas data-pt="canvas" hidden></canvas>
 
         <div class="scan-frame">
-          <div class="scan-frame-label">Line strip up in this box</div>
+          <div class="scan-frame-label">Capture the strip clearly</div>
         </div>
       </div>
 
-      <!-- ✅ Preview + Crop UI (BELOW camera box) -->
+      <!-- Preview + manual pad selection -->
       <div data-pt="previewWrap" class="preview-wrap" style="display:none; margin-top:12px;">
         <div data-pt="previewHeader" class="preview-header">
-          <strong>Preview (drag/resize the box around the strip)</strong>
+          <strong>Manual Pad Selection</strong>
           <div class="preview-actions">
-            <button type="button" data-pt="btnUseCrop">Use Crop</button>
             <button type="button" class="btn-ghost" data-pt="btnManualPads">Manual Pads</button>
             <button type="button" class="btn-ghost" data-pt="btnResetManualPads">Reset</button>
             <button type="button" class="btn-ghost" data-pt="btnUndoManualPad" hidden>Undo Last</button>
@@ -307,14 +315,10 @@
         <div data-pt="previewStage" class="preview-stage">
           <canvas data-pt="previewCanvas" class="preview-canvas"></canvas>
           <div data-pt="manualPadLayer" class="manual-pad-layer" hidden></div>
-
-          <div data-pt="cropBox" class="cropbox">
-            <div data-pt="cropHandle" class="crophandle"></div>
-          </div>
         </div>
 
         <div data-pt="previewTip" class="preview-tip">
-          Use the crop box, or tap Manual Pads for precise pad sampling.
+          Tap each pad center from top to bottom for the selected strip profile.
         </div>
       </div>
 
@@ -331,26 +335,26 @@
         <button type="button" class="btn-ghost" data-pt="btnRecalc">Recalculate Tips</button>
       </div>
 
-      <div class="bars result-card-grid">
-        <div class="row"><h3>pH</h3><span data-pt="tagPh" class="tag">–</span></div>
+      <div class="bars result-card-grid chemistry-list">
+        <div class="row"><h3>pH</h3><div class="chemistry-result"><strong data-pt="valuePh">–</strong><span data-pt="tagPh" class="tag">–</span></div></div>
         <div class="bar"><span data-pt="barPh"></span></div>
 
-        <div class="row"><h3>Free Chlorine (ppm)</h3><span data-pt="tagFCl" class="tag">–</span></div>
+        <div class="row"><h3>Free Chlorine</h3><div class="chemistry-result"><strong data-pt="valueFCl">–</strong><span data-pt="tagFCl" class="tag">–</span></div></div>
         <div class="bar"><span data-pt="barFCl"></span></div>
 
-        <div class="row"><h3>Total Chlorine (ppm)</h3><span data-pt="tagTCl" class="tag">–</span></div>
+        <div class="row"><h3>Total Chlorine</h3><div class="chemistry-result"><strong data-pt="valueTCl">–</strong><span data-pt="tagTCl" class="tag">–</span></div></div>
         <div class="bar"><span data-pt="barTCl"></span></div>
 
-        <div class="row"><h3>Bromine (ppm)</h3><span data-pt="tagBr" class="tag">–</span></div>
+        <div class="row"><h3>Bromine</h3><div class="chemistry-result"><strong data-pt="valueBr">–</strong><span data-pt="tagBr" class="tag">–</span></div></div>
         <div class="bar"><span data-pt="barBr"></span></div>
 
-        <div class="row"><h3>Total Hardness (ppm)</h3><span data-pt="tagHard" class="tag">–</span></div>
+        <div class="row"><h3>Total Hardness</h3><div class="chemistry-result"><strong data-pt="valueHard">–</strong><span data-pt="tagHard" class="tag">–</span></div></div>
         <div class="bar"><span data-pt="barHard"></span></div>
 
-        <div class="row"><h3>Total Alkalinity (ppm)</h3><span data-pt="tagAlk" class="tag">–</span></div>
+        <div class="row"><h3>Total Alkalinity</h3><div class="chemistry-result"><strong data-pt="valueAlk">–</strong><span data-pt="tagAlk" class="tag">–</span></div></div>
         <div class="bar"><span data-pt="barAlk"></span></div>
 
-        <div class="row"><h3>Cyanuric Acid (ppm)</h3><span data-pt="tagCya" class="tag">–</span></div>
+        <div class="row"><h3>Cyanuric Acid</h3><div class="chemistry-result"><strong data-pt="valueCya">–</strong><span data-pt="tagCya" class="tag">–</span></div></div>
         <div class="bar"><span data-pt="barCya"></span></div>
       </div>
 
@@ -373,10 +377,16 @@
               <p class="muted">Confirm recent pool conditions so treatment advice is accurate.</p>
             </div>
           </div>
-          <div class="weather-context-card" data-pt="weatherContext">
-            <strong>Weather context</strong>
-            <span data-pt="weatherSummary">Weather suggestions are not connected yet. Confirm conditions manually.</span>
-            <small>Future support: recent rain, temperature, UV index, wind, and forecasted storms.</small>
+          <div class="weather-context-card local-weather-card" data-pt="weatherContext">
+            <div class="weather-context-head">
+              <div>
+                <strong>Local Weather</strong>
+                <span class="tag warn" data-pt="weatherStatus">Weather Unavailable</span>
+              </div>
+              <button type="button" class="btn-ghost" data-pt="btnRefreshWeather">Use Local Weather</button>
+            </div>
+            <span data-pt="weatherSummary">Weather unavailable. Confirm recent conditions manually.</span>
+            <small data-pt="weatherRainNote">Recent Rain can be suggested from local weather, or set manually below.</small>
           </div>
           <div class="pool-context-grid">
             <label>Water Appearance
@@ -524,7 +534,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    import { initPoolTestScanner } from "./scanner.js?v=dev44";
+    import { initPoolTestScanner } from "./scanner.js?v=dev59";
     const root = document.querySelector(".pooltest");
     initPoolTestScanner(root);
   </script>

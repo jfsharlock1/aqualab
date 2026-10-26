@@ -1,9 +1,9 @@
-// scanner.js (EasyTest-only)
-// Reverted UX: Preview + Crop shows BELOW the camera box (not overlaid)
+// scanner.js
+// Manual pad selection drives strip analysis; automatic pad detection is disabled.
 // Features:
-// - EasyTest 7-in-1 swatches
-// - Upload/Take Photo -> Preview crop -> Use Crop -> Analyze (iOS reliable orientation handling)
-// - Live camera capture (optional) + ROI crop attempt
+// - EasyTest 7-in-1 and HTH hard-coded strip profiles
+// - Upload/Take Photo -> manual pad selection -> Analyze (iOS reliable orientation handling)
+// - Live camera capture (optional) -> manual pad selection
 // - White balance supported
 // - Multiple camera selection + remembers device
 // - Stabilization: pH/Alk/CYA range + snap
@@ -11,9 +11,82 @@
 // - Pad LAB/Delta-E diagnostics logged (for calibration + judge explanations)
 // - “Clear Scan Cache (debug)” button support
 // - Chlorine “inferred CC” when TC/FC corrected
-// - Low-confidence scan gate (requires 7/7 pads)
+// - Low-confidence scan gate (requires all pads for the selected strip profile)
 
 import { runStripSanityCheck } from "./sanityCheckEngine.js";
+const WEATHER_UNAVAILABLE_SUMMARY = "Weather unavailable. Confirm recent conditions manually.";
+const WEATHER_FRESH_MS = 30 * 60 * 1000;
+
+function fallbackClassifyRecentRain(recentRainInches) {
+  const rain = Number(recentRainInches) || 0;
+  if (rain >= 1.25) return "heavy";
+  if (rain >= 0.45) return "moderate";
+  if (rain >= 0.05) return "light";
+  return "none";
+}
+
+function fallbackIsWeatherFresh(weather, maxAgeMs = WEATHER_FRESH_MS) {
+  if (!weather?.weatherTimestamp) return false;
+  const time = new Date(weather.weatherTimestamp).getTime();
+  return Number.isFinite(time) && Date.now() - time <= maxAgeMs;
+}
+
+function fallbackWeatherFreshnessLabel(weather) {
+  if (!weather) return "unavailable";
+  return fallbackIsWeatherFresh(weather) ? "live" : "cached";
+}
+
+function fallbackSummarizeWeather(weather) {
+  if (!weather) return WEATHER_UNAVAILABLE_SUMMARY;
+  const parts = [];
+  if (Number.isFinite(Number(weather.airTemperatureF))) parts.push(`${Number(weather.airTemperatureF).toFixed(0)} F`);
+  if (Number.isFinite(Number(weather.uvIndex))) parts.push(`UV ${Number(weather.uvIndex).toFixed(0)}`);
+  if (Number.isFinite(Number(weather.recentRainInches))) parts.push(`${Number(weather.recentRainInches).toFixed(2)} in rain last 24 hr`);
+  if (Number.isFinite(Number(weather.windSpeedMph))) {
+    parts.push(`${weather.windDirection || "Wind"} wind ${Number(weather.windSpeedMph).toFixed(0)} mph`);
+  }
+  if (weather.forecastStorms) parts.push("storms possible later");
+  return parts.length ? parts.join(" - ") : WEATHER_UNAVAILABLE_SUMMARY;
+}
+
+const WEATHER_SERVICE_FALLBACK = {
+  classifyRecentRain: fallbackClassifyRecentRain,
+  fetchOpenMeteoWeather: async () => { throw new Error("Weather service unavailable."); },
+  isWeatherFresh: fallbackIsWeatherFresh,
+  summarizeWeather: fallbackSummarizeWeather,
+  weatherFreshnessLabel: fallbackWeatherFreshnessLabel
+};
+
+let weatherServiceLoadPromise = null;
+let weatherServiceModule = null;
+
+function getWeatherServiceSync() {
+  return weatherServiceModule || WEATHER_SERVICE_FALLBACK;
+}
+
+async function getWeatherService() {
+  if (weatherServiceModule) return weatherServiceModule;
+  if (!weatherServiceLoadPromise) {
+    weatherServiceLoadPromise = import("./weatherService.js")
+      .then(module => {
+        weatherServiceModule = {
+          classifyRecentRain: typeof module.classifyRecentRain === "function" ? module.classifyRecentRain : fallbackClassifyRecentRain,
+          fetchOpenMeteoWeather: typeof module.fetchOpenMeteoWeather === "function" ? module.fetchOpenMeteoWeather : WEATHER_SERVICE_FALLBACK.fetchOpenMeteoWeather,
+          isWeatherFresh: typeof module.isWeatherFresh === "function" ? module.isWeatherFresh : fallbackIsWeatherFresh,
+          summarizeWeather: typeof module.summarizeWeather === "function" ? module.summarizeWeather : fallbackSummarizeWeather,
+          weatherFreshnessLabel: typeof module.weatherFreshnessLabel === "function" ? module.weatherFreshnessLabel : fallbackWeatherFreshnessLabel
+        };
+        return weatherServiceModule;
+      })
+      .catch(error => {
+        console.warn("AquaLab weather service unavailable; continuing without live weather.", error);
+        weatherServiceLoadPromise = null;
+        return WEATHER_SERVICE_FALLBACK;
+      });
+  }
+  return weatherServiceLoadPromise;
+}
+
 
 // ================================================================
 // 1) EasyTest configuration
@@ -78,8 +151,21 @@ const EasyTestCalibrationV1 = {
 
 const EASYTEST_SWATCHES = cloneCalibrationSwatches(EasyTestCalibrationV1);
 
+const HTH_6WAY_SWATCHES = cloneCalibrationSwatches({
+  hardness: EasyTestCalibrationV1.hardness,
+  freeCl: EasyTestCalibrationV1.freeCl,
+  bromine: EasyTestCalibrationV1.bromine,
+  ph: EasyTestCalibrationV1.ph,
+  alk: EasyTestCalibrationV1.alk,
+  cya: EasyTestCalibrationV1.cya
+});
+
 const EASYTEST_CFG = {
+  id: "easytest-7in1",
   name: "EasyTest 7-in-1",
+  brand: "EasyTest",
+  padCount: 7,
+  supportedTests: ["hardness", "freeCl", "bromine", "totalCl", "combinedCl", "cya", "alk", "ph"],
   pads: [
     { key: "hardness", label: "Total Hardness", index: 0, swatches: EASYTEST_SWATCHES.hardness },
     { key: "freeCl", label: "Free Chlorine", index: 1, swatches: EASYTEST_SWATCHES.freeCl },
@@ -90,6 +176,29 @@ const EASYTEST_CFG = {
     { key: "ph", label: "pH", index: 6, swatches: EASYTEST_SWATCHES.ph }
   ]
 };
+
+const HTH_6WAY_CFG = {
+  id: "hth-6way",
+  name: "HTH 6-Way",
+  brand: "HTH",
+  padCount: 5,
+  supportedTests: ["hardness", "freeCl", "bromine", "ph", "alk", "cya"],
+  unsupportedTests: ["totalCl", "combinedCl"],
+  pads: [
+    { key: "hardness", label: "Total Hardness", index: 0, swatches: HTH_6WAY_SWATCHES.hardness },
+    { key: "freeCl", label: "Free Available Chlorine", index: 1, swatches: HTH_6WAY_SWATCHES.freeCl, aliases: ["bromine"] },
+    { key: "ph", label: "pH", index: 2, swatches: HTH_6WAY_SWATCHES.ph },
+    { key: "alk", label: "Total Alkalinity", index: 3, swatches: HTH_6WAY_SWATCHES.alk },
+    { key: "cya", label: "Cyanuric Acid", index: 4, swatches: HTH_6WAY_SWATCHES.cya }
+  ]
+};
+
+const STRIP_PROFILES = {
+  [EASYTEST_CFG.id]: EASYTEST_CFG,
+  [HTH_6WAY_CFG.id]: HTH_6WAY_CFG
+};
+const DEFAULT_STRIP_PROFILE_ID = EASYTEST_CFG.id;
+const STRIP_PROFILE_STORAGE_KEY = "pt_strip_profile_v1";
 
 const EASYTEST_SWATCH_STORAGE_KEY = "pt_easytest_swatches_v1";
 const EASYTEST_SOURCE_STORAGE_KEY = "pt_easytest_calibration_source_v1";
@@ -365,6 +474,8 @@ export function initPoolTestScanner(root) {
     status: root.querySelector('[data-pt="status"]'),
     scanQuality: root.querySelector('[data-pt="scanQuality"]'),
     scanDebug: root.querySelector('[data-pt="scanDebug"]'),
+    stripProfileSelect: root.querySelector('[data-pt="stripProfileSelect"]'),
+    stripProfileTag: root.querySelector('[data-pt="stripProfileTag"]'),
     sanitySummary: root.querySelector('[data-pt="sanitySummary"]'),
     sanityContext: root.querySelector('[data-pt="sanityContext"]'),
     sanityDetails: root.querySelector('[data-pt="sanityDetails"]'),
@@ -375,6 +486,9 @@ export function initPoolTestScanner(root) {
     surfaceCondition: root.querySelector('[data-pt="surfaceCondition"]'),
     weatherContext: root.querySelector('[data-pt="weatherContext"]'),
     weatherSummary: root.querySelector('[data-pt="weatherSummary"]'),
+    weatherStatus: root.querySelector('[data-pt="weatherStatus"]'),
+    weatherRainNote: root.querySelector('[data-pt="weatherRainNote"]'),
+    btnRefreshWeather: root.querySelector('[data-pt="btnRefreshWeather"]'),
     historyLog: root.querySelector('[data-pt="historyLog"]'),
     homeGreeting: root.querySelector('[data-pt="homeGreeting"]'),
     homeHeroSubtitle: root.querySelector('[data-pt="homeHeroSubtitle"]'),
@@ -417,6 +531,11 @@ export function initPoolTestScanner(root) {
     homeWeeklyAverage: root.querySelector('[data-pt="homeWeeklyAverage"]'),
     homeBestScore: root.querySelector('[data-pt="homeBestScore"]'),
     homeLowestScore: root.querySelector('[data-pt="homeLowestScore"]'),
+    homeSensorStatus: root.querySelector('[data-pt="homeSensorStatus"]'),
+    homeSensorTemp: root.querySelector('[data-pt="homeSensorTemp"]'),
+    homeSensorTurbidity: root.querySelector('[data-pt="homeSensorTurbidity"]'),
+    homeSensorPh: root.querySelector('[data-pt="homeSensorPh"]'),
+    homeSensorLast: root.querySelector('[data-pt="homeSensorLast"]'),
     homeEmptyHelp: root.querySelector('[data-pt="homeEmptyHelp"]'),
     betaStats: root.querySelector('[data-pt="betaStats"]'),
 
@@ -468,6 +587,14 @@ export function initPoolTestScanner(root) {
     barAlk: root.querySelector('[data-pt="barAlk"]'),
     barCya: root.querySelector('[data-pt="barCya"]'),
 
+    valuePh: root.querySelector('[data-pt="valuePh"]'),
+    valueFCl: root.querySelector('[data-pt="valueFCl"]'),
+    valueTCl: root.querySelector('[data-pt="valueTCl"]'),
+    valueBr: root.querySelector('[data-pt="valueBr"]'),
+    valueHard: root.querySelector('[data-pt="valueHard"]'),
+    valueAlk: root.querySelector('[data-pt="valueAlk"]'),
+    valueCya: root.querySelector('[data-pt="valueCya"]'),
+
     tagPh: root.querySelector('[data-pt="tagPh"]'),
     tagFCl: root.querySelector('[data-pt="tagFCl"]'),
     tagTCl: root.querySelector('[data-pt="tagTCl"]'),
@@ -492,9 +619,6 @@ export function initPoolTestScanner(root) {
     previewWrap: root.querySelector('[data-pt="previewWrap"]'),
     previewStage: root.querySelector('[data-pt="previewStage"]'),
     previewCanvas: root.querySelector('[data-pt="previewCanvas"]'),
-    cropBox: root.querySelector('[data-pt="cropBox"]'),
-    cropHandle: root.querySelector('[data-pt="cropHandle"]'),
-    btnUseCrop: root.querySelector('[data-pt="btnUseCrop"]'),
     btnManualPads: root.querySelector('[data-pt="btnManualPads"]'),
     btnResetManualPads: root.querySelector('[data-pt="btnResetManualPads"]'),
     btnUndoManualPad: root.querySelector('[data-pt="btnUndoManualPad"]'),
@@ -631,12 +755,53 @@ export function initPoolTestScanner(root) {
       const status = readingStatus(key, value);
       const cls = status === "Good" || status === "Recorded" ? "ok" : status === "Not tested" ? "" : "warn";
       if (card) card.className = `home-status-card ${cls}`.trim();
-      if (valueEl) valueEl.textContent = value == null ? "-" : `${value}${unit}`;
+      if (valueEl) valueEl.textContent = value == null ? "-" : dashboardValueText(latest, key, value, unit.trim());
       if (statusEl) {
         if (status === "Good") statusEl.textContent = "✓ GOOD";
         else if (status === "Not tested") statusEl.textContent = "NOT TESTED";
+        else if (getResultRange(latest, key)) statusEl.textContent = "APPROXIMATE";
         else statusEl.textContent = `! ${status.toUpperCase()}`;
       }
+    };
+    const updateHomeSensorSummary = () => {
+      let readings = [];
+      try {
+        const parsed = JSON.parse(localStorage.getItem("aqualab_sensor_readings") || "[]");
+        readings = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        readings = [];
+      }
+      const latestSensor = readings
+        .filter(Boolean)
+        .sort((a, b) => new Date(a?.createdAt || a?.sensorData?.sensorTimestamp || 0).getTime() - new Date(b?.createdAt || b?.sensorData?.sensorTimestamp || 0).getTime())
+        .pop();
+      const data = latestSensor?.sensorData || {};
+      const tempF = Number(data.temperatureF);
+      const turbidityRaw = Number(data.turbidityRaw);
+      const turbidityNtu = Number(data.turbidityNtu);
+      const ph = Number(data.ph ?? data.pH);
+      const source = data.sensorSource || latestSensor?.connectivity?.connectionMethod || "Sensor";
+      const createdAt = latestSensor?.createdAt || data.sensorTimestamp || null;
+
+      if (els.homeSensorStatus) {
+        els.homeSensorStatus.className = `tag ${latestSensor ? "ok" : "warn"}`;
+        els.homeSensorStatus.textContent = latestSensor ? `${source} saved` : "No saved reading";
+      }
+      if (els.homeSensorTemp) els.homeSensorTemp.textContent = Number.isFinite(tempF) ? `${tempF.toFixed(1)} F` : "--";
+      if (els.homeSensorTurbidity) {
+        els.homeSensorTurbidity.textContent = Number.isFinite(turbidityNtu)
+          ? `${turbidityNtu.toFixed(2)} est.`
+          : Number.isFinite(turbidityRaw)
+          ? `${Math.round(turbidityRaw)} raw`
+          : "--";
+      }
+      if (els.homeSensorPh) els.homeSensorPh.textContent = Number.isFinite(ph) ? ph.toFixed(1) : "--";
+      if (els.homeSensorLast) {
+        els.homeSensorLast.textContent = createdAt
+          ? `Last sensor update: ${new Date(createdAt).toLocaleString()}`
+          : "Last sensor update: No saved reading";
+      }
+      if (els.homeWaterTemp && Number.isFinite(tempF)) els.homeWaterTemp.textContent = `${tempF.toFixed(1)} F from Sensor Array`;
     };
     const context = latest?.poolContext || latest?.__poolContext || loadPoolContext();
     const appearanceLabel = poolContextLabel("waterAppearance", context.waterAppearance);
@@ -650,6 +815,7 @@ export function initPoolTestScanner(root) {
     if (els.homeSiteMeta) els.homeSiteMeta.textContent = dimension;
     if (els.homeWaterAppearance) els.homeWaterAppearance.textContent = appearanceLabel;
     if (els.homeWaterTemp) els.homeWaterTemp.textContent = "Temp not connected";
+    updateHomeSensorSummary();
 
     if (!latest) {
       homeScreen?.classList.remove("has-test");
@@ -698,8 +864,9 @@ export function initPoolTestScanner(root) {
     if (els.homeSecondaryAction) els.homeSecondaryAction.textContent = "View History";
     els.homeSecondaryAction?.setAttribute("data-app-nav", "history");
     if (els.homeHealthBadge) {
-      els.homeHealthBadge.className = `tag ${cls}`;
-      els.homeHealthBadge.textContent = statusText(score);
+      const requiresRetest = !!(sanity?.requiresRetest ?? latest.requiresRetest);
+      els.homeHealthBadge.className = `tag ${requiresRetest ? "warn" : cls}`;
+      els.homeHealthBadge.textContent = requiresRetest ? "Retest Recommended" : statusText(score);
     }
     if (els.homeLastSummary) {
       const when = latest.t ? new Date(latest.t).toLocaleString() : "Current scan";
@@ -712,9 +879,9 @@ export function initPoolTestScanner(root) {
     if (els.homeNextAction) els.homeNextAction.textContent = rec.action;
 
     setStatusCard(els.homePhCard, els.homePh, els.homePhStatus, "ph", latest.ph);
-    setStatusCard(els.homeSanitizerCard, els.homeFreeCl, els.homeFreeClStatus, "freeCl", latest.freeCl, latest.freeCl == null ? "" : " ppm");
-    setStatusCard(els.homeAlkCard, els.homeAlk, els.homeAlkStatus, "alk", latest.alk, latest.alk == null ? "" : " ppm");
-    setStatusCard(els.homeStabilityCard, els.homeCya, els.homeCyaStatus, "cya", latest.cya, latest.cya == null ? "" : " ppm");
+    setStatusCard(els.homeSanitizerCard, els.homeFreeCl, els.homeFreeClStatus, "freeCl", latest.freeCl, latest.freeCl == null ? "" : "ppm");
+    setStatusCard(els.homeAlkCard, els.homeAlk, els.homeAlkStatus, "alk", latest.alk, latest.alk == null ? "" : "ppm");
+    setStatusCard(els.homeStabilityCard, els.homeCya, els.homeCyaStatus, "cya", latest.cya, latest.cya == null ? "" : "ppm");
 
     const scored = history
       .filter(item => item?.sanityCheck?.poolHealthScore != null)
@@ -762,6 +929,55 @@ export function initPoolTestScanner(root) {
   let activeCalibrationSource = EASYTEST_BUILT_IN_SOURCE;
   let activeSwatchSource = "Built-in EasyTest 7-in-1";
   let activeEasyTestSwatches = cloneSwatches(EASYTEST_SWATCHES);
+  let activeStripProfileId = DEFAULT_STRIP_PROFILE_ID;
+
+  function stripProfileById(id) {
+    return STRIP_PROFILES[id] || STRIP_PROFILES[DEFAULT_STRIP_PROFILE_ID];
+  }
+
+  function activeStripProfile() {
+    return stripProfileById(activeStripProfileId);
+  }
+
+  function stripProfileSupports(profile, key) {
+    return !!profile?.supportedTests?.includes(key);
+  }
+
+  function loadStripProfilePreference() {
+    try {
+      const saved = localStorage.getItem(STRIP_PROFILE_STORAGE_KEY);
+      return STRIP_PROFILES[saved] ? saved : DEFAULT_STRIP_PROFILE_ID;
+    } catch {
+      return DEFAULT_STRIP_PROFILE_ID;
+    }
+  }
+
+  function saveStripProfilePreference(profileId) {
+    try { localStorage.setItem(STRIP_PROFILE_STORAGE_KEY, profileId); } catch {}
+  }
+
+  function updateStripProfileUi() {
+    const profile = activeStripProfile();
+    if (els.stripProfileSelect) els.stripProfileSelect.value = profile.id;
+    if (els.stripProfileTag) els.stripProfileTag.textContent = profile.name;
+  }
+
+  function clearManualPadPositions() {
+    manualPadMarkers = [];
+    manualPadMode = false;
+    try { localStorage.removeItem(MANUAL_PAD_POSITIONS_KEY); } catch {}
+    if (els.manualPadLayer) els.manualPadLayer.innerHTML = "";
+    setManualPadButtons?.();
+  }
+
+  function setStripProfile(profileId) {
+    activeStripProfileId = STRIP_PROFILES[profileId] ? profileId : DEFAULT_STRIP_PROFILE_ID;
+    saveStripProfilePreference(activeStripProfileId);
+    updateStripProfileUi();
+    clearScanCache();
+    clearManualPadPositions();
+    setStatus(`${activeStripProfile().name} profile selected.`);
+  }
 
   function validateEasyTestSwatches(swatches) {
     if (!swatches || typeof swatches !== "object") return null;
@@ -904,6 +1120,7 @@ export function initPoolTestScanner(root) {
     return [
       wb.r.toFixed(3), wb.g.toFixed(3), wb.b.toFixed(3),
       offsets.ph.toFixed(2), offsets.alk, offsets.cya, offsets.hardness,
+      activeStripProfileId,
       activeSwatchSource,
       swatchFingerprint
     ].join(":");
@@ -992,21 +1209,6 @@ export function initPoolTestScanner(root) {
       for (let i = 0; i < keys.length - MANUAL_PAD_POSITIONS_MAX; i++) delete cache[keys[i]];
     }
     saveJson(MANUAL_PAD_POSITIONS_KEY, cache);
-  }
-
-  function restoreManualPadPositions(hash = currentPreviewHash) {
-    const key = manualPositionCacheKey(hash);
-    if (!key || !previewFit) return false;
-    const saved = loadJson(MANUAL_PAD_POSITIONS_KEY, {})?.[key]?.markers;
-    if (!Array.isArray(saved) || !saved.length) return false;
-    manualPadMarkers = saved.slice(0, EASYTEST_CFG.pads.length).map(marker => ({
-      imageX: Number(marker.imageX),
-      imageY: Number(marker.imageY)
-    })).filter(marker => Number.isFinite(marker.imageX) && Number.isFinite(marker.imageY));
-    manualPadMode = true;
-    renderManualPadMarkers();
-    setStatus(`Restored ${manualPadMarkers.length} saved manual pad marker${manualPadMarkers.length === 1 ? "" : "s"} for this image. Adjust if needed, then Analyze.`);
-    return true;
   }
 
   function recordFingerprint(hash, padColors, avgRgb, vals = null) {
@@ -1266,81 +1468,10 @@ export function initPoolTestScanner(root) {
       els.btnWB && (els.btnWB.disabled = false);
 
       await listCameras();
-      setStatus("Live camera ready. Line the strip up inside the dashed box.");
+      setStatus(`Live camera ready. Capture a clear ${activeStripProfile().name} strip photo, then select pads manually.`);
     } catch {
       setStatus("Couldn’t start live camera. Use Upload/Take Photo instead.");
     }
-  }
-
-  // Simple ROI crop attempt (camera mode only)
-  function cropToStripROI() {
-    if (!els.canvas) return;
-    const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
-    const W = els.canvas.width, H = els.canvas.height;
-
-    const targetW = 220;
-    const s = Math.min(1, targetW / W);
-    const w = Math.max(60, Math.round(W * s));
-    const h = Math.max(60, Math.round(H * s));
-
-    const off = document.createElement("canvas");
-    off.width = w; off.height = h;
-    const octx = off.getContext("2d", { willReadFrequently: true });
-    octx.drawImage(els.canvas, 0, 0, W, H, 0, 0, w, h);
-
-    const img = octx.getImageData(0, 0, w, h);
-    const d = img.data;
-
-    let minX = w, minY = h, maxX = 0, maxY = 0;
-    let hits = 0;
-
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = (y * w + x) * 4;
-        const r = d[i], g = d[i + 1], b = d[i + 2];
-        const mx = Math.max(r, g, b);
-        const mn = Math.min(r, g, b);
-        const v = mx;
-        const sat = mx === 0 ? 0 : (mx - mn) / mx;
-
-        if (v >= 190 && sat <= 0.25) {
-          hits++;
-          if (x < minX) minX = x;
-          if (y < minY) minY = y;
-          if (x > maxX) maxX = x;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-
-    const hitFrac = hits / (w * h);
-    if (hits < 300 || hitFrac < 0.004) return;
-
-    const padX = Math.round((maxX - minX) * 0.35) + 10;
-    const padY = Math.round((maxY - minY) * 0.10) + 10;
-
-    minX = Math.max(0, minX - padX);
-    maxX = Math.min(w - 1, maxX + padX);
-    minY = Math.max(0, minY - padY);
-    maxY = Math.min(h - 1, maxY + padY);
-
-    const scaleUp = 1 / s;
-    const rx = Math.round(minX * scaleUp);
-    const ry = Math.round(minY * scaleUp);
-    const rw = Math.round((maxX - minX + 1) * scaleUp);
-    const rh = Math.round((maxY - minY + 1) * scaleUp);
-
-    const cx = Math.max(0, Math.min(W - 1, rx));
-    const cy = Math.max(0, Math.min(H - 1, ry));
-    const cw = Math.max(20, Math.min(rw, W - cx));
-    const ch = Math.max(20, Math.min(rh, H - cy));
-
-    try {
-      const src = ctx.getImageData(cx, cy, cw, ch);
-      els.canvas.width = cw;
-      els.canvas.height = ch;
-      els.canvas.getContext("2d", { willReadFrequently: true }).putImageData(src, 0, 0);
-    } catch {}
   }
 
   function drawFromVideo() {
@@ -1350,12 +1481,11 @@ export function initPoolTestScanner(root) {
     els.canvas.height = h;
     const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
     ctx.drawImage(els.video, 0, 0, w, h);
-    cropToStripROI();
     return els.canvas.getContext("2d", { willReadFrequently: true });
   }
 
   // ================================================================
-  // 8) Preview + manual crop (BELOW camera box)
+  // 8) Preview + manual pad selection
   // ================================================================
 
   let previewImg = null;   // Image()
@@ -1365,14 +1495,6 @@ export function initPoolTestScanner(root) {
   let manualPadMarkers = [];
   let chartCalibrationMode = false;
   let chartCalibrationSamples = [];
-
-  function setDefaultCropBox() {
-    if (!els.cropBox) return;
-    els.cropBox.style.left = "32%";
-    els.cropBox.style.top = "6%";
-    els.cropBox.style.width = "36%";
-    els.cropBox.style.height = "88%";
-  }
 
   function chartCalibrationOrder() {
     return EASYTEST_CFG.pads.flatMap(pad => (EASYTEST_SWATCHES[pad.key] || []).map((swatch, swatchIndex) => ({
@@ -1391,27 +1513,28 @@ export function initPoolTestScanner(root) {
 
   function showPreview(img) {
     previewImg = img;
-    if (!els.previewWrap || !els.previewCanvas || !els.previewStage || !els.cropBox) return;
+    if (!els.previewWrap || !els.previewCanvas || !els.previewStage) return;
 
     els.previewWrap.style.display = "block";
 
-    resetManualPadSelection(false);
-    setDefaultCropBox();
-
+    resetManualPadSelection(true);
     requestAnimationFrame(() => {
       drawPreviewCanvas();
       try {
         const previewCtx = fullPreviewImageContext();
         currentPreviewHash = previewCtx ? hashCanvas(previewCtx) : null;
-        restoreManualPadPositions(currentPreviewHash);
       } catch {
         currentPreviewHash = null;
       }
+      manualPadMode = true;
+      manualPadMarkers = [];
+      renderManualPadMarkers();
+      setManualPadButtons();
       try { els.previewWrap.scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
     });
 
     updatePreviewInstruction();
-    setStatus("Crop box is ready. Adjust if needed, or tap Manual Pads for precise sampling.");
+    setStatus(`Manual pad mode: tap each ${activeStripProfile().name} pad center from top to bottom.`);
   }
 
   function hidePreview() {
@@ -1466,19 +1589,20 @@ export function initPoolTestScanner(root) {
   function updatePreviewInstruction() {
     if (!els.previewTip) return;
     if (!manualPadMode) {
-      els.previewTip.innerHTML = "Crop box is ready. Drag or resize it around the strip, or tap <strong>Manual Pads</strong> for precise pad sampling.";
+      els.previewTip.innerHTML = "Tap <strong>Manual Pads</strong> to select each pad center from top to bottom.";
       return;
     }
-    const next = Math.min(manualPadMarkers.length + 1, EASYTEST_CFG.pads.length);
-    const complete = manualPadMarkers.length === EASYTEST_CFG.pads.length;
+    const profile = activeStripProfile();
+    const next = Math.min(manualPadMarkers.length + 1, profile.pads.length);
+    const complete = manualPadMarkers.length === profile.pads.length;
+    const nextPad = profile.pads[manualPadMarkers.length];
     els.previewTip.innerHTML = complete
-      ? `<strong>Pad ${EASYTEST_CFG.pads.length} of ${EASYTEST_CFG.pads.length}</strong> selected. Tap <strong>Analyze</strong> to read the strip.`
-      : `<strong>Tap each pad center from top to bottom.</strong> Pad ${next} of ${EASYTEST_CFG.pads.length}.`;
+      ? `<strong>Pad ${profile.pads.length} of ${profile.pads.length}</strong> selected. Tap <strong>Analyze</strong> to read the strip.`
+      : `<strong>Tap each pad center from top to bottom.</strong> Pad ${next} of ${profile.pads.length}: <strong>${escapeHtml(nextPad?.label || "Next pad")}</strong>.`;
   }
 
   function setManualPadButtons() {
     const active = manualPadMode;
-    if (els.btnUseCrop) els.btnUseCrop.hidden = active;
     if (els.btnManualPads) {
       els.btnManualPads.hidden = active;
       els.btnManualPads.textContent = "Manual Pads";
@@ -1489,11 +1613,10 @@ export function initPoolTestScanner(root) {
       els.btnUndoManualPad.disabled = !active || manualPadMarkers.length === 0;
     }
     if (els.btnUseManualPads) {
-      els.btnUseManualPads.hidden = !active || manualPadMarkers.length !== EASYTEST_CFG.pads.length;
-      els.btnUseManualPads.disabled = manualPadMarkers.length !== EASYTEST_CFG.pads.length;
+      els.btnUseManualPads.hidden = !active || manualPadMarkers.length !== activeStripProfile().pads.length;
+      els.btnUseManualPads.disabled = manualPadMarkers.length !== activeStripProfile().pads.length;
       els.btnUseManualPads.textContent = "Analyze";
     }
-    if (els.cropBox) els.cropBox.style.display = active ? "none" : "";
     if (els.manualPadLayer) els.manualPadLayer.hidden = !active;
     updatePreviewInstruction();
   }
@@ -1512,14 +1635,8 @@ export function initPoolTestScanner(root) {
   }
 
   function resetPreviewControls() {
-    if (manualPadMode) {
-      resetManualPadSelection(true);
-      setStatus("Manual pads reset. Tap each pad center from top to bottom.");
-      return;
-    }
-    resetManualPadSelection(false);
-    setDefaultCropBox();
-    setStatus("Preview reset. Adjust the crop box or tap Manual Pads.");
+    resetManualPadSelection(true);
+    setStatus(`Manual pads reset. Tap each ${activeStripProfile().name} pad center from top to bottom.`);
   }
 
   function renderManualPadMarkers() {
@@ -1532,7 +1649,7 @@ export function initPoolTestScanner(root) {
     const innerW = outerW * 0.55;
     const innerH = outerH * 0.55;
     els.manualPadLayer.innerHTML = manualPadMarkers.map((marker, index) => {
-      const pad = EASYTEST_CFG.pads[index];
+      const pad = activeStripProfile().pads[index];
       const left = Number.isFinite(marker.stageX) ? marker.stageX : (previewFit.dx + marker.imageX * previewFit.scale);
       const top = Number.isFinite(marker.stageY) ? marker.stageY : (previewFit.dy + marker.imageY * previewFit.scale);
       return `
@@ -1546,109 +1663,77 @@ export function initPoolTestScanner(root) {
   }
 
   function nextManualPadLabel() {
-    const pad = EASYTEST_CFG.pads[manualPadMarkers.length];
-    return pad ? `${pad.label} (${manualPadMarkers.length + 1}/7)` : "all pads";
+    const profile = activeStripProfile();
+    const pad = profile.pads[manualPadMarkers.length];
+    return pad ? `${pad.label} (${manualPadMarkers.length + 1}/${profile.pads.length})` : "all pads";
   }
 
   function toggleManualPadMode() {
     if (!previewImg) return;
     manualPadMode = true;
     manualPadMarkers = [];
-    setStatus("Manual pad mode: tap each pad center from top to bottom.");
+    setStatus(`Manual pad mode: tap each ${activeStripProfile().name} pad center from top to bottom.`);
     renderManualPadMarkers();
     setManualPadButtons();
   }
 
   function addManualPadMarker(ev) {
-    if (!manualPadMode || !previewImg || manualPadMarkers.length >= EASYTEST_CFG.pads.length) return;
+    if (!manualPadMode || !previewImg || manualPadMarkers.length >= activeStripProfile().pads.length) return;
     const point = previewPointToImagePixels(ev.clientX, ev.clientY);
     if (!point) {
       setStatus("Tap directly on the photo area for manual pad selection.");
       return;
     }
-    const ctx = fullPreviewImageContext();
-    let snapped = point;
-    let wasCentered = false;
-    if (ctx) {
-      const sampled = sampleManualPadRegion(ctx, point, {
-        outerWidth: 31,
-        outerHeight: 31,
-        innerScale: 0.72,
-        searchRadius: 10,
-        searchStep: 3,
-        nearWhiteFriendly: true
-      });
-      const sample = sampled.__manualSample;
-      if (sample) {
-        const imageX = sample.selectedCenterX ?? point.imageX;
-        let imageY = sample.selectedCenterY ?? point.imageY;
-        const prevY = manualPadMarkers[manualPadMarkers.length - 1]?.imageY;
-        if (Number.isFinite(prevY)) imageY = Math.max(prevY + 10, imageY);
-        imageY = clampNumber(imageY, 0, (previewImg.naturalHeight || previewImg.height || imageY));
-        snapped = {
-          imageX,
-          imageY,
-          stageX: previewFit.dx + imageX * previewFit.scale,
-          stageY: previewFit.dy + imageY * previewFit.scale
-        };
-        wasCentered = Math.hypot(imageX - point.imageX, imageY - point.imageY) >= 2;
-      }
+    const prev = manualPadMarkers[manualPadMarkers.length - 1];
+    if (prev && point.imageY <= prev.imageY) {
+      setStatus(`Pad order must be top to bottom. Tap ${nextManualPadLabel()} below the previous marker.`);
+      return;
     }
-    manualPadMarkers.push(snapped);
+    const tooClose = manualPadMarkers.some(marker => Math.hypot(marker.imageX - point.imageX, marker.imageY - point.imageY) < 8);
+    if (tooClose) {
+      setStatus("That marker is too close to an existing pad. Tap the next pad center.");
+      return;
+    }
+    manualPadMarkers.push(point);
     renderManualPadMarkers();
     saveManualPadPositions();
     updatePreviewInstruction();
-    setStatus(manualPadMarkers.length === EASYTEST_CFG.pads.length
-      ? `Manual pad markers complete. ${wasCentered ? "Pad centered automatically. " : ""}Tap Analyze to read the strip.`
-      : `${wasCentered ? "Pad centered automatically. " : ""}Tap ${nextManualPadLabel()}.`);
+    setStatus(manualPadMarkers.length === activeStripProfile().pads.length
+      ? "Manual pad markers complete. Tap Analyze to read the strip."
+      : `Tap ${nextManualPadLabel()}.`);
   }
 
   function removeManualPadMarker(index = manualPadMarkers.length - 1) {
     if (!manualPadMode || !manualPadMarkers.length) return;
     const removeIndex = Math.max(0, Math.min(manualPadMarkers.length - 1, Number(index)));
-    const pad = EASYTEST_CFG.pads[removeIndex];
+    const pad = activeStripProfile().pads[removeIndex];
     manualPadMarkers.splice(removeIndex, 1);
     renderManualPadMarkers();
     saveManualPadPositions();
     updatePreviewInstruction();
     setStatus(`${pad?.label || "Pad"} marker removed. Tap ${nextManualPadLabel()}.`);
   }
-  function getCropRectInImagePixels() {
-    if (!previewFit || !els.cropBox || !els.previewStage) return null;
 
-    const stageRect = els.previewStage.getBoundingClientRect();
-    const boxRect = els.cropBox.getBoundingClientRect();
-
-    const bx = boxRect.left - stageRect.left;
-    const by = boxRect.top - stageRect.top;
-    const bw = boxRect.width;
-    const bh = boxRect.height;
-
-    const { scale, dx, dy, iw, ih } = previewFit;
-
-    // clamp crop to drawn image area
-    const imgX1 = dx, imgY1 = dy;
-    const imgX2 = dx + iw * scale;
-    const imgY2 = dy + ih * scale;
-
-    const x1 = Math.max(imgX1, bx);
-    const y1 = Math.max(imgY1, by);
-    const x2 = Math.min(imgX2, bx + bw);
-    const y2 = Math.min(imgY2, by + bh);
-
-    const sw = (x2 - x1) / scale;
-    const sh = (y2 - y1) / scale;
-    if (sw < 10 || sh < 10) return null;
-
-    const sx = (x1 - dx) / scale;
-    const sy = (y1 - dy) / scale;
-
-    return {
-      sx: Math.max(0, Math.round(sx)),
-      sy: Math.max(0, Math.round(sy)),
-      sw: Math.min(iw, Math.round(sw)),
-      sh: Math.min(ih, Math.round(sh))
-    };
+  function validateManualPadSelection() {
+    const profile = activeStripProfile();
+    if (!previewImg) return { ok: false, message: "Load a strip photo before selecting pads." };
+    if (manualPadMarkers.length !== profile.pads.length) {
+      return { ok: false, message: `Select all ${profile.pads.length} ${profile.name} pads from top to bottom before analysis.` };
+    }
+    for (let index = 0; index < manualPadMarkers.length; index++) {
+      const marker = manualPadMarkers[index];
+      if (!Number.isFinite(Number(marker.imageX)) || !Number.isFinite(Number(marker.imageY))) {
+        return { ok: false, message: `Pad ${index + 1} marker is invalid. Reset and select pads again.` };
+      }
+      if (index > 0 && Number(marker.imageY) <= Number(manualPadMarkers[index - 1].imageY)) {
+        return { ok: false, message: `Pad ${index + 1} is not below pad ${index}. Reset and select pads top to bottom.` };
+      }
+      const duplicate = manualPadMarkers.some((other, otherIndex) => otherIndex !== index && Math.hypot(other.imageX - marker.imageX, other.imageY - marker.imageY) < 8);
+      if (duplicate) {
+        return { ok: false, message: `Pad ${index + 1} overlaps another marker. Reset and select each pad once.` };
+      }
+    }
+    return { ok: true };
   }
 
   function medianFromSorted(vals) {
@@ -1889,20 +1974,21 @@ export function initPoolTestScanner(root) {
   }
 
   function buildManualSamplingOverlay(ctx, padColors) {
+    const pads = activeStripProfile().pads;
     const diagnostics = {
-      detectedSegments: EASYTEST_CFG.pads.map(pad => {
+      detectedSegments: pads.map(pad => {
         const sample = padColors[pad.key]?.__manualSample;
         return sample ? { start: sample.outerY ?? sample.y, end: (sample.outerY ?? sample.y) + (sample.outerH ?? sample.h), x1: sample.outerX ?? sample.x, x2: (sample.outerX ?? sample.x) + (sample.outerW ?? sample.w) } : null;
       }).filter(Boolean),
-      detectedPadCenters: EASYTEST_CFG.pads.map(pad => {
+      detectedPadCenters: pads.map(pad => {
         const sample = padColors[pad.key]?.__manualSample;
         return sample ? { x: sample.selectedCenterX ?? sample.centerX, y: sample.selectedCenterY ?? sample.centerY } : null;
       }).filter(Boolean),
-      innerSegments: EASYTEST_CFG.pads.map(pad => {
+      innerSegments: pads.map(pad => {
         const sample = padColors[pad.key]?.__manualSample;
         return sample ? { start: sample.y, end: sample.y + sample.h, x1: sample.x, x2: sample.x + sample.w } : null;
       }).filter(Boolean),
-      sampledPixels: Object.fromEntries(EASYTEST_CFG.pads.map(pad => [pad.key, padColors[pad.key]?.__manualSample?.points || []]))
+      sampledPixels: Object.fromEntries(pads.map(pad => [pad.key, padColors[pad.key]?.__manualSample?.points || []]))
     };
     return buildSamplingDebugOverlay(ctx, diagnostics);
   }
@@ -1927,7 +2013,6 @@ export function initPoolTestScanner(root) {
     chartCalibrationSamples = [];
     manualPadMode = false;
     manualPadMarkers = [];
-    if (els.cropBox) els.cropBox.style.display = "none";
     if (els.manualPadLayer) els.manualPadLayer.hidden = false;
     renderChartCalibrationMarkers();
     setManualPadButtons();
@@ -2012,8 +2097,10 @@ export function initPoolTestScanner(root) {
     }
   }
   function analyzeFromManualPads() {
-    if (!previewImg || manualPadMarkers.length !== EASYTEST_CFG.pads.length) {
-      setStatus("Select all 7 manual pad markers first.");
+    const profile = activeStripProfile();
+    const validation = validateManualPadSelection();
+    if (!validation.ok) {
+      setStatus(validation.message);
       return null;
     }
 
@@ -2033,11 +2120,11 @@ export function initPoolTestScanner(root) {
       outerWidth: 40,
       outerHeight,
       innerScale: 0.55,
-      searchRadius: 10,
+      searchRadius: 0,
       searchStep: 4
     };
     const padColors = {};
-    EASYTEST_CFG.pads.forEach((pad, index) => {
+    profile.pads.forEach((pad, index) => {
       const prevY = index > 0 ? Number(manualPadMarkers[index - 1]?.imageY) : null;
       const curY = Number(manualPadMarkers[index]?.imageY);
       const nextY = index < manualPadMarkers.length - 1 ? Number(manualPadMarkers[index + 1]?.imageY) : null;
@@ -2048,13 +2135,6 @@ export function initPoolTestScanner(root) {
         minCenterY: Number.isFinite(prevY) && Number.isFinite(curY) ? (prevY + curY) / 2 : 0,
         maxCenterY: Number.isFinite(nextY) && Number.isFinite(curY) ? (curY + nextY) / 2 : ih
       });
-      const sample = padColors[pad.key]?.__manualSample;
-      if (sample?.selectedCenterX != null && sample?.selectedCenterY != null) {
-        manualPadMarkers[index] = {
-          imageX: Number(sample.selectedCenterX),
-          imageY: Number(sample.selectedCenterY)
-        };
-      }
     });
     saveManualPadPositions();
     renderManualPadMarkers();
@@ -2068,7 +2148,7 @@ export function initPoolTestScanner(root) {
         manualSelection: true,
         detectedPadCenters: manualPadMarkers.map(marker => ({ x: Math.round(marker.imageX), y: Math.round(marker.imageY) })),
         padSpacingConsistency: null,
-        sampledPixels: Object.fromEntries(EASYTEST_CFG.pads.map(pad => [pad.key, padColors[pad.key]?.__manualSample?.points || []])),
+        sampledPixels: Object.fromEntries(profile.pads.map(pad => [pad.key, padColors[pad.key]?.__manualSample?.points || []])),
         overlayDataUrl: buildManualSamplingOverlay(ctx, padColors)
       }
     });
@@ -2104,7 +2184,7 @@ export function initPoolTestScanner(root) {
     scanQuality.details.frameCount = 1;
     scanQuality.details.detectedPadCenters = padColors.__samplingDiagnostics.detectedPadCenters;
     scanQuality.details.samplingOverlayDataUrl = padColors.__samplingDiagnostics.overlayDataUrl;
-    scanQuality.details.manualSampleRegion = `40x${outerHeight} pad box with 55% inner-core median LAB; offset search +/-10px`;
+    scanQuality.details.manualSampleRegion = `40x${outerHeight} pad box with 55% inner-core median LAB; manual center, no offset search`;
     scanQuality.details.geometryConfidence = 1;
     scanQuality.details.colorConfidence = Number(clamp01(colorQualityScore - sampleQualityPenalty).toFixed(2));
     scanQuality.details.manualAverageSampleVariance = Number(manualAvgVariance.toFixed(2));
@@ -2134,126 +2214,6 @@ export function initPoolTestScanner(root) {
     hidePreview();
     return vals;
   }
-  function analyzeFromPreviewCrop() {
-    const r = getCropRectInImagePixels();
-    if (!r || !previewImg) {
-      setStatus("Crop box is not over the image (or too small).");
-      return null;
-    }
-
-    const maxW = 1600;
-    const s = Math.min(1, maxW / r.sw);
-
-    els.canvas.width = Math.round(r.sw * s);
-    els.canvas.height = Math.round(r.sh * s);
-
-    const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
-    ctx.drawImage(previewImg, r.sx, r.sy, r.sw, r.sh, 0, 0, els.canvas.width, els.canvas.height);
-
-    hidePreview();
-    return analyze(ctx);
-  }
-
-  // Crop box drag + resize (pointer-friendly)
-  (function wireCropBox() {
-    if (!els.cropBox || !els.cropHandle || !els.previewStage) return;
-
-    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-    let mode = null; // "drag" | "resize"
-    let start = null;
-    let captureEl = null;
-
-    function pctFromPx(x, y, w, h) {
-      const stage = els.previewStage.getBoundingClientRect();
-      return {
-        left: (x / stage.width) * 100,
-        top: (y / stage.height) * 100,
-        width: (w / stage.width) * 100,
-        height: (h / stage.height) * 100
-      };
-    }
-
-    function boxPx() {
-      const stage = els.previewStage.getBoundingClientRect();
-      const box = els.cropBox.getBoundingClientRect();
-      return {
-        x: box.left - stage.left,
-        y: box.top - stage.top,
-        w: box.width,
-        h: box.height,
-        sw: stage.width,
-        sh: stage.height
-      };
-    }
-
-    function down(ev, which) {
-      ev.preventDefault();
-      ev.stopPropagation();
-      mode = which;
-      captureEl = ev.currentTarget;
-
-      const b = boxPx();
-      start = {
-        pid: ev.pointerId,
-        px: ev.clientX,
-        py: ev.clientY,
-        x: b.x, y: b.y, w: b.w, h: b.h, sw: b.sw, sh: b.sh
-      };
-
-      try { captureEl?.setPointerCapture?.(ev.pointerId); } catch {}
-    }
-
-    function move(ev) {
-      if (!mode || !start) return;
-      ev.preventDefault();
-
-      const dx = ev.clientX - start.px;
-      const dy = ev.clientY - start.py;
-
-      let x = start.x, y = start.y, w = start.w, h = start.h;
-
-      if (mode === "drag") {
-        x = clamp(start.x + dx, 0, start.sw - start.w);
-        y = clamp(start.y + dy, 0, start.sh - start.h);
-      } else {
-        const minW = 40, minH = 80;
-        w = clamp(start.w + dx, minW, start.sw - start.x);
-        h = clamp(start.h + dy, minH, start.sh - start.y);
-      }
-
-      const p = pctFromPx(x, y, w, h);
-      els.cropBox.style.left = `${p.left}%`;
-      els.cropBox.style.top = `${p.top}%`;
-      els.cropBox.style.width = `${p.width}%`;
-      els.cropBox.style.height = `${p.height}%`;
-    }
-
-    function up(ev) {
-      if (!mode) return;
-      mode = null;
-      start = null;
-
-      try {
-        if (captureEl?.hasPointerCapture?.(ev.pointerId)) {
-          captureEl.releasePointerCapture(ev.pointerId);
-        }
-      } catch {} finally {
-        captureEl = null;
-      }
-    }
-
-    els.cropBox.addEventListener("pointerdown", (ev) => {
-      if (ev.target === els.cropHandle) return;
-      down(ev, "drag");
-    });
-
-    els.cropHandle.addEventListener("pointerdown", (ev) => down(ev, "resize"));
-
-    window.addEventListener("pointermove", move, { passive: false });
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", up);
-  })();
-
   window.addEventListener("resize", () => {
     if (!previewImg) return;
     drawPreviewCanvas();
@@ -2262,27 +2222,6 @@ export function initPoolTestScanner(root) {
   // ================================================================
   // 9) Sampling
   // ================================================================
-
-  function sampleStripe(ctx) {
-    const w = ctx.canvas.width;
-    const h = ctx.canvas.height;
-    const roi = {
-      x: Math.round(w * 0.2),
-      y: Math.round(h * 0.45),
-      w: Math.round(w * 0.6),
-      h: Math.round(h * 0.1)
-    };
-    const data = ctx.getImageData(roi.x, roi.y, roi.w, roi.h).data;
-
-    let r = 0, g = 0, b = 0, c = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      r += data[i] / whiteBalance.r;
-      g += data[i + 1] / whiteBalance.g;
-      b += data[i + 2] / whiteBalance.b;
-      c++;
-    }
-    return { r: r / c, g: g / c, b: b / c };
-  }
 
   function sampleNeutralReference(ctx) {
     const w = ctx.canvas.width;
@@ -2687,245 +2626,6 @@ export function initPoolTestScanner(root) {
     try { return out.toDataURL("image/png"); } catch { return null; }
   }
 
-  // Robust pad sampling: find plausible pad-width color blobs, then sample only their inner pixels.
-  function samplePadsEasyTest(ctx) {
-    const w = ctx.canvas.width;
-    const h = ctx.canvas.height;
-    const img = ctx.getImageData(0, 0, w, h).data;
-
-    function getPixel(x, y) {
-      const xx = clampNumber(Math.round(x), 0, w - 1);
-      const yy = clampNumber(Math.round(y), 0, h - 1);
-      const i = (yy * w + xx) * 4;
-      const r = img[i], g = img[i + 1], b = img[i + 2];
-      const v = Math.max(r, g, b);
-      const sat = v === 0 ? 0 : (v - Math.min(r, g, b)) / v;
-      const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-      return { r, g, b, v, sat, luma };
-    }
-
-    function estimatePaperLab() {
-      const samples = [];
-      const step = Math.max(3, Math.floor(Math.min(w, h) / 95));
-      for (let y = 0; y < h; y += step) {
-        for (let x = 0; x < w; x += step) {
-          const p = getPixel(x, y);
-          if (p.v > 120 && p.v < 252 && p.sat < 0.16) {
-            samples.push({ r: p.r, g: p.g, b: p.b, luma: p.luma });
-          }
-        }
-      }
-      if (samples.length < 25) return null;
-      samples.sort((a, b) => b.luma - a.luma);
-      const bright = samples.slice(0, Math.max(25, Math.floor(samples.length * 0.35)));
-      return rgbToLab({
-        r: medianNumber(bright.map(p => p.r)),
-        g: medianNumber(bright.map(p => p.g)),
-        b: medianNumber(bright.map(p => p.b))
-      });
-    }
-
-    const paperLab = estimatePaperLab();
-
-    function candidateEvidence(p) {
-      const lab = rgbToLab({ r: p.r, g: p.g, b: p.b });
-      const paperDeltaE = paperLab ? deltaE2000(lab, paperLab) : 0;
-      return { lab, paperDeltaE };
-    }
-
-    function isCandidatePixel(p) {
-      if (p.v < 42 || p.v > 248) return false;
-      const evidence = candidateEvidence(p);
-      if (paperLab && evidence.paperDeltaE < 7.5) return false;
-      if (evidence.paperDeltaE >= 10) return true;
-      if (p.sat > 0.18) return true;
-      return p.sat > 0.115 && p.luma < 210;
-    }
-
-    const xStep = Math.max(1, Math.floor(w / 260));
-    const yStep = Math.max(1, Math.floor(h / 900));
-    const minRunW = Math.max(10, Math.floor(w * 0.025));
-    const maxRunW = Math.max(minRunW + 4, Math.floor(w * 0.18));
-    const minSegH = Math.max(10, Math.floor(h * 0.012));
-    const maxSegH = Math.max(minSegH + 8, Math.floor(h * 0.12));
-    const rows = [];
-
-    for (let y = 0; y < h; y += yStep) {
-      const runs = [];
-      let inRun = false;
-      let startX = 0;
-      let satSum = 0;
-      let count = 0;
-
-      for (let x = 0; x < w; x += xStep) {
-        const p = getPixel(x, y);
-        const candidate = isCandidatePixel(p);
-        if (candidate && !inRun) {
-          inRun = true;
-          startX = x;
-          satSum = 0;
-          count = 0;
-        }
-        if (candidate && inRun) {
-          satSum += p.sat;
-          count++;
-        }
-        if ((!candidate || x + xStep >= w) && inRun) {
-          const endX = candidate && x + xStep >= w ? x : x - xStep;
-          const runW = endX - startX + xStep;
-          if (runW >= minRunW && runW <= maxRunW) {
-            runs.push({ x1: startX, x2: endX, width: runW, centerX: (startX + endX) / 2, score: runW * (count ? satSum / count : 0) });
-          }
-          inRun = false;
-        }
-      }
-
-      if (!runs.length) continue;
-      runs.sort((a, b) => {
-        const centerA = Math.abs(a.centerX - w * 0.5) / w;
-        const centerB = Math.abs(b.centerX - w * 0.5) / w;
-        return (b.score - centerB * 8) - (a.score - centerA * 8);
-      });
-      rows.push({ y, ...runs[0] });
-    }
-
-    const segments = [];
-    let active = null;
-    const maxGap = yStep * 3;
-    rows.forEach(row => {
-      if (!active || row.y - active.lastY > maxGap || Math.abs(row.centerX - active.centerXs[active.centerXs.length - 1]) > maxRunW) {
-        if (active) segments.push(active);
-        active = { start: row.y, end: row.y, lastY: row.y, centerXs: [row.centerX], widths: [row.width], x1s: [row.x1], x2s: [row.x2], rowCount: 1 };
-      } else {
-        active.end = row.y;
-        active.lastY = row.y;
-        active.centerXs.push(row.centerX);
-        active.widths.push(row.width);
-        active.x1s.push(row.x1);
-        active.x2s.push(row.x2);
-        active.rowCount++;
-      }
-    });
-    if (active) segments.push(active);
-
-    const plausible = segments
-      .map(seg => ({
-        start: seg.start,
-        end: seg.end,
-        height: seg.end - seg.start + yStep,
-        centerX: medianNumber(seg.centerXs),
-        width: medianNumber(seg.widths),
-        x1: medianNumber(seg.x1s),
-        x2: medianNumber(seg.x2s),
-        rowCount: seg.rowCount
-      }))
-      .filter(seg => seg.height >= minSegH && seg.height <= maxSegH && seg.width >= minRunW && seg.width <= maxRunW)
-      .sort((a, b) => a.start - b.start);
-
-    if (plausible.length < 7) {
-      const empty = {};
-      Object.defineProperty(empty, "__samplingDiagnostics", {
-        enumerable: false,
-        value: {
-          detectionMethod: "row-runs",
-          detectedPadCenters: [],
-          padSpacingConsistency: 0,
-          padSpacingVariance: null,
-          detectedSegments: plausible,
-          sampledPixels: {},
-          paperLab,
-          samplingWarning: `Only found ${plausible.length}/7 plausible pad blobs. The crop may include too much background or the pad colors may be washed out.`
-        }
-      });
-      return empty;
-    }
-
-    const top7 = plausible.slice(0, 7);
-    const padCenters = top7.map(seg => ({ x: Math.round(seg.centerX), y: Math.round((seg.start + seg.end) / 2) }));
-    const spacings = [];
-    for (let i = 1; i < padCenters.length; i++) spacings.push(padCenters[i].y - padCenters[i - 1].y);
-    const avgSpacing = spacings.length ? spacings.reduce((sum, v) => sum + v, 0) / spacings.length : 0;
-    const spacingVariance = spacings.length && avgSpacing
-      ? spacings.reduce((sum, v) => sum + Math.abs(v - avgSpacing), 0) / (spacings.length * avgSpacing)
-      : null;
-
-    const padColors = {};
-    const sampledPixels = {};
-
-    function median(vals) {
-      const a = vals.slice().sort((p, q) => p - q);
-      return a[Math.floor(a.length / 2)];
-    }
-    function mad(vals, m) {
-      const a = vals.map(v => Math.abs(v - m)).sort((p, q) => p - q);
-      return a[Math.floor(a.length / 2)];
-    }
-
-    for (let i = 0; i < 7; i++) {
-      const seg = top7[i];
-      const centerX = Math.round(seg.centerX);
-      const centerY = Math.round((seg.start + seg.end) / 2);
-      const sampleW = Math.max(8, Math.floor(seg.width * 0.42));
-      const sampleH = Math.max(8, Math.floor(seg.height * 0.42));
-      const x1 = clampNumber(centerX - Math.floor(sampleW / 2), 0, w - 1);
-      const y1 = clampNumber(centerY - Math.floor(sampleH / 2), 0, h - 1);
-      const x2 = clampNumber(centerX + Math.floor(sampleW / 2), 0, w - 1);
-      const y2 = clampNumber(centerY + Math.floor(sampleH / 2), 0, h - 1);
-
-      const samples = [];
-      const points = [];
-      const gx = 9, gy = 9;
-
-      for (let yy = 0; yy < gy; yy++) {
-        const py = Math.round(y1 + (yy + 0.5) * ((y2 - y1) / gy));
-        for (let xx = 0; xx < gx; xx++) {
-          const px = Math.round(x1 + (xx + 0.5) * ((x2 - x1) / gx));
-          const p = getPixel(px, py);
-          const rr = p.r / whiteBalance.r;
-          const gg = p.g / whiteBalance.g;
-          const bb = p.b / whiteBalance.b;
-          samples.push([rr, gg, bb]);
-          points.push({ x: px, y: py, r: Math.round(p.r), g: Math.round(p.g), b: Math.round(p.b) });
-        }
-      }
-
-      const rs = samples.map(sv => sv[0]);
-      const gs = samples.map(sv => sv[1]);
-      const bs = samples.map(sv => sv[2]);
-
-      const mr = median(rs), mg = median(gs), mb = median(bs);
-      const vr = mad(rs, mr), vg = mad(gs, mg), vb = mad(bs, mb);
-
-      const key = EASYTEST_CFG.pads[i].key;
-      sampledPixels[key] = points;
-      padColors[key] = { r: mr, g: mg, b: mb, __var: (vr + vg + vb) / 3 };
-    }
-
-    const diagnostics = {
-      detectionMethod: "row-runs",
-      detectedPadCenters: padCenters,
-      padSpacingConsistency: spacingVariance == null ? null : Number(Math.max(0, 1 - spacingVariance).toFixed(2)),
-      padSpacingVariance: spacingVariance == null ? null : Number(spacingVariance.toFixed(3)),
-      detectedSegments: top7.map(seg => ({
-        start: Math.round(seg.start),
-        end: Math.round(seg.end),
-        x1: Math.round(seg.x1),
-        x2: Math.round(seg.x2),
-        width: Math.round(seg.width),
-        height: Math.round(seg.height)
-      })),
-      sampledPixels,
-      paperLab
-    };
-    diagnostics.overlayDataUrl = buildSamplingDebugOverlay(ctx, diagnostics);
-
-    Object.defineProperty(padColors, "__samplingDiagnostics", {
-      enumerable: false,
-      value: diagnostics
-    });
-
-    return padColors;
-  }
   function setWBAt(x, y) {
     const ctx = els.canvas.getContext("2d", { willReadFrequently: true });
     const size = 21;
@@ -2965,6 +2665,10 @@ export function initPoolTestScanner(root) {
   let lastSanityCheck = null;
   const CHEM_CONTEXT_KEY = "pt_sanity_context_v1";
   const POOL_CONTEXT_KEY = "pt_pool_context_v1";
+  const SENSOR_LOCATION_KEY = "aqualab_sensor_location";
+  const SENSOR_WEATHER_CACHE_KEY = "aqualab_sensor_weather_cache";
+  let weatherContextRequestInFlight = false;
+  let deviceWeatherLocationRequested = false;
   const POOL_CONTEXT_LABELS = {
     waterAppearance: {
       crystalClear: "Crystal Clear",
@@ -3005,15 +2709,18 @@ export function initPoolTestScanner(root) {
     return {
       waterAppearance: saved.waterAppearance || "crystalClear",
       recentRain: saved.recentRain || "none",
+      recentRainSource: saved.recentRainSource || "manual",
       poolUsage: saved.poolUsage || "none",
       surfaceCondition: saved.surfaceCondition || "normal"
     };
   }
 
   function savePoolContext(context) {
+    const previous = loadJson(POOL_CONTEXT_KEY, null) || {};
     const next = {
       waterAppearance: context.waterAppearance || "crystalClear",
       recentRain: context.recentRain || "none",
+      recentRainSource: context.recentRainSource || previous.recentRainSource || "manual",
       poolUsage: context.poolUsage || "none",
       surfaceCondition: context.surfaceCondition || "normal",
       updatedAt: new Date().toISOString()
@@ -3023,11 +2730,14 @@ export function initPoolTestScanner(root) {
   }
 
   function getPoolContextFromInputs() {
+    const saved = loadPoolContext();
+    const selectedRain = els.recentRain?.value || saved.recentRain;
     return savePoolContext({
-      waterAppearance: els.waterAppearance?.value || loadPoolContext().waterAppearance,
-      recentRain: els.recentRain?.value || loadPoolContext().recentRain,
-      poolUsage: els.poolUsage?.value || loadPoolContext().poolUsage,
-      surfaceCondition: els.surfaceCondition?.value || loadPoolContext().surfaceCondition
+      waterAppearance: els.waterAppearance?.value || saved.waterAppearance,
+      recentRain: selectedRain,
+      recentRainSource: selectedRain === saved.recentRain && saved.recentRainSource === "weather" ? "weather" : "manual",
+      poolUsage: els.poolUsage?.value || saved.poolUsage,
+      surfaceCondition: els.surfaceCondition?.value || saved.surfaceCondition
     });
   }
 
@@ -3043,25 +2753,147 @@ export function initPoolTestScanner(root) {
     return POOL_CONTEXT_LABELS[group]?.[value] || value || "Not provided";
   }
 
-  function getWeatherContextSuggestion() {
+  function getCachedWeatherContext() {
+    const cached = loadJson(SENSOR_WEATHER_CACHE_KEY, null);
+    return cached && typeof cached === "object" ? cached : null;
+  }
+
+  function getSavedSensorWeatherLocation() {
+    const saved = loadJson(SENSOR_LOCATION_KEY, null);
+    const gps = saved?.gps;
+    const latitude = Number(gps?.latitude);
+    const longitude = Number(gps?.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    return { latitude, longitude, source: "sensor-array-gps" };
+  }
+
+  function getDeviceWeatherLocation() {
+    return new Promise(resolve => {
+      if (!navigator.geolocation || deviceWeatherLocationRequested) {
+        resolve(null);
+        return;
+      }
+      deviceWeatherLocationRequested = true;
+      navigator.geolocation.getCurrentPosition(
+        position => resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          source: "device-gps"
+        }),
+        () => resolve(null),
+        { enableHighAccuracy: false, maximumAge: 30 * 60 * 1000, timeout: 7000 }
+      );
+    });
+  }
+
+  function isUsableWeatherObject(weather) {
+    if (!weather || typeof weather !== "object") return false;
+    return Number.isFinite(Number(weather.airTemperatureF))
+      || Number.isFinite(Number(weather.airTemperatureC))
+      || Number.isFinite(Number(weather.recentRainInches))
+      || Number.isFinite(Number(weather.windSpeedMph))
+      || Boolean(weather.condition);
+  }
+
+  function normalizeStripWeatherState(context = {}) {
+    const weather = isUsableWeatherObject(context.weather) ? context.weather : null;
+    const requestedMode = context.mode === "live" ? "live" : context.mode === "cached" ? "cached" : "unavailable";
+    const mode = weather
+      ? requestedMode === "live" ? "live" : "cached"
+      : "unavailable";
     return {
-      source: "placeholder",
-      available: false,
-      recentRain: null,
-      temperatureF: null,
-      uvIndex: null,
-      windMph: null,
-      forecastStorms: null,
-      summary: "Weather suggestions are not connected yet. Confirm conditions manually."
+      ...context,
+      weather,
+      mode,
+      available: Boolean(weather),
+      summary: weather ? getWeatherServiceSync().summarizeWeather(weather) : WEATHER_UNAVAILABLE_SUMMARY
     };
   }
 
-  function renderWeatherContextSuggestion() {
-    if (!els.weatherSummary) return;
-    const weather = getWeatherContextSuggestion();
-    els.weatherSummary.textContent = weather.available
-      ? weather.summary
-      : "Weather suggestions are not connected yet. Confirm conditions manually.";
+  function applyWeatherRainSuggestion(weather) {
+    if (!weather || !els.recentRain) return;
+    const suggestedRain = getWeatherServiceSync().classifyRecentRain(weather.recentRainInches);
+    const current = loadPoolContext();
+    const userHasManualRain = current.recentRainSource === "manual" && current.recentRain !== "none";
+    if (userHasManualRain) return;
+    els.recentRain.value = suggestedRain;
+    savePoolContext({
+      ...current,
+      recentRain: suggestedRain,
+      recentRainSource: "weather"
+    });
+  }
+
+  async function getWeatherContextSuggestion({ allowDeviceLocation = false } = {}) {
+    const cached = getCachedWeatherContext();
+    const savedLocation = getSavedSensorWeatherLocation();
+    const cachedMatchesSavedLocation = cached && savedLocation
+      && Math.abs(Number(cached.latitude) - savedLocation.latitude) < 0.05
+      && Math.abs(Number(cached.longitude) - savedLocation.longitude) < 0.05;
+
+    const weatherService = await getWeatherService();
+
+    if (cached && weatherService.isWeatherFresh(cached) && (!savedLocation || cachedMatchesSavedLocation)) {
+      return { available: true, mode: "live", weather: cached, summary: weatherService.summarizeWeather(cached) };
+    }
+    if (cached && (!navigator.onLine || !savedLocation || cachedMatchesSavedLocation) && !allowDeviceLocation) {
+      return { available: true, mode: weatherService.weatherFreshnessLabel(cached), weather: cached, summary: weatherService.summarizeWeather(cached) };
+    }
+
+    const location = savedLocation || (allowDeviceLocation ? await getDeviceWeatherLocation() : null);
+    if (!location || navigator.onLine === false) {
+      return {
+        available: Boolean(cached),
+        mode: cached ? weatherService.weatherFreshnessLabel(cached) : "unavailable",
+        weather: cached,
+        summary: cached ? weatherService.summarizeWeather(cached) : WEATHER_UNAVAILABLE_SUMMARY
+      };
+    }
+
+    const weather = await weatherService.fetchOpenMeteoWeather({
+      latitude: location.latitude,
+      longitude: location.longitude,
+      timeoutMs: 8000
+    });
+    saveJson(SENSOR_WEATHER_CACHE_KEY, weather);
+    return { available: true, mode: "live", weather, summary: weatherService.summarizeWeather(weather) };
+  }
+
+  function setStripWeatherStatus(mode) {
+    if (!els.weatherStatus) return;
+    const normalized = mode === "live" ? "live" : mode === "cached" ? "cached" : "unavailable";
+    els.weatherStatus.textContent = normalized === "live" ? "Live Weather" : normalized === "cached" ? "Cached Weather" : "Weather Unavailable";
+    els.weatherStatus.classList.toggle("ok", normalized === "live");
+    els.weatherStatus.classList.toggle("warn", normalized === "cached");
+    els.weatherStatus.classList.toggle("bad", normalized === "unavailable");
+  }
+
+  async function renderWeatherContextSuggestion(options = {}) {
+    if (!els.weatherSummary || weatherContextRequestInFlight) return;
+    weatherContextRequestInFlight = true;
+    if (els.btnRefreshWeather) els.btnRefreshWeather.disabled = true;
+    els.weatherSummary.textContent = "Checking weather context...";
+    try {
+      const context = normalizeStripWeatherState(await getWeatherContextSuggestion(options));
+      if (context.weather) applyWeatherRainSuggestion(context.weather);
+      setStripWeatherStatus(context.mode);
+      els.weatherSummary.textContent = context.summary;
+      if (els.weatherRainNote && context.weather?.recentRainInches != null) {
+        const rainLabel = poolContextLabel("recentRain", getWeatherServiceSync().classifyRecentRain(context.weather.recentRainInches));
+        els.weatherRainNote.textContent = `Recent rain: ${rainLabel} - ${Number(context.weather.recentRainInches).toFixed(2)} in during the last 24 hr. You can override it below.`;
+      }
+    } catch {
+      const cachedWeather = getCachedWeatherContext();
+      const cachedContext = normalizeStripWeatherState({
+        weather: cachedWeather,
+        mode: cachedWeather ? getWeatherServiceSync().weatherFreshnessLabel(cachedWeather) : "unavailable"
+      });
+      setStripWeatherStatus(cachedContext.mode);
+      els.weatherSummary.textContent = cachedContext.summary;
+    } finally {
+      weatherContextRequestInFlight = false;
+      if (els.btnRefreshWeather) els.btnRefreshWeather.disabled = false;
+    }
   }
 
   function confidenceLabel(score) {
@@ -3075,10 +2907,14 @@ export function initPoolTestScanner(root) {
       return rgbToChemistryFallback({ r: 150, g: 150, b: 150 });
     }
 
+    const profile = activeStripProfile();
     const padByKey = {};
-    EASYTEST_CFG.pads.forEach(p => (padByKey[p.key] = p));
+    profile.pads.forEach(p => (padByKey[p.key] = p));
 
     const result = {
+      __stripProfileId: profile.id,
+      __stripProfileName: profile.name,
+      __supportedTests: profile.supportedTests.slice(),
       __scanQuality: scanQuality || { score: 0, label: "Low", warnings: ["No scan quality data available."] },
       __padDebug: {},
       __warnings: [],
@@ -3298,68 +3134,52 @@ export function initPoolTestScanner(root) {
       return { value, range, confidence, snapApplied };
     }
 
-    // pH (stabilized)
-    const phPick = valueFromPad("ph", () => 7.4);
-    const phStab = stabilizedValue("ph", phPick, lastVals?.ph);
-    result.ph = phStab.value;
-    if (phStab.range) result.__phRange = phStab.range;
-    result.__phConfidence = phStab.confidence;
+    const applyPadValue = (key, fallbackValue) => {
+      if (!stripProfileSupports(profile, key) || !padByKey[key]) return null;
+      const pick = valueFromPad(key, () => fallbackValue);
+      const stabilized = stabilizedValue(key, pick, lastVals?.[key]);
+      result[key] = stabilized.value;
+      if (stabilized.range) result[`__${key}Range`] = stabilized.range;
+      result[`__${key}Confidence`] = stabilized.confidence ?? 0;
+      if (key === "freeCl") result.__freeClConfidence = stabilized.confidence ?? 0;
+      if (key === "totalCl") result.__totalClConfidence = stabilized.confidence ?? 0;
+      if (key === "ph") result.__phConfidence = stabilized.confidence ?? 0;
+      if (key === "alk") result.__alkConfidence = stabilized.confidence ?? 0;
+      if (key === "cya") result.__cyaConfidence = stabilized.confidence ?? 0;
+      if (key === "hardness") result.__hardnessConfidence = stabilized.confidence ?? 0;
+      if (key === "bromine") result.__bromineConfidence = stabilized.confidence ?? 0;
+      return stabilized;
+    };
 
-    // Chlorine
-    const fcPick = valueFromPad("freeCl", () => 2.0);
-    const fcStab = stabilizedValue("freeCl", fcPick, lastVals?.freeCl);
-    result.freeCl = fcStab.value;
-    if (fcStab.range) result.__freeClRange = fcStab.range;
-    result.__freeClConfidence = fcStab.confidence ?? 0;
+    applyPadValue("ph", 7.4);
+    applyPadValue("freeCl", 2.0);
+    applyPadValue("totalCl", result.freeCl == null ? 2.5 : Math.max(result.freeCl, result.freeCl + 0.5));
 
-    const tcPick = valueFromPad("totalCl", () => Math.max(result.freeCl, result.freeCl + 0.5));
-    const tcStab = stabilizedValue("totalCl", tcPick, lastVals?.totalCl);
-    result.totalCl = tcStab.value;
-    if (tcStab.range) result.__totalClRange = tcStab.range;
-    result.__totalClConfidence = tcStab.confidence ?? 0;
-
-    // Sanity correction: TC >= FC
     let chlorineCorrected = false;
-    if (result.totalCl < result.freeCl) {
-      const tmp = result.totalCl;
-      result.totalCl = result.freeCl;
-      result.freeCl = tmp;
-      chlorineCorrected = true;
-    }
-    if (result.totalCl < result.freeCl) {
-      result.totalCl = result.freeCl;
-      chlorineCorrected = true;
+    if (result.totalCl != null && result.freeCl != null) {
+      if (result.totalCl < result.freeCl) {
+        const tmp = result.totalCl;
+        result.totalCl = result.freeCl;
+        result.freeCl = tmp;
+        chlorineCorrected = true;
+      }
+      if (result.totalCl < result.freeCl) {
+        result.totalCl = result.freeCl;
+        chlorineCorrected = true;
+      }
     }
     result.__chlorineCorrected = chlorineCorrected;
 
-    // Bromine
-    const brPick = valueFromPad("bromine", () => null);
-    const brStab = stabilizedValue("bromine", brPick, lastVals?.bromine);
-    const bromFromPad = brStab.value;
-    result.bromine = bromFromPad != null ? bromFromPad : (result.totalCl * 2.25);
-    if (brStab.range) result.__bromineRange = brStab.range;
-    result.__bromineConfidence = brStab.confidence ?? 0;
+    const brStab = applyPadValue("bromine", null);
+    if (result.bromine == null && stripProfileSupports(profile, "bromine") && result.freeCl != null) {
+      result.bromine = Number((result.freeCl * 2.25).toFixed(1));
+      result.__bromineConfidence = result.__freeClConfidence ?? 0;
+      if (result.__freeClRange) result.__bromineRange = result.__freeClRange.map(value => Number((value * 2.25).toFixed(1)));
+    }
 
-    // Hardness
-    const hardPick = valueFromPad("hardness", () => 250);
-    const hardStab = stabilizedValue("hardness", hardPick, lastVals?.hardness);
-    result.hardness = hardStab.value;
-    if (hardStab.range) result.__hardnessRange = hardStab.range;
-    result.__hardnessConfidence = hardStab.confidence ?? 0;
-
-    // Alkalinity (stabilized)
-    const alkPick = valueFromPad("alk", () => 100);
-    const alkStab = stabilizedValue("alk", alkPick, lastVals?.alk);
-    result.alk = alkStab.value;
-    if (alkStab.range) result.__alkRange = alkStab.range;
-    result.__alkConfidence = alkStab.confidence;
-
-    // CYA (stabilized)
-    const cyaPick = valueFromPad("cya", () => 40);
-    const cyaStab = stabilizedValue("cya", cyaPick, lastVals?.cya);
-    result.cya = cyaStab.value;
-    if (cyaStab.range) result.__cyaRange = cyaStab.range;
-    result.__cyaConfidence = cyaStab.confidence;
+    applyPadValue("hardness", 250);
+    applyPadValue("alk", 100);
+    applyPadValue("cya", 40);
 
     Object.entries(result.__padDebug).forEach(([key, debug]) => {
       if ((debug.usableAmbiguous || debug.rangeApplied) && debug.secondValue != null) {
@@ -3390,19 +3210,19 @@ export function initPoolTestScanner(root) {
     if (scanWarnings.length) result.__warnings.push(...scanWarnings);
 
     // Apply calibration offsets
-    result.ph = Number((result.ph + (calOffsets.ph || 0)).toFixed(2));
-    result.alk = Math.round(result.alk + (calOffsets.alk || 0));
-    result.cya = Math.round(result.cya + (calOffsets.cya || 0));
-    result.hardness = Math.round(result.hardness + (calOffsets.hardness || 0));
+    if (result.ph != null) result.ph = Number((result.ph + (calOffsets.ph || 0)).toFixed(2));
+    if (result.alk != null) result.alk = Math.round(result.alk + (calOffsets.alk || 0));
+    if (result.cya != null) result.cya = Math.round(result.cya + (calOffsets.cya || 0));
+    if (result.hardness != null) result.hardness = Math.round(result.hardness + (calOffsets.hardness || 0));
 
     // Final formatting
-    result.ph = Number(result.ph.toFixed(2));
-    result.freeCl = Number(result.freeCl.toFixed(2));
-    result.totalCl = Number(result.totalCl.toFixed(2));
-    result.bromine = Number(result.bromine.toFixed(1));
-    result.hardness = Math.round(result.hardness);
-    result.alk = Math.round(result.alk);
-    result.cya = Math.round(result.cya);
+    if (result.ph != null) result.ph = Number(result.ph.toFixed(2));
+    if (result.freeCl != null) result.freeCl = Number(result.freeCl.toFixed(2));
+    if (result.totalCl != null) result.totalCl = Number(result.totalCl.toFixed(2));
+    if (result.bromine != null) result.bromine = Number(result.bromine.toFixed(1));
+    if (result.hardness != null) result.hardness = Math.round(result.hardness);
+    if (result.alk != null) result.alk = Math.round(result.alk);
+    if (result.cya != null) result.cya = Math.round(result.cya);
 
     return result;
   }
@@ -3423,6 +3243,11 @@ export function initPoolTestScanner(root) {
     el.textContent = text;
   }
 
+  function setReadingValue(el, text) {
+    if (!el) return;
+    el.textContent = text || "-";
+  }
+
   function getResultRange(vals, key) {
     const legacyRange = ({
       ph: vals?.__phRange,
@@ -3433,12 +3258,20 @@ export function initPoolTestScanner(root) {
       alk: vals?.__alkRange,
       cya: vals?.__cyaRange
     })[key] || null;
-    const range = vals?.__padRanges?.[key] || legacyRange;
+    const range = vals?.__padRanges?.[key] || vals?.resultRanges?.[key] || legacyRange;
     if (!Array.isArray(range) || range.length < 2) return null;
     const a = Number(range[0]);
     const b = Number(range[1]);
     if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
     return [Math.min(a, b), Math.max(a, b)];
+  }
+
+  function formatDashboardNumber(key, value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return `${value}`;
+    if (key === "ph") return n.toFixed(1);
+    if (Math.abs(n) < 10 && !Number.isInteger(n)) return `${Number(n.toFixed(1))}`;
+    return `${Number(n.toFixed(0))}`;
   }
 
   function formatDisplayNumber(value) {
@@ -3459,6 +3292,119 @@ export function initPoolTestScanner(root) {
     return unit ? `${formatDisplayNumber(value)} ${unit}` : formatDisplayNumber(value);
   }
 
+  function dashboardValueText(vals, key, value, unit = "") {
+    const range = getResultRange(vals, key);
+    if (range) {
+      const midpoint = (Number(range[0]) + Number(range[1])) / 2;
+      const text = `~${formatDashboardNumber(key, midpoint)}`;
+      return unit ? `${text} ${unit}` : text;
+    }
+    return unit ? `${formatDisplayNumber(value)} ${unit}` : formatDisplayNumber(value);
+  }
+
+  function hasApproximateRanges(item) {
+    return !!Object.keys(item?.resultRanges || item?.__padRanges || {}).length;
+  }
+
+  function valueMostlyInRange(item) {
+    const ph = Number(item?.ph);
+    const freeCl = Number(item?.freeCl);
+    const totalCl = Number(item?.totalCl);
+    const alk = Number(item?.alk);
+    const cya = Number(item?.cya);
+    const checks = [
+      !Number.isFinite(ph) || (ph >= 7.0 && ph <= 8.0),
+      !Number.isFinite(freeCl) || (freeCl >= 0.5 && freeCl <= 5),
+      !Number.isFinite(totalCl) || (totalCl >= 0.5 && totalCl <= 5),
+      !Number.isFinite(alk) || (alk >= 70 && alk <= 140),
+      !Number.isFinite(cya) || (cya >= 20 && cya <= 100)
+    ];
+    return checks.filter(Boolean).length >= 4;
+  }
+
+  function historyHealthScore(item) {
+    const sanity = item?.sanityCheck || item?.__sanityCheck || {};
+    const score = Number(sanity.poolHealthScore ?? item?.healthScore);
+    return Number.isFinite(score) ? score : null;
+  }
+
+  function historyWaterIsClear(item) {
+    const appearance = item?.waterAppearance || item?.__poolContext?.waterAppearance || "";
+    return appearance === "clear" || appearance === "crystalClear";
+  }
+
+  function lowQualityEvidence(item) {
+    const sanity = item?.sanityCheck || item?.__sanityCheck || {};
+    const scanQuality = item?.scanQuality || item?.__scanQuality || {};
+    const confidenceValues = Object.values(item?.confidence || {})
+      .filter(value => Number.isFinite(Number(value)))
+      .map(Number);
+    ["__phConfidence", "__freeClConfidence", "__totalClConfidence", "__alkConfidence", "__cyaConfidence", "__hardnessConfidence"].forEach(key => {
+      if (Number.isFinite(Number(item?.[key]))) confidenceValues.push(Number(item[key]));
+    });
+    const minConfidence = confidenceValues.length ? Math.min(...confidenceValues) : 1;
+    const warnings = [
+      ...(Array.isArray(scanQuality.warnings) ? scanQuality.warnings : []),
+      ...(Array.isArray(sanity.reasonCodes) ? sanity.reasonCodes : [])
+    ].join(" ");
+    return {
+      requiresRetest: item?.requiresRetest === true || sanity.requiresRetest === true,
+      lowSample: String(item?.sampleQuality || "").toLowerCase() === "low",
+      lowScanScore: Number(scanQuality.score ?? 100) < 55,
+      lowConfidence: minConfidence < 0.5,
+      lowWarning: /LOW_SAMPLE_QUALITY|LOW_IMAGE_QUALITY|LOW_DELTA_E_SEPARATION|contamination|glare|shadow|pad detection|detected|missing pad|unreadable/i.test(warnings),
+      warningText: warnings
+    };
+  }
+
+  function isLegacyBadLowConfidenceFlag(item) {
+    if (item?.scanConfidenceType !== "low_confidence") return false;
+    const evidence = lowQualityEvidence(item);
+    const score = historyHealthScore(item);
+    return score != null
+      && score >= 85
+      && historyWaterIsClear(item)
+      && valueMostlyInRange(item)
+      && !evidence.requiresRetest
+      && !evidence.lowSample
+      && !evidence.lowScanScore
+      && !evidence.lowWarning;
+  }
+
+  function isTrueLowConfidenceHistory(item) {
+    if (isLegacyBadLowConfidenceFlag(item)) return false;
+    const evidence = lowQualityEvidence(item);
+    const sanity = item?.sanityCheck || item?.__sanityCheck || {};
+    const explicitNoRetest = item?.requiresRetest === false || sanity.requiresRetest === false;
+    const hasUsableGoodContext = hasApproximateRanges(item)
+      || (historyHealthScore(item) ?? 0) >= 70
+      || valueMostlyInRange(item);
+    if (explicitNoRetest && hasUsableGoodContext && !evidence.lowSample && !evidence.lowScanScore && !evidence.lowWarning) {
+      return false;
+    }
+    if (item?.scanConfidenceType === "low_confidence") {
+      return evidence.requiresRetest || evidence.lowSample || evidence.lowScanScore || evidence.lowConfidence || evidence.lowWarning;
+    }
+    return evidence.requiresRetest || evidence.lowSample || evidence.lowScanScore || evidence.lowConfidence || evidence.lowWarning;
+  }
+
+  function historyDisplayStatus(item) {
+    if (isTrueLowConfidenceHistory(item)) return "Retest Recommended";
+    const score = historyHealthScore(item);
+    const clearWater = historyWaterIsClear(item);
+    if (Number.isFinite(score) && score >= 85 && hasApproximateRanges(item)) return clearWater ? "Healthy / Estimated" : "Good / Approximate";
+    if (Number.isFinite(score) && score >= 85) return "Healthy";
+    if (Number.isFinite(score) && score >= 70) return "Review / Monitor";
+    if (Number.isFinite(score) && score < 70) return "Needs Attention";
+    if (clearWater && valueMostlyInRange(item)) return hasApproximateRanges(item) ? "Healthy / Estimated" : "Healthy";
+    return hasApproximateRanges(item) ? "Good / Approximate" : "Review / Monitor";
+  }
+
+  function historyStatusClass(label) {
+    if (/Retest|Needs Attention/i.test(label)) return "warn";
+    return "ok";
+  }
+
   function rangeState(vals, key, value, min, max) {
     const range = getResultRange(vals, key) || [Number(value), Number(value)];
     const low = Number(range[0]);
@@ -3475,59 +3421,86 @@ export function initPoolTestScanner(root) {
     return displayValueText(vals, key, value, unit);
   }
 
+  function setMetricVisible(tagEl, visible) {
+    const row = tagEl?.closest?.(".row");
+    const bar = row?.nextElementSibling;
+    if (row) row.hidden = !visible;
+    if (bar?.classList?.contains("bar")) bar.hidden = !visible;
+  }
+
+  function setBarWidth(barEl, value, min, max) {
+    if (!barEl || !Number.isFinite(Number(value))) return;
+    barEl.style.width = pct(Number(value), min, max) + "%";
+  }
+
   function renderBars(vals) {
-    els.barPh && (els.barPh.style.width = pct(vals.ph, 6.2, 8.4) + "%");
-    els.barFCl && (els.barFCl.style.width = pct(vals.freeCl, 0, 10) + "%");
-    els.barTCl && (els.barTCl.style.width = pct(vals.totalCl, 0, 10) + "%");
-    els.barBr && (els.barBr.style.width = pct(vals.bromine, 0, 20) + "%");
-    els.barHard && (els.barHard.style.width = pct(vals.hardness, 0, 1000) + "%");
-    els.barAlk && (els.barAlk.style.width = pct(vals.alk, 0, 240) + "%");
-    els.barCya && (els.barCya.style.width = pct(vals.cya, 0, 240) + "%");
+    const supported = key => !Array.isArray(vals?.__supportedTests) || vals.__supportedTests.includes(key);
+    setMetricVisible(els.tagTCl, supported("totalCl") && vals.totalCl != null);
+    setMetricVisible(els.tagBr, supported("bromine") && vals.bromine != null);
+    setBarWidth(els.barPh, vals.ph, 6.2, 8.4);
+    setBarWidth(els.barFCl, vals.freeCl, 0, 10);
+    setBarWidth(els.barTCl, vals.totalCl, 0, 10);
+    setBarWidth(els.barBr, vals.bromine, 0, 20);
+    setBarWidth(els.barHard, vals.hardness, 0, 1000);
+    setBarWidth(els.barAlk, vals.alk, 0, 240);
+    setBarWidth(els.barCya, vals.cya, 0, 240);
 
     const phText = resultRangeText(vals, "ph", vals.ph);
+    const phPrimaryText = dashboardValueText(vals, "ph", vals.ph);
     const phState = rangeState(vals, "ph", vals.ph, 7.2, 7.8);
-    if (getResultRange(vals, "ph")) tag(els.tagPh, phState === "good" ? "ok" : "warn", `Approximate range (${phText})`);
-    else if (vals.ph < 7.2) tag(els.tagPh, "warn", `Low (${phText})`);
-    else if (vals.ph > 7.8) tag(els.tagPh, "warn", `High (${phText})`);
-    else tag(els.tagPh, "ok", `Good (${phText})`);
+    setReadingValue(els.valuePh, getResultRange(vals, "ph") ? phPrimaryText : phText);
+    if (getResultRange(vals, "ph")) tag(els.tagPh, phState === "good" ? "ok" : "warn", `Approximate range ${phText}`);
+    else if (vals.ph < 7.2) tag(els.tagPh, "warn", "Low");
+    else if (vals.ph > 7.8) tag(els.tagPh, "warn", "High");
+    else tag(els.tagPh, "ok", "Good");
 
     const freeClText = resultRangeText(vals, "freeCl", vals.freeCl, "ppm");
+    const freeClPrimaryText = dashboardValueText(vals, "freeCl", vals.freeCl, "ppm");
     const freeClState = rangeState(vals, "freeCl", vals.freeCl, 1, 3);
-    if (getResultRange(vals, "freeCl")) tag(els.tagFCl, freeClState === "good" ? "ok" : "warn", `Approximate range (${freeClText})`);
-    else if (vals.freeCl < 1) tag(els.tagFCl, "warn", `Low (${freeClText})`);
-    else if (vals.freeCl > 3) tag(els.tagFCl, "warn", `High (${freeClText})`);
-    else tag(els.tagFCl, "ok", `Good (${freeClText})`);
+    setReadingValue(els.valueFCl, getResultRange(vals, "freeCl") ? freeClPrimaryText : freeClText);
+    if (getResultRange(vals, "freeCl")) tag(els.tagFCl, freeClState === "good" ? "ok" : "warn", `Approximate range ${freeClText}`);
+    else if (vals.freeCl < 1) tag(els.tagFCl, "warn", "Low");
+    else if (vals.freeCl > 3) tag(els.tagFCl, "warn", "High");
+    else tag(els.tagFCl, "ok", "Good");
 
-    const totalClText = resultRangeText(vals, "totalCl", vals.totalCl, "ppm");
-    tag(els.tagTCl, getResultRange(vals, "totalCl") ? "warn" : "ok", getResultRange(vals, "totalCl") ? `Approximate range (${totalClText})` : totalClText);
+    if (supported("totalCl") && vals.totalCl != null) {
+      const totalClText = resultRangeText(vals, "totalCl", vals.totalCl, "ppm");
+      const totalClPrimaryText = dashboardValueText(vals, "totalCl", vals.totalCl, "ppm");
+      setReadingValue(els.valueTCl, getResultRange(vals, "totalCl") ? totalClPrimaryText : totalClText);
+      tag(els.tagTCl, getResultRange(vals, "totalCl") ? "warn" : "ok", getResultRange(vals, "totalCl") ? `Approximate range ${totalClText}` : "Good");
+    }
 
     const bromineText = resultRangeText(vals, "bromine", vals.bromine, "ppm");
     const bromineState = rangeState(vals, "bromine", vals.bromine, 2, 6);
-    if (getResultRange(vals, "bromine")) tag(els.tagBr, bromineState === "good" ? "ok" : "warn", `Approximate range (${bromineText})`);
-    else if (vals.bromine < 2) tag(els.tagBr, "warn", `Low (${bromineText})`);
-    else if (vals.bromine > 6) tag(els.tagBr, "warn", `High (${bromineText})`);
-    else tag(els.tagBr, "ok", `Good (${bromineText})`);
+    setReadingValue(els.valueBr, getResultRange(vals, "bromine") ? dashboardValueText(vals, "bromine", vals.bromine, "ppm") : bromineText);
+    if (getResultRange(vals, "bromine")) tag(els.tagBr, bromineState === "good" ? "ok" : "warn", `Approximate range ${bromineText}`);
+    else if (vals.bromine < 2) tag(els.tagBr, "warn", "Low");
+    else if (vals.bromine > 6) tag(els.tagBr, "warn", "High");
+    else tag(els.tagBr, "ok", "Good");
 
     const hardnessText = resultRangeText(vals, "hardness", vals.hardness, "ppm");
     const hardnessState = rangeState(vals, "hardness", vals.hardness, 150, 300);
-    if (getResultRange(vals, "hardness")) tag(els.tagHard, hardnessState === "good" ? "ok" : "warn", `Approximate range (${hardnessText})`);
-    else if (vals.hardness < 150) tag(els.tagHard, "warn", `Low (${hardnessText})`);
-    else if (vals.hardness > 300) tag(els.tagHard, "warn", `High (${hardnessText})`);
-    else tag(els.tagHard, "ok", `Good (${hardnessText})`);
+    setReadingValue(els.valueHard, getResultRange(vals, "hardness") ? dashboardValueText(vals, "hardness", vals.hardness, "ppm") : hardnessText);
+    if (getResultRange(vals, "hardness")) tag(els.tagHard, hardnessState === "good" ? "ok" : "warn", `Approximate range ${hardnessText}`);
+    else if (vals.hardness < 150) tag(els.tagHard, "warn", "Low");
+    else if (vals.hardness > 300) tag(els.tagHard, "warn", "High");
+    else tag(els.tagHard, "ok", "Good");
 
     const alkText = resultRangeText(vals, "alk", vals.alk, "ppm");
     const alkState = rangeState(vals, "alk", vals.alk, 80, 120);
-    if (getResultRange(vals, "alk")) tag(els.tagAlk, alkState === "good" ? "ok" : "warn", `Approximate range (${alkText})`);
-    else if (vals.alk < 80) tag(els.tagAlk, "warn", `Low (${alkText})`);
-    else if (vals.alk > 120) tag(els.tagAlk, "warn", `High (${alkText})`);
-    else tag(els.tagAlk, "ok", `Good (${alkText})`);
+    setReadingValue(els.valueAlk, getResultRange(vals, "alk") ? dashboardValueText(vals, "alk", vals.alk, "ppm") : alkText);
+    if (getResultRange(vals, "alk")) tag(els.tagAlk, alkState === "good" ? "ok" : "warn", `Approximate range ${alkText}`);
+    else if (vals.alk < 80) tag(els.tagAlk, "warn", "Low");
+    else if (vals.alk > 120) tag(els.tagAlk, "warn", "High");
+    else tag(els.tagAlk, "ok", "Good");
 
     const cyaText = resultRangeText(vals, "cya", vals.cya, "ppm");
     const cyaState = rangeState(vals, "cya", vals.cya, 30, 100);
-    if (getResultRange(vals, "cya")) tag(els.tagCya, cyaState === "good" ? "ok" : "warn", `Approximate range (${cyaText})`);
-    else if (vals.cya < 30) tag(els.tagCya, "warn", `Low (${cyaText})`);
-    else if (vals.cya > 100) tag(els.tagCya, "warn", `High (${cyaText})`);
-    else tag(els.tagCya, "ok", `Good (${cyaText})`);
+    setReadingValue(els.valueCya, getResultRange(vals, "cya") ? dashboardValueText(vals, "cya", vals.cya, "ppm") : cyaText);
+    if (getResultRange(vals, "cya")) tag(els.tagCya, cyaState === "good" ? "ok" : "warn", `Approximate range ${cyaText}`);
+    else if (vals.cya < 30) tag(els.tagCya, "warn", "Low");
+    else if (vals.cya > 100) tag(els.tagCya, "warn", "High");
+    else tag(els.tagCya, "ok", "Good");
   }
 
   function renderScanDiagnostics(vals) {
@@ -3572,7 +3545,7 @@ export function initPoolTestScanner(root) {
       </div>
       ${correctionDetails.samplingOverlayDataUrl ? `<figure class="sampling-overlay"><figcaption>${correctionDetails.manualSelection ? "Manual pad markers and sampled pixels" : "Sampled pixels overlay"}</figcaption><img src="${escapeHtml(correctionDetails.samplingOverlayDataUrl)}" alt="Overlay showing marked pad boxes and sampled pixels"></figure>` : ""}
     `;
-    const padCards = EASYTEST_CFG.pads.map(pad => vals.__padDebug[pad.key]).filter(Boolean).map(debug => {
+    const padCards = (vals.__stripProfileId ? stripProfileById(vals.__stripProfileId) : activeStripProfile()).pads.map(pad => vals.__padDebug[pad.key]).filter(Boolean).map(debug => {
       const topMatches = (debug.topMatches || debug.distances?.slice(0, 3) || [])
         .map((item, index) => `${index + 1}. ${item.label || item.value}: ${item.deltaE}`)
         .join(" | ");
@@ -3618,6 +3591,7 @@ export function initPoolTestScanner(root) {
   function runSanityCheck(vals) {
     if (!vals) return null;
     const poolContext = getPoolContextFromInputs();
+    renderWeatherContextSuggestion({ allowDeviceLocation: true });
     lastSanityCheck = runStripSanityCheck(vals, {
       history: loadHistory(),
       recentActions: loadSanityContext().recentActions,
@@ -3655,20 +3629,21 @@ export function initPoolTestScanner(root) {
 
     if (els.poolContextPanel) els.poolContextPanel.hidden = false;
     const context = lastVals?.__poolContext || loadPoolContext();
-    const scoreClass = sanity.scoreConfidence === "High" ? "ok" : sanity.scoreConfidence === "Medium" ? "warn" : "bad";
+    const requiresRetest = !!sanity.requiresRetest;
+    const hasApproximateValues = !!sanity.hasApproximateValues;
+    const scoreValue = Number(sanity.poolHealthScore);
+    const scoreClass = requiresRetest ? "bad" : scoreValue >= 80 ? "ok" : scoreValue >= 70 ? "warn" : "bad";
     const scoreConfidencePercent = Number.isFinite(Number(sanity.scoreConfidencePercent))
       ? Number(sanity.scoreConfidencePercent)
       : ({ High: 88, Medium: 71, Low: 52 }[sanity.scoreConfidence] || 50);
-    const userScanStatus = sanity.scoreConfidence === "High"
-      ? "Reliable"
-      : sanity.scoreConfidence === "Medium" ? "Approximate" : "Retest Recommended";
+    const userScanStatus = requiresRetest ? "Retest Recommended" : "Good Scan";
     const findings = sanity.topFindings || [];
 
     if (els.sanitySummary) {
       els.sanitySummary.innerHTML = `
         <article class="smart-review-hero ${scoreClass}">
           <div>
-            <span class="section-eyebrow">${escapeHtml(sanity.summaryState || "Pool Health Analysis")}</span>
+            <span class="section-eyebrow">${escapeHtml(userScanStatus)}</span>
             <h3>Pool Health: ${escapeHtml(sanity.poolHealthScore)} / 100</h3>
           </div>
           <div class="smart-review-meta">
@@ -3676,6 +3651,7 @@ export function initPoolTestScanner(root) {
             <span class="tag">Water Appearance: ${escapeHtml(sanity.waterAppearanceLabel || poolContextLabel("waterAppearance", context.waterAppearance))}</span>
           </div>
           <p>${escapeHtml(sanity.summary)}</p>
+          ${hasApproximateValues && !requiresRetest ? `<p class="muted">Some readings are approximate.</p>` : ""}
           <p><strong>Next Action:</strong> ${escapeHtml(sanity.nextAction || "Review findings before dosing.")}</p>
           <small class="muted">Retest timing: ${escapeHtml(sanity.retestTiming || "Use normal retest timing.")}</small>
         </article>
@@ -3792,7 +3768,8 @@ export function initPoolTestScanner(root) {
       ["cya", "Stabilizer"],
       ["hardness", "Hardness"]
     ];
-    const readings = readingMap.map(([key, label]) => {
+    const supported = key => !Array.isArray(vals?.__supportedTests) || vals.__supportedTests.includes(key);
+    const readings = readingMap.filter(([key]) => supported(key)).map(([key, label]) => {
       const confidence = confidenceFor(key);
       const range = getResultRange(vals, key);
       const debug = vals?.__padDebug?.[key] || null;
@@ -3862,7 +3839,7 @@ export function initPoolTestScanner(root) {
     if (review.length >= 3) {
       explanation = "Several readings are approximate because some pads were close to multiple reference colors.";
     } else if (approximateRanges.length) {
-      explanation = "Some pads were close to adjacent reference colors, so AquaLab is showing approximate ranges.";
+      explanation = "Some values fall between color blocks. AquaLab estimated the closest range.";
     } else if (review.length > 0) {
       explanation = "Some pads were close to multiple reference colors, so a few results are approximate.";
     }
@@ -3992,9 +3969,10 @@ export function initPoolTestScanner(root) {
     const doseText = (dose, text) => poolGallons && dose ? text : "Enter pool volume to calculate exact chemical amounts.";
     const factor10k = poolGallons ? poolGallons / 10000 : null;
     const fcConfidence = confidenceFor("freeCl");
-    const tcConfidence = confidenceFor("totalCl");
-    const combinedCl = Math.max(0, Number(vals.totalCl || 0) - Number(vals.freeCl || 0));
-    const combinedEstimated = fcConfidence < 0.7 || tcConfidence < 0.7;
+    const hasTotalCl = vals.totalCl != null && (!Array.isArray(vals.__supportedTests) || vals.__supportedTests.includes("totalCl"));
+    const tcConfidence = hasTotalCl ? confidenceFor("totalCl") : null;
+    const combinedCl = hasTotalCl ? Math.max(0, Number(vals.totalCl || 0) - Number(vals.freeCl || 0)) : null;
+    const combinedEstimated = hasTotalCl && (fcConfidence < 0.7 || tcConfidence < 0.7);
     const reliability = buildScanReliability(vals, sanity, confidenceFor);
     const textFor = (key, value, unit = "") => displayValueText(vals, key, value, unit);
     const stateFor = (key, value, min, max) => rangeState(vals, key, value, min, max);
@@ -4047,13 +4025,15 @@ export function initPoolTestScanner(root) {
       actions.push("Sanitizer is in the expected range. No chlorine adjustment suggested right now.");
     }
 
-    observations.push(`Total chlorine reads ${textFor("totalCl", vals.totalCl, "ppm")}.`);
-    if (combinedCl > 0.5) {
-      observations.push(`Combined chlorine ${combinedEstimated ? "may be" : "appears"} elevated (${combinedCl.toFixed(2)} ppm${combinedEstimated ? ", estimated" : ""}).`);
-      if (fcConfidence >= 0.7 && tcConfidence >= 0.7) actions.push("Combined chlorine appears elevated. Consider oxidation/shock guidance per product label, then retest.");
-      else actions.push("Combined chlorine may be elevated. Verify chlorine first if either chlorine pad scan quality is limited.");
-    } else {
-      observations.push(`Combined chlorine appears acceptable (${combinedCl.toFixed(2)} ppm${combinedEstimated ? ", estimated" : ""}).`);
+    if (hasTotalCl) {
+      observations.push(`Total chlorine reads ${textFor("totalCl", vals.totalCl, "ppm")}.`);
+      if (combinedCl > 0.5) {
+        observations.push(`Combined chlorine ${combinedEstimated ? "may be" : "appears"} elevated (${combinedCl.toFixed(2)} ppm${combinedEstimated ? ", estimated" : ""}).`);
+        if (fcConfidence >= 0.7 && tcConfidence >= 0.7) actions.push("Combined chlorine appears elevated. Consider oxidation/shock guidance per product label, then retest.");
+        else actions.push("Combined chlorine may be elevated. Verify chlorine first if either chlorine pad scan quality is limited.");
+      } else {
+        observations.push(`Combined chlorine appears acceptable (${combinedCl.toFixed(2)} ppm${combinedEstimated ? ", estimated" : ""}).`);
+      }
     }
 
     const alkState = stateFor("alk", vals.alk, 80, 120);
@@ -4194,156 +4174,6 @@ export function initPoolTestScanner(root) {
     };
   }
 
-  function averageFrameSamples(frameContexts) {
-    const frames = frameContexts.length ? frameContexts : [];
-    const sampled = frames.map(frameCtx => {
-      const leveled = autoLevelFrameContext(frameCtx);
-      const padColors = samplePadsEasyTest(leveled.ctx);
-      const samplingDiagnostics = padColors.__samplingDiagnostics || null;
-      return {
-        ctx: leveled.ctx,
-        originalCtx: frameCtx,
-        padColors,
-        avgRgb: sampleStripe(leveled.ctx),
-        neutral: sampleNeutralReference(leveled.ctx),
-        correction: {
-          ...leveled.diagnostics,
-          detectedPadCenters: samplingDiagnostics?.detectedPadCenters || [],
-          padSpacingConsistency: samplingDiagnostics?.padSpacingConsistency ?? null,
-          padSpacingVariance: samplingDiagnostics?.padSpacingVariance ?? null,
-          detectedSegments: samplingDiagnostics?.detectedSegments || [],
-          sampledPixels: samplingDiagnostics?.sampledPixels || {},
-          samplingPaperLab: samplingDiagnostics?.paperLab || null,
-          samplingOverlayDataUrl: samplingDiagnostics?.overlayDataUrl || null,
-          samplingWarning: samplingDiagnostics?.samplingWarning || ""
-        }
-      };
-    });
-    const complete = sampled.filter(frame => Object.keys(frame.padColors || {}).filter(k => k !== "__avg").length === 7);
-    const source = complete.length ? complete : sampled;
-    const padColors = {};
-
-    EASYTEST_CFG.pads.forEach(pad => {
-      const colors = source.map(frame => frame.padColors?.[pad.key]).filter(Boolean);
-      if (!colors.length) return;
-      const avg = averageRgbList(colors);
-      const frameVariance = colors.reduce((sum, color) => {
-        return sum + Math.abs(color.r - avg.r) + Math.abs(color.g - avg.g) + Math.abs(color.b - avg.b);
-      }, 0) / (colors.length * 3);
-      const internalVariance = colors.reduce((sum, color) => sum + Number(color.__var || 0), 0) / colors.length;
-      padColors[pad.key] = {
-        ...avg,
-        __var: internalVariance + frameVariance,
-        __frameVariance: frameVariance,
-        __frameCount: colors.length
-      };
-    });
-
-    const correctionSource = source[source.length - 1]?.correction || sampled[sampled.length - 1]?.correction || null;
-    const rotationCount = source.filter(frame => frame.correction?.rotationCorrected).length;
-    const lowCorrectionConfidence = source.some(frame => (frame.correction?.correctionConfidence ?? 1) < 0.34);
-
-    return {
-      ctx: source[source.length - 1]?.ctx || frames[frames.length - 1],
-      padColors,
-      avgRgb: averageRgbList(source.map(frame => frame.avgRgb)) || { r: 0, g: 0, b: 0 },
-      neutralReference: averageRgbList(source.map(frame => frame.neutral).filter(Boolean)),
-      frameCount: source.length,
-      correctionDiagnostics: correctionSource ? {
-        ...correctionSource,
-        rotationCorrected: rotationCount > 0,
-        correctedFrameCount: rotationCount,
-        lowCorrectionConfidence
-      } : null
-    };
-  }
-
-  function cloneCanvasContext() {
-    const off = document.createElement("canvas");
-    off.width = els.canvas.width;
-    off.height = els.canvas.height;
-    const offCtx = off.getContext("2d", { willReadFrequently: true });
-    offCtx.drawImage(els.canvas, 0, 0);
-    return offCtx;
-  }
-
-  const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
-
-  async function analyzeLiveMultiFrame() {
-    const frames = [];
-    for (let i = 0; i < 5; i++) {
-      drawFromVideo();
-      frames.push(cloneCanvasContext());
-      if (i < 4) await wait(90);
-    }
-    return analyze(frames[frames.length - 1], frames);
-  }
-
-  function analyze(ctx, frameContexts = null) {
-    let imgHash = null;
-    try { imgHash = hashCanvas(ctx); } catch { imgHash = null; }
-    const cacheKey = imgHash ? `${imgHash}:${calibrationFingerprint()}` : null;
-    const scanSource = frameContexts?.length ? "camera" : "image";
-
-    if (cacheKey) {
-      const hit = cacheGet(cacheKey);
-      if (hit?.vals) {
-        attachScanIdentity(hit.vals, imgHash, "cached");
-        lastVals = hit.vals;
-        const sanity = runSanityCheck(hit.vals);
-        renderBars(hit.vals);
-        renderSanityCheck(sanity);
-        renderRecs(hit.vals);
-        renderScanDiagnostics(hit.vals);
-        setStatus(`EasyTest scan (cached) | id=${imgHash}`);
-        els.canvas && (els.canvas.hidden = true);
-        finalizeSuccessfulScan(hit.vals, { scanHash: imgHash, scanSource: "cached" });
-        return hit.vals;
-      }
-    }
-
-    const frameSample = averageFrameSamples(frameContexts?.length ? frameContexts : [ctx]);
-    const padColors = frameSample.padColors;
-    const avgRgb = frameSample.avgRgb;
-    padColors.__avg = avgRgb;
-
-    const padCount = Object.keys(padColors).filter(k => k !== "__avg").length;
-    if (padCount < 7) {
-      lastVals = null;
-      renderScanDiagnostics(null);
-      setStatus(`Scan quality issue: only detected ${padCount}/7 pads. Retake photo in bright indirect light, straight-on, avoiding glare.`);
-      els.canvas && (els.canvas.hidden = true);
-      return null;
-    }
-
-    const neutralReference = frameSample.neutralReference;
-    const scanQuality = evaluateScanQuality(frameSample.ctx || ctx, padColors, avgRgb, neutralReference, frameSample.correctionDiagnostics);
-    scanQuality.details.frameCount = frameSample.frameCount || 1;
-    scanQuality.correction = frameSample.correctionDiagnostics || null;
-    const vals = rgbToChemistryEasyTest(padColors, scanQuality, neutralReference);
-    attachScanIdentity(vals, imgHash, scanSource);
-    lastVals = vals;
-    const sanity = runSanityCheck(vals);
-
-    renderBars(vals);
-    renderSanityCheck(sanity);
-    renderRecs(vals);
-    renderScanDiagnostics(vals);
-    let statusPrefix = scanQuality.score < 55
-      ? "Low scan quality. Move to indirect daylight and rescan."
-      : "EasyTest scan";
-    if (scanQuality.correction?.rotationCorrected && scanQuality.score >= 55) statusPrefix = "EasyTest scan | Strip was auto-leveled.";
-    else if ((scanQuality.correction?.correctionConfidence ?? 1) < 0.34) statusPrefix = "Low correction confidence. Try placing the strip straighter in the frame.";
-    setStatus(`${statusPrefix} | Avg RGB ≈ (${avgRgb.r | 0}, ${avgRgb.g | 0}, ${avgRgb.b | 0}) | quality ${scanQuality.score}/100${imgHash ? ` | id=${imgHash}` : ""}`);
-
-    els.canvas && (els.canvas.hidden = true);
-
-    if (cacheKey) cachePut(cacheKey, vals);
-    recordFingerprint(imgHash, padColors, avgRgb, vals);
-    finalizeSuccessfulScan(vals, { scanHash: imgHash, scanSource });
-    return vals;
-  }
-
   // ================================================================
   // 13) Pool setup persistence
   // ================================================================
@@ -4398,6 +4228,36 @@ export function initPoolTestScanner(root) {
     }
   }
 
+  function repairLegacyHistoryConfidence() {
+    const history = loadHistory();
+    if (!history.length) return history;
+    let changed = false;
+    const repaired = history.map(item => {
+      const score = historyHealthScore(item);
+      const staleRetestStatus = item?.displayStatus === "Retest Recommended"
+        && !isTrueLowConfidenceHistory(item)
+        && score != null
+        && score >= 85
+        && historyWaterIsClear(item)
+        && valueMostlyInRange(item);
+      if (!isLegacyBadLowConfidenceFlag(item) && !staleRetestStatus) return item;
+      const fixed = {
+        ...item,
+        scanConfidenceType: hasApproximateRanges(item) ? "estimated" : "clear",
+        requiresRetest: false,
+        displayStatus: hasApproximateRanges(item) ? "Healthy / Estimated" : "Healthy"
+      };
+      if (fixed.sanityCheck) fixed.sanityCheck = { ...fixed.sanityCheck, requiresRetest: false };
+      changed = true;
+      return fixed;
+    });
+    if (changed) {
+      saveHistory(repaired);
+      console.info("[AquaLab] repaired legacy low-confidence history records", { key: HISTORY_KEY });
+    }
+    return repaired;
+  }
+
   function compactSanityCheck(sanity) {
     if (!sanity) return null;
     return {
@@ -4406,6 +4266,8 @@ export function initPoolTestScanner(root) {
       scoreConfidence: sanity.scoreConfidence ?? null,
       scoreConfidencePercent: sanity.scoreConfidencePercent ?? null,
       summaryState: sanity.summaryState ?? null,
+      hasApproximateValues: !!sanity.hasApproximateValues,
+      requiresRetest: !!sanity.requiresRetest,
       summary: sanity.summary ?? null,
       nextAction: sanity.nextAction ?? null,
       retestTiming: sanity.retestTiming ?? null,
@@ -4414,6 +4276,9 @@ export function initPoolTestScanner(root) {
   }
 
   function compactHistoryEntry(item) {
+    const withRanges = item.resultRanges || item.__padRanges ? { ...item, resultRanges: item.resultRanges || item.__padRanges } : item;
+    const displayStatus = historyDisplayStatus(withRanges);
+    const scanConfidenceType = item.scanConfidenceType || (displayStatus === "Retest Recommended" ? "low_confidence" : hasApproximateRanges(withRanges) ? "estimated" : "clear");
     return {
       scanId: item.scanId || null,
       scanHash: item.scanHash || null,
@@ -4427,6 +4292,18 @@ export function initPoolTestScanner(root) {
       hardness: item.hardness,
       alk: item.alk,
       cya: item.cya,
+      stripProfileId: item.stripProfileId || item.__stripProfileId || null,
+      stripProfileName: item.stripProfileName || item.__stripProfileName || null,
+      __supportedTests: Array.isArray(item.__supportedTests) ? item.__supportedTests.slice() : null,
+      resultRanges: item.resultRanges || item.__padRanges || null,
+      hasApproximateValues: item.hasApproximateValues ?? hasApproximateRanges(withRanges),
+      requiresRetest: !!(item.requiresRetest ?? item.sanityCheck?.requiresRetest),
+      displayPh: item.displayPh || dashboardValueText(withRanges, "ph", item.ph),
+      displayFreeCl: item.displayFreeCl || dashboardValueText(withRanges, "freeCl", item.freeCl, "ppm"),
+      displayTotalCl: item.totalCl == null ? null : (item.displayTotalCl || dashboardValueText(withRanges, "totalCl", item.totalCl, "ppm")),
+      displayCya: item.displayCya || dashboardValueText(withRanges, "cya", item.cya, "ppm"),
+      displayStatus,
+      scanConfidenceType,
       chlorineCorrected: !!item.chlorineCorrected,
       scanQuality: item.scanQuality ? {
         score: item.scanQuality.score ?? null,
@@ -4511,6 +4388,18 @@ export function initPoolTestScanner(root) {
       hardness: vals.hardness,
       alk: vals.alk,
       cya: vals.cya,
+      stripProfileId: vals.__stripProfileId || null,
+      stripProfileName: vals.__stripProfileName || null,
+      __supportedTests: Array.isArray(vals.__supportedTests) ? vals.__supportedTests.slice() : null,
+      resultRanges: vals.__padRanges || null,
+      hasApproximateValues: hasApproximateRanges(vals),
+      requiresRetest: !!vals.__sanityCheck?.requiresRetest,
+      displayPh: dashboardValueText(vals, "ph", vals.ph),
+      displayFreeCl: dashboardValueText(vals, "freeCl", vals.freeCl, "ppm"),
+      displayTotalCl: vals.totalCl == null ? null : dashboardValueText(vals, "totalCl", vals.totalCl, "ppm"),
+      displayCya: dashboardValueText(vals, "cya", vals.cya, "ppm"),
+      displayStatus: historyDisplayStatus(vals),
+      scanConfidenceType: vals.__sanityCheck?.requiresRetest ? "low_confidence" : hasApproximateRanges(vals) ? "estimated" : "clear",
       chlorineCorrected: !!vals.__chlorineCorrected,
       scanQuality: vals.__scanQuality || null,
       confidence: {
@@ -4568,17 +4457,26 @@ export function initPoolTestScanner(root) {
     els.historyLog.innerHTML = `
       <h3>Recent Tests</h3>
       <div class="history-log-list">
-        ${recent.map(item => `
+        ${recent.map(item => {
+          const displayStatus = historyDisplayStatus(item);
+          const displayPh = item.displayPh || dashboardValueText(item, "ph", item.ph);
+          const displayFreeCl = item.displayFreeCl || dashboardValueText(item, "freeCl", item.freeCl, "ppm");
+          const hasTotalCl = item.totalCl != null && (!Array.isArray(item.__supportedTests) || item.__supportedTests.includes("totalCl"));
+          const displayTotalCl = hasTotalCl ? (item.displayTotalCl || dashboardValueText(item, "totalCl", item.totalCl, "ppm")) : null;
+          const displayCya = item.displayCya || dashboardValueText(item, "cya", item.cya, "ppm");
+          const displayAlk = dashboardValueText(item, "alk", item.alk, "ppm");
+          const displayHardness = dashboardValueText(item, "hardness", item.hardness, "ppm");
+          return `
           <article class="history-log-item">
             <div class="history-log-head">
               <strong>${escapeHtml(new Date(item.t || Date.now()).toLocaleString())}</strong>
-              <span class="tag ${Number(item.sanityCheck?.poolHealthScore ?? 0) >= 80 ? "ok" : "warn"}">${escapeHtml(item.sanityCheck?.summaryState || "Saved")}</span>
+              <span class="tag ${historyStatusClass(displayStatus)}">${escapeHtml(displayStatus)}</span>
             </div>
-            <span>pH ${escapeHtml(item.ph ?? "-")} | FC ${escapeHtml(item.freeCl ?? "-")} ppm | TC ${escapeHtml(item.totalCl ?? "-")} ppm</span>
-            <span>Alk ${escapeHtml(item.alk ?? "-")} ppm | CYA ${escapeHtml(item.cya ?? "-")} ppm | Hardness ${escapeHtml(item.hardness ?? "-")} ppm</span>
+            <span>pH ${escapeHtml(displayPh)} | FC ${escapeHtml(displayFreeCl)}${displayTotalCl ? ` | TC ${escapeHtml(displayTotalCl)}` : ""}</span>
+            <span>Alk ${escapeHtml(displayAlk)} | CYA ${escapeHtml(displayCya)} | Hardness ${escapeHtml(displayHardness)}</span>
             <span>${escapeHtml(poolContextLabel("waterAppearance", item.waterAppearance))}</span>
           </article>
-        `).join("")}
+        `; }).join("")}
       </div>
     `;
   }
@@ -4594,7 +4492,7 @@ export function initPoolTestScanner(root) {
     const series = {
       ph: history.map(h => h.ph),
       freeCl: history.map(h => h.freeCl),
-      totalCl: history.map(h => Math.max(h.totalCl, h.freeCl)),
+      totalCl: history.map(h => Number.isFinite(Number(h.totalCl)) ? Number(h.totalCl) : null),
       alk: history.map(h => h.alk),
       cya: history.map(h => h.cya)
     };
@@ -4634,10 +4532,13 @@ export function initPoolTestScanner(root) {
       { label: "pH", data: series.ph, tension: 0.3, pointRadius: 2 }
     ], { plugins: { legend: { display: false } }, scales: { y: { suggestedMin: 6, suggestedMax: 9 } } });
 
-    upsertChart("chlorine", "ppm", els.chartFCl, [
-      { label: "Free Chlorine", data: series.freeCl, tension: 0.3, pointRadius: 2 },
-      { label: "Total Chlorine", data: series.totalCl, tension: 0.3, pointRadius: 2, borderDash: [6, 4] }
-    ], {
+    const chlorineDatasets = [
+      { label: "Free Chlorine", data: series.freeCl, tension: 0.3, pointRadius: 2 }
+    ];
+    if (series.totalCl.some(value => value != null)) {
+      chlorineDatasets.push({ label: "Total Chlorine", data: series.totalCl, tension: 0.3, pointRadius: 2, borderDash: [6, 4] });
+    }
+    upsertChart("chlorine", "ppm", els.chartFCl, chlorineDatasets, {
       plugins: {
         legend: { display: true },
         tooltip: {
@@ -4831,8 +4732,11 @@ export function initPoolTestScanner(root) {
 
   els.btnStart?.addEventListener("click", startCamera);
   els.btnCapture?.addEventListener("click", async () => {
-    setStatus("Capturing 5 frames for a steadier reading...");
-    await analyzeLiveMultiFrame();
+    setStatus("Captured frame. Select each pad manually from top to bottom.");
+    const ctx = drawFromVideo();
+    const img = new Image();
+    img.onload = () => showPreview(img);
+    img.src = ctx.canvas.toDataURL("image/jpeg", 0.95);
   });
 
   // Phone-first buttons
@@ -4860,6 +4764,10 @@ export function initPoolTestScanner(root) {
   els.btnClearCache?.addEventListener("click", clearScanCache);
   els.btnExportDataset?.addEventListener("click", exportCalibrationDataset);
 
+  els.stripProfileSelect?.addEventListener("change", () => {
+    setStripProfile(els.stripProfileSelect.value);
+  });
+
   els.cameraSelect?.addEventListener("change", () => {
     const id = getSelectedCameraId();
     saveSelectedCameraId(id);
@@ -4884,10 +4792,6 @@ export function initPoolTestScanner(root) {
   els.fileInput?.addEventListener("change", handlePickedFile);
   els.takeInput?.addEventListener("change", handlePickedFile);
   els.chartInput?.addEventListener("change", handleChartCalibrationFile);
-
-  els.btnUseCrop?.addEventListener("click", () => {
-    analyzeFromPreviewCrop();
-  });
 
   els.btnManualPads?.addEventListener("click", toggleManualPadMode);
   els.btnResetManualPads?.addEventListener("click", () => {
@@ -4930,7 +4834,7 @@ export function initPoolTestScanner(root) {
       const x = Math.round((ev.clientX - rect.left) * (els.canvas.width / rect.width));
       const y = Math.round((ev.clientY - rect.top) * (els.canvas.height / rect.height));
       setWBAt(x, y);
-      setStatus("White balance set. Capture or upload an EasyTest strip.");
+      setStatus(`White balance set. Capture or upload a ${activeStripProfile().name} strip.`);
       els.canvas.removeEventListener("click", handler);
       els.canvas.hidden = true;
     };
@@ -4949,9 +4853,15 @@ export function initPoolTestScanner(root) {
   els.poolToggleGlobal?.addEventListener("click", () => { poolCollapsed = !poolCollapsed; applyPoolCollapsed(); savePoolSetup(); });
 
   els.btnRecalc?.addEventListener("click", () => { if (lastVals) renderRecs(lastVals); });
-  [els.waterAppearance, els.recentRain, els.poolUsage, els.surfaceCondition].forEach(input => {
+  [els.waterAppearance, els.poolUsage, els.surfaceCondition].forEach(input => {
     input?.addEventListener("change", updatePoolContextReview);
   });
+  els.recentRain?.addEventListener("change", () => {
+    const context = loadPoolContext();
+    savePoolContext({ ...context, recentRain: els.recentRain.value || "none", recentRainSource: "manual" });
+    updatePoolContextReview();
+  });
+  els.btnRefreshWeather?.addEventListener("click", () => renderWeatherContextSuggestion({ allowDeviceLocation: true, forceRefresh: true }));
   root.addEventListener("click", (event) => {
     if (event.target?.matches?.('[data-pt="sanityApplyContext"]')) {
       rerunSanityWithContext();
@@ -4964,11 +4874,14 @@ export function initPoolTestScanner(root) {
   // ================================================================
 
   loadEasyTestReferenceSwatches();
+  activeStripProfileId = loadStripProfilePreference();
+  updateStripProfileUi();
   loadPoolSetup();
   applyPoolContextInputs();
   applyViewportLayout();
   applyEngineerMode((() => { try { return localStorage.getItem(ENGINEER_MODE_KEY) === "1"; } catch { return false; } })());
   setAppView((() => { try { return localStorage.getItem("pt_active_view_v1") || "home"; } catch { return "home"; } })());
+  repairLegacyHistoryConfidence();
   renderHistoryCharts();
   renderHistoryLog();
   renderBetaStats();

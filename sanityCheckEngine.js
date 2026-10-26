@@ -556,8 +556,8 @@ function buildMessage(check, context) {
   }
   if (check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")) {
     return {
-      message: `${check.parameter} is an approximate range (${valueText}).`,
-      action: "Use the displayed range for guidance; avoid large exact-dose changes from this value alone."
+      message: `${check.parameter} is an approximate reading (${valueText}).`,
+      action: "Color falls between adjacent reference blocks, so AquaLab estimated the closest range."
     };
   }
   if (check.reasonCodes.includes("LOW_DELTA_E_SEPARATION")) {
@@ -590,9 +590,9 @@ function evaluatePadEvidence(vals, key, check, scanQuality) {
     if (debug.usableAmbiguous || debug.reasonCode === "AMBIGUOUS_ADJACENT_MATCH") {
       applyAdjustment(check, {
         code: "AMBIGUOUS_ADJACENT_MATCH",
-        penalty: 0.04,
+        penalty: 0,
         severity: "Info",
-        status: "Approximate range",
+        status: "Approximate Reading",
         note: `Best Delta-E ${best}; second-best Delta-E ${second}; gap ${debug.deltaEGap ?? Math.round((second - best) * 100) / 100}.`
       });
     } else if (debug.reasonCode === "LOW_SAMPLE_QUALITY" || debug.sampleQuality === "Low") {
@@ -878,27 +878,32 @@ function groupedLowConfidenceFinding(checks) {
   };
 }
 
-function buildSummaryState(score, scoreConfidence, findings, scanQuality) {
+function buildSummaryState(score, scoreConfidence, findings, scanQuality, requiresRetest = false) {
   const manualSelection = !!scanQuality?.details?.manualSelection;
   const colorConfidence = Number(scanQuality?.details?.colorConfidence ?? 0);
-  const geometryConfidence = Number(scanQuality?.details?.geometryConfidence ?? 0);
-  const trueLowFindings = findings.filter(check => check.adjustedConfidence === "Low" && !check.reasonCodes?.includes("AMBIGUOUS_ADJACENT_MATCH"));
   if ((scanQuality?.score ?? 100) < 40 && (!manualSelection || colorConfidence < 0.55)) return "Unknown / Failed Scan";
-  if (scoreConfidence === "Low" && !(manualSelection && geometryConfidence >= 0.99 && colorConfidence >= 0.75 && trueLowFindings.length === 0)) return "Retest Recommended / Low Confidence";
+  if (requiresRetest) return "Retest Recommended";
   const needsAttention = findings.some(check => severityRank(check.severity) >= severityRank("Warning")) || score < 80;
   if (needsAttention) return scoreConfidence === "High" ? "Needs Attention / High Confidence" : "Needs Attention / Medium Confidence";
   return scoreConfidence === "High" ? "Healthy / High Confidence" : "Healthy / Medium Confidence";
 }
 
-function summaryCopy(summaryState, score, context, scanQuality = null) {
+function summaryCopy(summaryState, score, context, scanQuality = null, hasApproximateValues = false) {
   const appearance = APPEARANCE_LABELS[context?.waterAppearance] || "Not provided";
   const manualSelection = !!scanQuality?.details?.manualSelection;
   const colorConfidence = Number(scanQuality?.details?.colorConfidence ?? 0);
   const geometryConfidence = Number(scanQuality?.details?.geometryConfidence ?? 0);
-  if (manualSelection && geometryConfidence >= 0.99 && colorConfidence >= 0.75 && summaryState !== "Unknown / Failed Scan" && summaryState !== "Retest Recommended / Low Confidence") {
+  if (hasApproximateValues && summaryState !== "Unknown / Failed Scan" && summaryState !== "Retest Recommended") {
     return {
-      summary: "Manual scan complete. Some values are approximate.",
-      nextAction: "Use displayed ranges cautiously and make only modest changes until verified.",
+      summary: "Some values are estimated between test strip ranges.",
+      nextAction: "Use the estimated readings for guidance and retest on your normal schedule.",
+      retestTiming: "Normal schedule, or sooner if water appearance changes"
+    };
+  }
+  if (manualSelection && geometryConfidence >= 0.99 && colorConfidence >= 0.75 && summaryState !== "Unknown / Failed Scan" && summaryState !== "Retest Recommended") {
+    return {
+      summary: "Manual scan complete. Results look usable for guidance.",
+      nextAction: "Review suggested actions and retest after treatment if you adjust chemistry.",
       retestTiming: "Normal schedule, or sooner if water appearance changes"
     };
   }
@@ -909,7 +914,7 @@ function summaryCopy(summaryState, score, context, scanQuality = null) {
       retestTiming: "Now"
     };
   }
-  if (summaryState === "Retest Recommended / Low Confidence") {
+  if (summaryState === "Retest Recommended") {
     return {
       summary: `Pool health is estimated at ${score}/100, but some readings should be verified.`,
       nextAction: "Use readings cautiously and verify before large adjustments.",
@@ -935,15 +940,20 @@ export function runStripSanityCheck(vals, context = {}) {
   const recentActions = Array.isArray(context.recentActions) ? context.recentActions : [];
   const scanQuality = vals?.__scanQuality || null;
   const checks = [];
+  const supports = key => !Array.isArray(vals?.__supportedTests) || vals.__supportedTests.includes(key);
+  const totalClValue = supports("totalCl") ? vals.totalCl : null;
+  const combinedClValue = supports("combinedCl") && totalClValue != null && vals.freeCl != null
+    ? Math.max(0, (toNumber(totalClValue) || 0) - (toNumber(vals.freeCl) || 0))
+    : null;
   const values = {
     ph: vals.ph,
     freeCl: vals.freeCl,
-    totalCl: vals.totalCl,
-    combinedCl: Math.max(0, (toNumber(vals.totalCl) || 0) - (toNumber(vals.freeCl) || 0)),
+    totalCl: totalClValue,
+    combinedCl: combinedClValue,
     alk: vals.alk,
     cya: vals.cya,
     hardness: vals.hardness,
-    bromine: vals.bromine
+    bromine: supports("bromine") ? vals.bromine : null
   };
 
   Object.entries(values).forEach(([key, measuredValue]) => {
@@ -972,12 +982,28 @@ export function runStripSanityCheck(vals, context = {}) {
   const geometryConfidence = Number(scanQuality?.details?.geometryConfidence ?? 0);
   const trueLowCount = checks.filter(check => check.adjustedConfidence === "Low" && !check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")).length;
   const ambiguousCount = checks.filter(check => check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH")).length;
+  const hasApproximateValues = ambiguousCount > 0
+    || !!Object.keys(vals?.__padRanges || {}).length
+    || ["__phRange", "__freeClRange", "__totalClRange", "__bromineRange", "__hardnessRange", "__alkRange", "__cyaRange"].some(key => Array.isArray(vals?.[key]));
+  const retestReasonCodes = new Set(["LOW_SAMPLE_QUALITY", "LOW_IMAGE_QUALITY", "LOW_DELTA_E_SEPARATION", "HIGH_FRAME_VARIANCE", "UNLIKELY_HISTORY_JUMP", "CLOUDY_OR_GREEN_LOW_CHLORINE", "CHLORINE_CONFLICT", "BROMINE_CHLORINE_CONFLICT"]);
+  const requiresRetest = (scanQuality?.score ?? 100) < 40
+    || checks.some(check => {
+      const derivedApproximate = check.key === "combinedCl" && check.status === "Approximate";
+      const nonApproxLow = check.adjustedScore < 0.5 && !check.reasonCodes.includes("AMBIGUOUS_ADJACENT_MATCH") && !derivedApproximate;
+      const retestReason = check.reasonCodes.some(code => retestReasonCodes.has(code));
+      return nonApproxLow || check.status === "Retest Recommended" || retestReason;
+    });
   let scoreConfidence = confidenceLabel(avgConfidence);
+  if (trueLowCount === 0 && ambiguousCount > 0 && scoreConfidence === "Low") scoreConfidence = "Medium";
   if (manualSelection && geometryConfidence >= 0.99 && colorConfidence >= 0.75 && trueLowCount === 0 && scoreConfidence === "Low") scoreConfidence = ambiguousCount > 2 ? "Medium" : "High";
+  const scoreConfidencePercent = Math.max(
+    Math.round(clamp(avgConfidence, 0, 1) * 100),
+    scoreConfidence === "High" ? 86 : scoreConfidence === "Medium" ? 70 : 0
+  );
   const reasonCodes = Array.from(new Set(checks.flatMap(check => check.reasonCodes)));
   const asksForContext = reasonCodes.includes("UNLIKELY_HISTORY_JUMP") && !recentActions.length;
-  const summaryState = buildSummaryState(Math.round(health.score), scoreConfidence, allFindings, scanQuality);
-  const summary = summaryCopy(summaryState, Math.round(health.score), context, scanQuality);
+  const summaryState = buildSummaryState(Math.round(health.score), scoreConfidence, allFindings, scanQuality, requiresRetest);
+  const summary = summaryCopy(summaryState, Math.round(health.score), context, scanQuality, hasApproximateValues);
   const treatments = buildTreatmentRecommendations(vals, { ...context, recentActions }, history);
 
   return {
@@ -987,8 +1013,10 @@ export function runStripSanityCheck(vals, context = {}) {
     chemistryScore: Math.round(health.chemistryScore),
     appearanceAdjustment: health.appearanceAdjustment,
     scoreConfidence,
-    scoreConfidencePercent: Math.round(clamp(avgConfidence, 0, 1) * 100),
+    scoreConfidencePercent,
     summaryState,
+    hasApproximateValues,
+    requiresRetest,
     summary: summary.summary,
     nextAction: summary.nextAction,
     retestTiming: summary.retestTiming,
